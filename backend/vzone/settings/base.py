@@ -369,6 +369,10 @@ VZONE_SECURITY_LOCKOUT_DURATION_MINUTES = env_int("VZONE_SECURITY_LOCKOUT_DURATI
 
 # SSL: auto (certbot si dispo, sinon self-signed en DEBUG), certbot, selfsigned
 VZONE_SSL_BACKEND = env("VZONE_SSL_BACKEND", "auto")
+VZONE_ACME_WEBROOT = env("VZONE_ACME_WEBROOT", str(VZONE_DATA_ROOT / "acme"))
+# Hostnames qui doivent servir le panel (SPA) plutôt que public_html
+VZONE_PANEL_HOSTNAMES = env("VZONE_PANEL_HOSTNAMES", "")
+VZONE_ROOT = env("VZONE_ROOT", "/opt/vzone")
 
 # FTP
 VZONE_FTP_VIRTUAL_USERS_FILE = env(

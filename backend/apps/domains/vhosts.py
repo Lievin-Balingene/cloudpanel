@@ -48,10 +48,11 @@ def resolve_domain_backend(domain: Domain) -> DomainBackend:
     """
     Priorité :
     1. Suspendu → page 503
-    2. App Python running liée au domaine
-    3. App Node running liée au domaine
-    4. Sélecteur PHP lié au domaine
-    5. Fichiers statiques (document_root)
+    2. Hostname panel (VZONE_PANEL_HOSTNAMES) → SPA panel
+    3. App Python running liée au domaine
+    4. App Node running liée au domaine
+    5. Sélecteur PHP lié au domaine
+    6. Fichiers statiques (document_root)
     Alias/parked héritent du parent pour l'app et le docroot.
     """
     target = domain
@@ -60,6 +61,19 @@ def resolve_domain_backend(domain: Domain) -> DomainBackend:
 
     if domain.is_suspended or not domain.is_active or target.is_suspended or not target.is_active:
         return DomainBackend(mode="suspended", docroot=target.document_root or "/var/empty")
+
+    panel_hosts = {
+        h.strip().lower()
+        for h in str(getattr(settings, "VZONE_PANEL_HOSTNAMES", "") or "").split(",")
+        if h.strip()
+    }
+    if domain.name.lower() in panel_hosts or target.name.lower() in panel_hosts:
+        panel_root = Path(getattr(settings, "VZONE_ROOT", "/opt/vzone")) / "frontend" / "dist"
+        return DomainBackend(
+            mode="panel",
+            docroot=str(panel_root),
+            app_label="vzone-panel",
+        )
 
     names = {domain.name.lower(), target.name.lower()}
     docroot = target.document_root or ""
@@ -157,38 +171,87 @@ def _conf_filename(hostname: str) -> str:
     return f"{safe}.conf"
 
 
-def render_vhost(domain: Domain, backend: DomainBackend) -> str:
-    server_names = _server_names(domain)
-    logs_prefix = SAFE_NAME_RE.sub("_", domain.name.lower())
-    header = f"""# V-zone domain vhost — {domain.name}
-# backend={backend.mode} app={backend.app_label or '-'}
-server {{
-    listen 80;
-    listen [::]:80;
-    server_name {server_names};
-    client_max_body_size 128m;
+def _ssl_cert_paths(domain: Domain) -> tuple[str, str] | None:
+    try:
+        from apps.domains.ssl_services import cert_paths_for, has_active_cert_files
 
-    access_log /var/log/nginx/{logs_prefix}.access.log;
-    error_log  /var/log/nginx/{logs_prefix}.error.log;
+        if not has_active_cert_files(domain.name):
+            return None
+        _, fullchain, privkey = cert_paths_for(domain.name)
+        return str(fullchain), str(privkey)
+    except Exception:  # noqa: BLE001
+        return None
 
-    location ^~ /.well-known/acme-challenge/ {{
-        root /var/lib/vzone/acme;
-        default_type "text/plain";
-        allow all;
-    }}
-"""
+
+def _location_body(backend: DomainBackend) -> str:
     if backend.mode == "suspended":
-        body = """
+        return """
     location / {
         default_type text/html;
         return 503 '<html><body><h1>Account suspended</h1></body></html>';
     }
-}
 """
-        return header + body
+
+    if backend.mode == "panel":
+        docroot = backend.docroot or "/opt/vzone/frontend/dist"
+        return f"""
+    root {docroot};
+    index index.html;
+
+    location /assets/ {{
+        try_files $uri =404;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+        access_log off;
+    }}
+
+    location /api/ {{
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_read_timeout 120s;
+    }}
+
+    location /ws/ {{
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
+    }}
+
+    location /admin/ {{
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }}
+
+    location /static/ {{
+        alias /opt/vzone/backend/staticfiles/;
+        expires 7d;
+        access_log off;
+    }}
+
+    include /etc/nginx/snippets/vzone-phpmyadmin.inc;
+    include /etc/nginx/snippets/vzone-roundcube.inc;
+
+    location / {{
+        try_files $uri $uri/ /index.html;
+    }}
+"""
 
     if backend.mode == "proxy" and backend.port > 0:
-        body = f"""
+        return f"""
     location / {{
         proxy_pass http://127.0.0.1:{backend.port};
         proxy_http_version 1.1;
@@ -201,13 +264,11 @@ server {{
         proxy_read_timeout 300s;
         proxy_connect_timeout 60s;
     }}
-}}
 """
-        return header + body
 
     docroot = backend.docroot or "/var/empty"
     if backend.mode == "php" and backend.php_socket:
-        body = f"""
+        return f"""
     root {docroot};
     index index.php index.html index.htm;
 
@@ -228,11 +289,8 @@ server {{
         access_log off;
         try_files $uri =404;
     }}
-}}
 """
-        return header + body
 
-    # Static (+ PHP système si socket présent)
     default_sock = ""
     for candidate in (
         "/run/php/php8.3-fpm.sock",
@@ -256,7 +314,7 @@ server {{
     }}
 """
 
-    body = f"""
+    return f"""
     root {docroot};
     index index.html index.htm index.php;
 
@@ -269,9 +327,66 @@ server {{
         access_log off;
         try_files $uri =404;
     }}
+"""
+
+
+def render_vhost(domain: Domain, backend: DomainBackend) -> str:
+    server_names = _server_names(domain)
+    logs_prefix = SAFE_NAME_RE.sub("_", domain.name.lower())
+    acme_root = getattr(settings, "VZONE_ACME_WEBROOT", None) or "/var/lib/vzone/acme"
+    body = _location_body(backend)
+    ssl_paths = _ssl_cert_paths(domain)
+
+    http = f"""# V-zone domain vhost — {domain.name}
+# backend={backend.mode} app={backend.app_label or '-'}
+server {{
+    listen 80;
+    listen [::]:80;
+    server_name {server_names};
+    client_max_body_size 128m;
+
+    access_log /var/log/nginx/{logs_prefix}.access.log;
+    error_log  /var/log/nginx/{logs_prefix}.error.log;
+
+    location ^~ /.well-known/acme-challenge/ {{
+        root {acme_root};
+        default_type "text/plain";
+        allow all;
+    }}
+"""
+    if ssl_paths:
+        http += """
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+"""
+    else:
+        http += body + "\n}\n"
+
+    if not ssl_paths:
+        return http
+
+    fullchain, privkey = ssl_paths
+    https = f"""
+server {{
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name {server_names};
+    client_max_body_size 128m;
+
+    ssl_certificate     {fullchain};
+    ssl_certificate_key {privkey};
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    access_log /var/log/nginx/{logs_prefix}.ssl.access.log;
+    error_log  /var/log/nginx/{logs_prefix}.ssl.error.log;
+{body}
 }}
 """
-    return header + body
+    return http + https
 
 
 def write_domain_vhost(domain: Domain) -> Path:

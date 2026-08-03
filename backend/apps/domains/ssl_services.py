@@ -1,6 +1,7 @@
 """Émission et renouvellement SSL (Let's Encrypt + certificats personnalisés)."""
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 import subprocess
@@ -38,6 +39,26 @@ def ssl_storage_root() -> Path:
     return root
 
 
+def acme_webroot() -> Path:
+    path = Path(
+        getattr(settings, "VZONE_ACME_WEBROOT", None)
+        or (Path(settings.VZONE_DATA_ROOT) / "acme")
+    )
+    path.mkdir(parents=True, exist_ok=True)
+    (path / ".well-known" / "acme-challenge").mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def cert_paths_for(domain_name: str) -> tuple[Path, Path, Path]:
+    target = ssl_storage_root() / domain_name
+    return target / "cert.pem", target / "fullchain.pem", target / "privkey.pem"
+
+
+def has_active_cert_files(domain_name: str) -> bool:
+    _, fullchain, privkey = cert_paths_for(domain_name)
+    return fullchain.is_file() and privkey.is_file()
+
+
 def _parse_expiry(cert_pem: str) -> tuple[datetime, datetime, list[str]]:
     cert = x509.load_pem_x509_certificate(cert_pem.encode("utf-8"))
     issued = cert.not_valid_before_utc.replace(tzinfo=dt_timezone.utc)
@@ -57,7 +78,9 @@ def issue_self_signed(domain_name: str, days: int = 90) -> CertificateMaterial:
     subject = issuer = x509.Name(
         [x509.NameAttribute(NameOID.COMMON_NAME, domain_name)]
     )
-    alt_names = [domain_name, f"www.{domain_name}"]
+    alt_names = [domain_name]
+    if domain_name.count(".") == 1:
+        alt_names.append(f"www.{domain_name}")
     now = datetime.now(tz=dt_timezone.utc)
     cert = (
         x509.CertificateBuilder()
@@ -90,44 +113,129 @@ def issue_self_signed(domain_name: str, days: int = 90) -> CertificateMaterial:
     )
 
 
-def issue_with_certbot(domain_name: str, email: str, webroot: Path) -> CertificateMaterial:
-    """Émet un certificat via certbot (production Linux)."""
+def _extra_hostnames(domain: Domain) -> list[str]:
+    """www. uniquement pour les apex type example.com (PRIMARY/ADDON)."""
+    if domain.domain_type not in {Domain.DomainType.PRIMARY, Domain.DomainType.ADDON}:
+        return []
+    # example.com → www ; vpanel.vzonecloud.co.uk → pas de www auto
+    if domain.name.count(".") != 1:
+        return []
+    return [f"www.{domain.name}"]
+
+
+def _ssl_issue_bin() -> str | None:
+    for candidate in (
+        "/usr/local/sbin/vzone-ssl-issue",
+        shutil.which("vzone-ssl-issue"),
+    ):
+        if candidate and Path(candidate).is_file():
+            return str(candidate)
+    return None
+
+
+def issue_with_certbot(domain: Domain, email: str) -> CertificateMaterial:
+    """Émet un certificat via le wrapper root (sudo) + certbot webroot."""
+    wrapper = _ssl_issue_bin()
     certbot = shutil.which("certbot")
-    if not certbot:
+    if not wrapper and not certbot:
         raise VZoneAPIException(
-            detail="certbot introuvable sur le serveur. Installez certbot ou utilisez un certificat personnalisé.",
+            detail=(
+                "certbot introuvable sur le serveur. "
+                "Exécutez: sudo bash /opt/vzone-src/scripts/install-certbot.sh"
+            ),
             code="certbot_missing",
             status_code=503,
         )
-    webroot.mkdir(parents=True, exist_ok=True)
-    live_dir = Path("/etc/letsencrypt/live") / domain_name
-    cmd = [
-        certbot,
-        "certonly",
-        "--non-interactive",
-        "--agree-tos",
-        "--email",
-        email,
-        "--webroot",
-        "-w",
-        str(webroot),
-        "-d",
-        domain_name,
-        "-d",
-        f"www.{domain_name}",
-        "--keep-until-expiring",
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+
+    webroot = acme_webroot()
+    extras = _extra_hostnames(domain)
+    hostnames = [domain.name, *extras]
+
+    def _run(names: list[str]) -> subprocess.CompletedProcess[str]:
+        if wrapper:
+            cmd = ["sudo", "-n", wrapper, domain.name, email, *names[1:]]
+        else:
+            # Secours local (tests / root) — webroot partagé ACME
+            cmd = [
+                certbot or "certbot",
+                "certonly",
+                "--non-interactive",
+                "--agree-tos",
+                "--email",
+                email,
+                "--webroot",
+                "-w",
+                str(webroot),
+                "--cert-name",
+                domain.name,
+                "--keep-until-expiring",
+                "--preferred-challenges",
+                "http",
+            ]
+            for name in names:
+                cmd.extend(["-d", name])
+        return subprocess.run(cmd, capture_output=True, text=True, check=False)
+
+    result = _run(hostnames)
+    # Si www échoue (DNS manquant), retenter sans www
+    if result.returncode != 0 and extras:
+        logger.warning(
+            "LE avec www échoué pour %s — retry sans www: %s",
+            domain.name,
+            (result.stderr or result.stdout)[-500:],
+        )
+        result = _run([domain.name])
+
     if result.returncode != 0:
+        err = (result.stderr or result.stdout or "").strip()
+        if "password is required" in err.lower() or "a password is required" in err.lower():
+            err = (
+                "sudo non configuré pour vzone-ssl-issue. "
+                "Exécutez: sudo bash /opt/vzone-src/scripts/install-certbot.sh"
+            )
         raise VZoneAPIException(
-            detail=f"Échec Let's Encrypt: {result.stderr.strip() or result.stdout.strip()}",
+            detail=f"Échec Let's Encrypt: {err[-1500:]}",
             code="letsencrypt_failed",
             status_code=502,
-            extra={"stdout": result.stdout[-2000:], "stderr": result.stderr[-2000:]},
+            extra={"stdout": (result.stdout or "")[-2000:], "stderr": (result.stderr or "")[-2000:]},
         )
-    cert_pem = (live_dir / "cert.pem").read_text(encoding="utf-8")
-    key_pem = (live_dir / "privkey.pem").read_text(encoding="utf-8")
-    chain_pem = (live_dir / "fullchain.pem").read_text(encoding="utf-8")
+
+    _, fullchain_path, privkey_path = cert_paths_for(domain.name)
+    cert_path = cert_paths_for(domain.name)[0]
+
+    # Le wrapper écrit déjà les PEM ; sinon lire depuis live/
+    if not fullchain_path.is_file() or not privkey_path.is_file():
+        live_dir = Path("/etc/letsencrypt/live") / domain.name
+        if not (live_dir / "fullchain.pem").is_file():
+            # Parser JSON stdout du wrapper si présent
+            try:
+                meta = json.loads((result.stdout or "").strip().splitlines()[-1])
+                fullchain_path = Path(meta["fullchain_path"])
+                privkey_path = Path(meta["privkey_path"])
+                cert_path = Path(meta.get("cert_path", fullchain_path))
+            except (json.JSONDecodeError, KeyError, IndexError) as exc:
+                raise VZoneAPIException(
+                    detail="Certificat émis mais fichiers PEM introuvables.",
+                    code="letsencrypt_files_missing",
+                    status_code=500,
+                ) from exc
+        else:
+            target = ssl_storage_root() / domain.name
+            target.mkdir(parents=True, exist_ok=True)
+            cert_path = target / "cert.pem"
+            fullchain_path = target / "fullchain.pem"
+            privkey_path = target / "privkey.pem"
+            cert_path.write_text((live_dir / "cert.pem").read_text(encoding="utf-8"), encoding="utf-8")
+            fullchain_path.write_text(
+                (live_dir / "fullchain.pem").read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            privkey_path.write_text(
+                (live_dir / "privkey.pem").read_text(encoding="utf-8"), encoding="utf-8"
+            )
+
+    cert_pem = cert_path.read_text(encoding="utf-8")
+    key_pem = privkey_path.read_text(encoding="utf-8")
+    chain_pem = fullchain_path.read_text(encoding="utf-8")
     issued, expires, alts = _parse_expiry(cert_pem)
     return CertificateMaterial(
         certificate_pem=cert_pem,
@@ -135,7 +243,7 @@ def issue_with_certbot(domain_name: str, email: str, webroot: Path) -> Certifica
         chain_pem=chain_pem,
         issued_at=issued,
         expires_at=expires,
-        alt_names=alts,
+        alt_names=alts or hostnames,
     )
 
 
@@ -192,6 +300,12 @@ def install_custom_certificate(
             "last_checked_at": timezone.now(),
         },
     )
+    try:
+        from apps.domains.vhosts import sync_domain_vhost
+
+        sync_domain_vhost(domain)
+    except Exception:  # noqa: BLE001
+        logger.exception("Sync vhost après SSL custom échoué pour %s", domain.name)
     return ssl
 
 
@@ -210,16 +324,18 @@ def issue_letsencrypt(domain: Domain, *, email: str | None = None) -> SslCertifi
     ssl.last_error = ""
     ssl.save(update_fields=["provider", "status", "last_error", "updated_at"])
 
-    contact = email or domain.owner.email
+    contact = email or domain.owner.email or "admin@localhost"
     backend = getattr(settings, "VZONE_SSL_BACKEND", "auto")
+    has_certbot = bool(shutil.which("certbot") or _ssl_issue_bin())
 
     try:
-        if backend == "selfsigned" or (
-            backend == "auto" and not shutil.which("certbot")
-        ):
+        if backend == "selfsigned" or (backend == "auto" and not has_certbot):
             if backend == "auto" and not getattr(settings, "DEBUG", False):
                 raise VZoneAPIException(
-                    detail="certbot requis en production pour Let's Encrypt.",
+                    detail=(
+                        "certbot requis en production pour Let's Encrypt. "
+                        "Exécutez: sudo bash /opt/vzone-src/scripts/install-certbot.sh"
+                    ),
                     code="certbot_missing",
                     status_code=503,
                 )
@@ -228,8 +344,7 @@ def issue_letsencrypt(domain: Domain, *, email: str | None = None) -> SslCertifi
                 "SSL self-signed utilisé pour %s (backend=%s)", domain.name, backend
             )
         else:
-            webroot = Path(domain.document_root or ssl_storage_root() / "acme-webroot")
-            material = issue_with_certbot(domain.name, contact, webroot)
+            material = issue_with_certbot(domain, contact)
 
         persist_files(domain, material)
         ssl.status = SslCertificate.Status.ACTIVE
@@ -243,6 +358,14 @@ def issue_letsencrypt(domain: Domain, *, email: str | None = None) -> SslCertifi
         ssl.last_error = ""
         ssl.last_checked_at = timezone.now()
         ssl.save()
+
+        try:
+            from apps.domains.vhosts import sync_domain_vhost
+
+            sync_domain_vhost(domain)
+        except Exception:  # noqa: BLE001
+            logger.exception("Sync vhost après SSL échoué pour %s", domain.name)
+
         return ssl
     except VZoneAPIException as exc:
         ssl.mark_failed(str(exc.detail))

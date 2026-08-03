@@ -32,9 +32,15 @@ Fichiers Nginx : `VZONE_NGINX_DOMAINS_DIR` (défaut `/var/lib/vzone/nginx/domain
 ## SSL
 
 - **Let's Encrypt** via `certbot` (`VZONE_SSL_BACKEND=auto|certbot`)
+- Installation : `sudo bash scripts/install-certbot.sh` (appelé aussi par `update.sh`)
+- Challenge HTTP-01 sur le webroot partagé `/var/lib/vzone/acme` (location `/.well-known/acme-challenge/`)
+- Après émission : vhost Nginx **443** + redirection HTTP→HTTPS
+- `www.` n’est demandé que pour les apex `example.com` (pas pour `vpanel.exemple.co.uk`)
 - **Self-signed** en développement / tests (`selfsigned`)
 - **Certificat personnalisé** (PEM)
 - Renouvellement Celery : `domains.renew_ssl_certificates`
+
+Prérequis DNS : l’enregistrement A (et AAAA si utilisé) du domaine doit pointer vers le serveur avant l’émission.
 
 ## API
 

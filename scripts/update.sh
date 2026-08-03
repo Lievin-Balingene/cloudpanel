@@ -75,6 +75,11 @@ if [[ -f "${REPO_DIR}/scripts/install-roundcube.sh" ]]; then
   bash "${REPO_DIR}/scripts/install-roundcube.sh" || echo "[vzone] Avertissement: install-roundcube.sh a échoué"
 fi
 
+# Certbot / Let's Encrypt
+if [[ -f "${REPO_DIR}/scripts/install-certbot.sh" ]]; then
+  bash "${REPO_DIR}/scripts/install-certbot.sh" || echo "[vzone] Avertissement: install-certbot.sh a échoué"
+fi
+
 bash "${REPO_DIR}/scripts/ensure-nginx.sh" "${VZONE_ROOT}/deploy/nginx/vzone.conf"
 
 systemctl daemon-reload

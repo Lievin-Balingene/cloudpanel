@@ -200,6 +200,10 @@ PY
   if [[ -f "${SCRIPT_DIR}/install-roundcube.sh" ]]; then
     bash "${SCRIPT_DIR}/install-roundcube.sh" || log "Avertissement: Roundcube non installé"
   fi
+  # Certbot / Let's Encrypt
+  if [[ -f "${SCRIPT_DIR}/install-certbot.sh" ]]; then
+    bash "${SCRIPT_DIR}/install-certbot.sh" || log "Avertissement: certbot non installé"
+  fi
   bash "${SCRIPT_DIR}/ensure-nginx.sh" "${VZONE_ROOT}/deploy/nginx/vzone.conf" || true
 
   HOST_IP="$(hostname -I | awk '{print $1}')"
