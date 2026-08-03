@@ -34,14 +34,18 @@ chmod 770 "$JOBS_DIR"
 install -m 755 "${REPO_DIR}/scripts/vzone-ssl-issue.sh" /usr/local/sbin/vzone-ssl-issue
 install -m 755 "${REPO_DIR}/scripts/vzone-ssl-agent.sh" /usr/local/sbin/vzone-ssl-agent
 install -m 755 "${REPO_DIR}/scripts/vzone-nginx-reload.sh" /usr/local/sbin/vzone-nginx-reload
+install -m 755 "${REPO_DIR}/scripts/vzone-ensure-nginx.sh" /usr/local/sbin/vzone-ensure-nginx
 
 install -m 644 "${REPO_DIR}/deploy/systemd/vzone-ssl-job.service" /etc/systemd/system/vzone-ssl-job.service
 install -m 644 "${REPO_DIR}/deploy/systemd/vzone-ssl-job.path" /etc/systemd/system/vzone-ssl-job.path
 install -m 644 "${REPO_DIR}/deploy/systemd/vzone-nginx-reload.service" /etc/systemd/system/vzone-nginx-reload.service
 install -m 644 "${REPO_DIR}/deploy/systemd/vzone-nginx-reload.path" /etc/systemd/system/vzone-nginx-reload.path
+install -m 644 "${REPO_DIR}/deploy/systemd/vzone-ensure-nginx.service" /etc/systemd/system/vzone-ensure-nginx.service
+install -m 644 "${REPO_DIR}/deploy/systemd/vzone-ensure-nginx.path" /etc/systemd/system/vzone-ensure-nginx.path
 systemctl daemon-reload
 systemctl enable --now vzone-ssl-job.path
 systemctl enable --now vzone-nginx-reload.path
+systemctl enable --now vzone-ensure-nginx.path
 # Retirer l'ancien sudoers si présent (plus nécessaire)
 rm -f /etc/sudoers.d/vzone-ssl 2>/dev/null || true
 

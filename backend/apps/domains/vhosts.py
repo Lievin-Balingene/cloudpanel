@@ -46,6 +46,21 @@ def _web_stack_live() -> bool:
     return Path("/etc/nginx").is_dir() and shutil.which("nginx") is not None
 
 
+def panel_hostnames() -> set[str]:
+    return {
+        h.strip().lower()
+        for h in re.split(
+            r"[,;\s]+",
+            str(getattr(settings, "VZONE_PANEL_HOSTNAMES", "") or ""),
+        )
+        if h.strip()
+    }
+
+
+def is_panel_hostname(hostname: str) -> bool:
+    return hostname.strip().lower() in panel_hostnames()
+
+
 def resolve_domain_backend(domain: Domain) -> DomainBackend:
     """
     Priorité :
@@ -64,16 +79,7 @@ def resolve_domain_backend(domain: Domain) -> DomainBackend:
     if domain.is_suspended or not domain.is_active or target.is_suspended or not target.is_active:
         return DomainBackend(mode="suspended", docroot=target.document_root or "/var/empty")
 
-    panel_hosts = {
-        h.strip().lower()
-        for h in re.split(
-            r"[,;\s]+",
-            str(getattr(settings, "VZONE_PANEL_HOSTNAMES", "") or ""),
-        )
-        if h.strip()
-    }
-    # Jamais traiter un domaine client comme panel sauf hostname exact
-    if domain.name.lower() in panel_hosts or target.name.lower() in panel_hosts:
+    if is_panel_hostname(domain.name) or is_panel_hostname(target.name):
         panel_root = Path(getattr(settings, "VZONE_ROOT", "/opt/vzone")) / "frontend" / "dist"
         return DomainBackend(
             mode="panel",
@@ -396,9 +402,17 @@ server {{
 
 
 def write_domain_vhost(domain: Domain) -> Path:
+    path = nginx_domains_dir() / _conf_filename(domain.name)
+    # Le hostname panel est géré par sites-enabled/vzone (ensure-nginx.sh).
+    # Un vhost domaine en double casse ACME (405/redirect) et renvoie le login.
+    if is_panel_hostname(domain.name):
+        if path.exists():
+            path.unlink()
+            logger.info("Vhost domaine retiré (hostname panel): %s", path)
+        return path
+
     backend = resolve_domain_backend(domain)
     conf = render_vhost(domain, backend)
-    path = nginx_domains_dir() / _conf_filename(domain.name)
     path.write_text(conf, encoding="utf-8")
     logger.info("Vhost écrit %s (%s)", path, backend.mode)
     return path
@@ -470,11 +484,17 @@ def sync_all_domain_vhosts() -> int:
     wanted = set()
     for domain in Domain.objects.select_related("parent", "owner").all():
         write_domain_vhost(domain)
-        wanted.add(_conf_filename(domain.name))
-        count += 1
+        if not is_panel_hostname(domain.name):
+            wanted.add(_conf_filename(domain.name))
+            count += 1
+        else:
+            # S'assurer qu'aucune conf orpheline panel ne reste
+            remove_domain_vhost(domain.name)
 
     # Nettoyer les confs orphelines
     for path in nginx_domains_dir().glob("*.conf"):
+        if path.name in {".keep.conf"} or path.name.startswith("."):
+            continue
         if path.name not in wanted:
             path.unlink(missing_ok=True)
 
@@ -484,7 +504,11 @@ def sync_all_domain_vhosts() -> int:
 
 def sync_domain_vhost(domain: Domain) -> Path:
     path = write_domain_vhost(domain)
-    # Alias/parked pointant ici : régénérer aussi les enfants qui partagent le backend
+    if is_panel_hostname(domain.name):
+        # Rafraîchir la conf panel principale (HTTPS éventuel)
+        _request_ensure_nginx()
+        reload_nginx()
+        return path
     for child in Domain.objects.filter(
         parent=domain,
         domain_type__in={Domain.DomainType.ALIAS, Domain.DomainType.PARKED},
@@ -492,3 +516,24 @@ def sync_domain_vhost(domain: Domain) -> Path:
         write_domain_vhost(child)
     reload_nginx()
     return path
+
+
+def _request_ensure_nginx() -> None:
+    """Demande à root de régénérer sites-enabled/vzone (certificats panel)."""
+    flag = Path(getattr(settings, "VZONE_DATA_ROOT", "/var/lib/vzone")) / "nginx" / "ensure-nginx.requested"
+    try:
+        flag.parent.mkdir(parents=True, exist_ok=True)
+        flag.write_text(str(int(time.time())), encoding="utf-8")
+    except OSError:
+        logger.warning("Impossible d'écrire %s", flag)
+        return
+    try:
+        subprocess.run(
+            ["systemctl", "start", "vzone-ensure-nginx.service"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass

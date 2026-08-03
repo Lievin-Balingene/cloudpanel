@@ -20,6 +20,14 @@ nginx -t || { echo "nginx -t ÉCHEC — arrêt"; exit 1; }
 echo "[3] Reinstall nginx layout (parking + panel séparé)"
 bash "${REPO_DIR}/scripts/ensure-nginx.sh" "${VZONE_ROOT}/deploy/nginx/vzone.conf"
 
+# Supprimer tout vhost domaine qui duplique le hostname panel
+PANEL="${VZONE_PANEL_HOSTNAMES:-vpanel.vzonecloud.co.uk}"
+for h in ${PANEL//,/ }; do
+  [[ -n "$h" ]] || continue
+  safe="$(echo "$h" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/_/g')"
+  rm -f "/var/lib/vzone/nginx/domains/${safe}.conf" 2>/dev/null || true
+done
+
 echo "[4] Sync tous les vhosts domaines + HTTPS"
 bash "${REPO_DIR}/scripts/ensure-https.sh" || true
 

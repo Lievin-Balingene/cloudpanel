@@ -69,10 +69,15 @@ export async function apiRequest<T>(
         window.location.assign("/change-password");
       }
     }
-    const message =
+    const messageRaw =
       err?.error?.message ||
-      (typeof err?.raw === "string" && err.raw.slice(0, 180)) ||
+      (typeof err?.raw === "string" ? err.raw : "") ||
       `Erreur HTTP ${response.status}`;
+    const message = messageRaw
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 240) || `Erreur HTTP ${response.status}`;
     throw new ApiClientError(
       message,
       response.status,

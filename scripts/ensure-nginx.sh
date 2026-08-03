@@ -20,10 +20,12 @@ fi
 
 PANEL_HOSTS="${VZONE_PANEL_HOSTNAMES:-vpanel.vzonecloud.co.uk}"
 PANEL_HOSTS="${PANEL_HOSTS//,/ }"
-# Uniquement les hostnames panel — PAS l'IP publique (sinon tout HTTP/HTTPS
-# sans vhost domaine risque de matcher le panel).
+HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+# Panel = hostnames dédiés + localhost (+ IP pour admin). Les sites clients
+# matchent leur propre server_name et ne tombent pas ici.
 PANEL_NAMES="$PANEL_HOSTS"
-for extra in localhost 127.0.0.1; do
+for extra in localhost 127.0.0.1 ${HOST_IP}; do
+  [[ -n "$extra" ]] || continue
   case " ${PANEL_NAMES} " in
     *" ${extra} "*) ;;
     *) PANEL_NAMES="${PANEL_NAMES} ${extra}" ;;
@@ -125,6 +127,12 @@ server {{
 
     root /opt/vzone/frontend/dist;
     index index.html;
+
+    location ^~ /.well-known/acme-challenge/ {{
+        root /var/lib/vzone/acme;
+        default_type "text/plain";
+        allow all;
+    }}
 
     location /assets/ {{
         try_files $uri =404;

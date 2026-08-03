@@ -50,7 +50,32 @@ chmod 750 "$OUT" 2>/dev/null || true
 chown vzone:www-data "$OUT"
 
 # Appliquer HTTPS (vhosts déjà écrits par Django) — reload Nginx en root
-if command -v nginx >/dev/null 2>&1; then
+# Si hostname panel : régénérer sites-enabled/vzone pour injecter le certificat
+PANEL_HOSTS="${VZONE_PANEL_HOSTNAMES:-}"
+if [[ -f /etc/vzone/vzone.env ]]; then
+  # shellcheck disable=SC1091
+  set -a; source /etc/vzone/vzone.env; set +a
+  PANEL_HOSTS="${VZONE_PANEL_HOSTNAMES:-$PANEL_HOSTS}"
+fi
+IS_PANEL=0
+DOMAIN_LC="$(printf '%s' "$DOMAIN" | tr '[:upper:]' '[:lower:]')"
+for h in ${PANEL_HOSTS//,/ }; do
+  [[ -n "$h" ]] || continue
+  h_lc="$(printf '%s' "$h" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$h_lc" == "$DOMAIN_LC" ]]; then
+    IS_PANEL=1
+    break
+  fi
+done
+
+if [[ "$IS_PANEL" -eq 1 ]]; then
+  for script in /opt/vzone-src/scripts/ensure-nginx.sh /opt/vzone/scripts/ensure-nginx.sh; do
+    if [[ -f "$script" ]]; then
+      bash "$script" || true
+      break
+    fi
+  done
+elif command -v nginx >/dev/null 2>&1; then
   if nginx -t 2>/dev/null; then
     systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null || true
   else

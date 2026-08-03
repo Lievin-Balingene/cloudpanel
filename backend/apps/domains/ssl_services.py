@@ -133,6 +133,26 @@ def _extra_hostnames(domain: Domain) -> list[str]:
     return [f"www.{domain.name}"]
 
 
+def _clean_le_error(err: str) -> str:
+    text = (err or "").strip()
+    low = text.lower()
+    if "405" in text and ("not allowed" in low or "<html" in low):
+        return (
+            "Échec Let's Encrypt (HTTP 405). "
+            "Le challenge ACME a frappé un mauvais vhost Nginx. "
+            "Exécutez: sudo bash /opt/vzone-src/scripts/fix-site-routing.sh "
+            "puis réessayez depuis https://vpanel… (pas via l'IP)."
+        )
+    if "<html" in low or "<!doctype" in low:
+        # Extraire une ligne utile hors HTML
+        for line in text.splitlines():
+            s = line.strip()
+            if s and not s.startswith("<") and "error" in s.lower():
+                return f"Échec Let's Encrypt: {s[:400]}"
+        return "Échec Let's Encrypt: réponse HTTP invalide du challenge ACME (voir logs certbot)."
+    return f"Échec Let's Encrypt: {text[-1200:]}"
+
+
 def _ssl_issue_bin() -> str | None:
     for candidate in (
         "/usr/local/sbin/vzone-ssl-issue",
@@ -259,14 +279,14 @@ def issue_with_certbot(domain: Domain, email: str) -> CertificateMaterial:
                 meta = _enqueue_ssl_job(domain.name, email, [])
                 if not meta.get("ok"):
                     err = str(meta.get("error") or err)
-                    raise VZoneAPIException(
-                        detail=f"Échec Let's Encrypt: {err[-1500:]}",
+        raise VZoneAPIException(
+                        detail=_clean_le_error(err),
                         code="letsencrypt_failed",
                         status_code=502,
                     )
             else:
                 raise VZoneAPIException(
-                    detail=f"Échec Let's Encrypt: {err[-1500:]}",
+                    detail=_clean_le_error(err),
                     code="letsencrypt_failed",
                     status_code=502,
                 )
@@ -295,7 +315,7 @@ def issue_with_certbot(domain: Domain, email: str) -> CertificateMaterial:
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise VZoneAPIException(
-            detail=f"Échec Let's Encrypt: {(result.stderr or result.stdout or '')[-1500:]}",
+            detail=_clean_le_error(result.stderr or result.stdout or ""),
             code="letsencrypt_failed",
             status_code=502,
         )

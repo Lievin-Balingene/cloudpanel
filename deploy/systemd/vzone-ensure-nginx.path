@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch V-zone ensure-nginx requests
+
+[Path]
+PathExists=/var/lib/vzone/nginx/ensure-nginx.requested
+MakeDirectory=true
+Unit=vzone-ensure-nginx.service
+
+[Install]
+WantedBy=multi-user.target
