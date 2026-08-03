@@ -1,0 +1,19 @@
+[Unit]
+Description=V-zone Panel Celery Beat
+After=network.target redis.service redis-server.service postgresql.service
+
+[Service]
+Type=simple
+User=vzone
+Group=vzone
+WorkingDirectory=/opt/vzone/backend
+EnvironmentFile=/etc/vzone/vzone.env
+Environment=DJANGO_SETTINGS_MODULE=vzone.settings.production
+ExecStart=/opt/vzone/backend/.venv/bin/celery -A vzone beat -l INFO
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

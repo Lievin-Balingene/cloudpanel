@@ -1,0 +1,10 @@
+from __future__ import annotations
+
+from django.apps import AppConfig
+
+
+class FirewallConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.firewall"
+    label = "firewall"
+    verbose_name = "Firewall & Fail2Ban"

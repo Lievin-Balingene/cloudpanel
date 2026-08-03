@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  min-height: 100vh;
+  background: #eef2f6;
+  color: #2c3e50;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.dark body,
+html.dark body {
+  background: #121a24;
+  color: #e8eef6;
+}
+
+@layer components {
+  .vz-panel {
+    @apply rounded border border-cp-border bg-white shadow-panel dark:border-ink-800 dark:bg-ink-950;
+  }
+
+  .vz-input {
+    @apply w-full rounded border border-cp-border bg-white px-3 py-2 text-sm text-cp-text
+      outline-none transition focus:border-cp-orange focus:ring-1 focus:ring-cp-orange/30
+      dark:border-ink-700 dark:bg-ink-900 dark:text-ink-50;
+  }
+
+  .vz-btn {
+    @apply inline-flex items-center justify-center gap-2 rounded px-3.5 py-2 text-sm font-medium
+      transition active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .vz-btn-primary {
+    @apply vz-btn bg-cp-orange text-white hover:bg-cp-orange-dark;
+  }
+
+  .vz-btn-ghost {
+    @apply vz-btn border border-cp-border bg-white text-cp-text hover:bg-cp-canvas
+      dark:border-ink-700 dark:bg-transparent dark:text-ink-100 dark:hover:bg-ink-900;
+  }
+
+  .whm-nav-item {
+    @apply block border-b border-white/10 px-4 py-2.5 text-sm text-white/90 hover:bg-white/10;
+  }
+
+  .whm-nav-item-active {
+    @apply bg-cp-orange text-white hover:bg-cp-orange;
+  }
+
+  .cp-tool {
+    @apply flex flex-col items-center gap-2 rounded border border-cp-border bg-white p-4 text-center
+      shadow-tool transition hover:border-cp-orange hover:shadow-md dark:border-ink-700 dark:bg-ink-950;
+  }
+}

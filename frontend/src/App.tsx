@@ -1,0 +1,141 @@
+import type { ReactNode } from "react";
+import { Navigate, Route, Routes } from "react-router-dom";
+import { LoginPage } from "./pages/LoginPage";
+import { WhmShell } from "./layouts/WhmShell";
+import { ClientShell } from "./layouts/ClientShell";
+import { WhmHomePage } from "./pages/whm/WhmHomePage";
+import { WhmPackagesPage } from "./pages/whm/WhmPackagesPage";
+import { WhmDnsPage } from "./pages/whm/WhmDnsPage";
+import { WhmResourcesPage } from "./pages/whm/WhmResourcesPage";
+import { WhmAccountsPage } from "./pages/whm/WhmAccountsPage";
+import { WhmDomainsPage } from "./pages/whm/WhmDomainsPage";
+import { WhmFilesPage } from "./pages/whm/WhmFilesPage";
+import { WhmFtpPage } from "./pages/whm/WhmFtpPage";
+import { WhmEmailPage } from "./pages/whm/WhmEmailPage";
+import { WhmDatabasesPage } from "./pages/whm/WhmDatabasesPage";
+import { WhmPythonPage } from "./pages/whm/WhmPythonPage";
+import { WhmNodePage } from "./pages/whm/WhmNodePage";
+import { WhmPhpPage } from "./pages/whm/WhmPhpPage";
+import { WhmGitPage } from "./pages/whm/WhmGitPage";
+import { WhmDockerPage } from "./pages/whm/WhmDockerPage";
+import { WhmBackupPage } from "./pages/whm/WhmBackupPage";
+import { WhmMonitoringPage } from "./pages/whm/WhmMonitoringPage";
+import { WhmFirewallPage } from "./pages/whm/WhmFirewallPage";
+import { WhmSecurityPage } from "./pages/whm/WhmSecurityPage";
+import { ClientHomePage } from "./pages/client/ClientHomePage";
+import { ClientDnsPage } from "./pages/client/ClientDnsPage";
+import { ClientPackagePage } from "./pages/client/ClientPackagePage";
+import { ClientDomainsPage } from "./pages/client/ClientDomainsPage";
+import { ClientFilesPage } from "./pages/client/ClientFilesPage";
+import { ClientFtpPage } from "./pages/client/ClientFtpPage";
+import { ClientEmailPage } from "./pages/client/ClientEmailPage";
+import { ClientDatabasesPage } from "./pages/client/ClientDatabasesPage";
+import { ClientPythonPage } from "./pages/client/ClientPythonPage";
+import { ClientNodePage } from "./pages/client/ClientNodePage";
+import { ClientPhpPage } from "./pages/client/ClientPhpPage";
+import { ClientGitPage } from "./pages/client/ClientGitPage";
+import { ClientDockerPage } from "./pages/client/ClientDockerPage";
+import { ClientBackupPage } from "./pages/client/ClientBackupPage";
+import { ClientSecurityPage } from "./pages/client/ClientSecurityPage";
+import { useAuthStore } from "./stores/auth";
+
+function RequireAuth({ children }: { children: ReactNode }) {
+  const token = useAuthStore((s) => s.accessToken);
+  if (!token) return <Navigate to="/login" replace />;
+  return <>{children}</>;
+}
+
+function RequireWhm({ children }: { children: ReactNode }) {
+  const role = useAuthStore((s) => s.user?.role);
+  if (role === "client") return <Navigate to="/panel" replace />;
+  return <>{children}</>;
+}
+
+function RequireClient({ children }: { children: ReactNode }) {
+  const role = useAuthStore((s) => s.user?.role);
+  if (role === "administrator" || role === "reseller") {
+    return <Navigate to="/whm" replace />;
+  }
+  return <>{children}</>;
+}
+
+function PostLoginRedirect() {
+  const role = useAuthStore((s) => s.user?.role);
+  if (!role) return <Navigate to="/login" replace />;
+  if (role === "client") return <Navigate to="/panel" replace />;
+  return <Navigate to="/whm" replace />;
+}
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route
+        path="/"
+        element={
+          <RequireAuth>
+            <PostLoginRedirect />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/whm"
+        element={
+          <RequireAuth>
+            <RequireWhm>
+              <WhmShell />
+            </RequireWhm>
+          </RequireAuth>
+        }
+      >
+        <Route index element={<WhmHomePage />} />
+        <Route path="accounts" element={<WhmAccountsPage />} />
+        <Route path="packages" element={<WhmPackagesPage />} />
+        <Route path="domains" element={<WhmDomainsPage />} />
+        <Route path="files" element={<WhmFilesPage />} />
+        <Route path="ftp" element={<WhmFtpPage />} />
+        <Route path="email" element={<WhmEmailPage />} />
+        <Route path="databases" element={<WhmDatabasesPage />} />
+        <Route path="python" element={<WhmPythonPage />} />
+        <Route path="node" element={<WhmNodePage />} />
+        <Route path="php" element={<WhmPhpPage />} />
+        <Route path="git" element={<WhmGitPage />} />
+        <Route path="docker" element={<WhmDockerPage />} />
+        <Route path="backups" element={<WhmBackupPage />} />
+        <Route path="monitoring" element={<WhmMonitoringPage />} />
+        <Route path="firewall" element={<WhmFirewallPage />} />
+        <Route path="security" element={<WhmSecurityPage />} />
+        <Route path="account-security" element={<ClientSecurityPage />} />
+        <Route path="dns" element={<WhmDnsPage />} />
+        <Route path="resources" element={<WhmResourcesPage />} />
+      </Route>
+      <Route
+        path="/panel"
+        element={
+          <RequireAuth>
+            <RequireClient>
+              <ClientShell />
+            </RequireClient>
+          </RequireAuth>
+        }
+      >
+        <Route index element={<ClientHomePage />} />
+        <Route path="domains" element={<ClientDomainsPage />} />
+        <Route path="files" element={<ClientFilesPage />} />
+        <Route path="ftp" element={<ClientFtpPage />} />
+        <Route path="email" element={<ClientEmailPage />} />
+        <Route path="databases" element={<ClientDatabasesPage />} />
+        <Route path="python" element={<ClientPythonPage />} />
+        <Route path="node" element={<ClientNodePage />} />
+        <Route path="php" element={<ClientPhpPage />} />
+        <Route path="git" element={<ClientGitPage />} />
+        <Route path="docker" element={<ClientDockerPage />} />
+        <Route path="backups" element={<ClientBackupPage />} />
+        <Route path="security" element={<ClientSecurityPage />} />
+        <Route path="dns" element={<ClientDnsPage />} />
+        <Route path="package" element={<ClientPackagePage />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}

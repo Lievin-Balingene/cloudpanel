@@ -1,0 +1,10 @@
+target-version = "py312"
+line-length = 100
+src = ["apps", "vzone"]
+
+[lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501", "B008"]
+
+[lint.isort]
+known-first-party = ["apps", "vzone"]
