@@ -24,6 +24,20 @@ location /phpmyadmin/ {
 EOF
 fi
 
+# Snippet Roundcube : stub si pas encore installé
+if [[ ! -f /etc/nginx/snippets/vzone-roundcube.inc ]]; then
+  cat > /etc/nginx/snippets/vzone-roundcube.inc <<'EOF'
+# Roundcube non installé — exécutez: sudo bash scripts/install-roundcube.sh
+location = /webmail {
+    return 302 /webmail/;
+}
+location /webmail/ {
+    default_type text/plain;
+    return 503 "Roundcube n'est pas encore installé. Exécutez: sudo bash /opt/vzone-src/scripts/install-roundcube.sh\n";
+}
+EOF
+fi
+
 # Vhosts domaines clients (écrits par le panel)
 DOMAINS_DIR="${VZONE_NGINX_DOMAINS_DIR:-/var/lib/vzone/nginx/domains}"
 mkdir -p "$DOMAINS_DIR" /var/lib/vzone/acme

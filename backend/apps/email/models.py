@@ -59,6 +59,8 @@ class Mailbox(models.Model):
     mail_domain = models.ForeignKey(MailDomain, on_delete=models.CASCADE, related_name="mailboxes")
     local_part = models.CharField(max_length=64)
     password_hash = models.CharField(max_length=256)
+    # Mot de passe chiffré (Fernet) pour SSO Roundcube style cPanel
+    password_secret = models.TextField(blank=True, default="")
     quota_mb = models.PositiveIntegerField(default=250, validators=[MinValueValidator(1)])
     used_mb = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
@@ -91,10 +93,18 @@ class Mailbox(models.Model):
 
     def set_password(self, raw: str) -> None:
         # SHA512-CRYPT ($6$) — natif Dovecot / Postfix SASL
+        from apps.databases.crypto import encrypt_secret
+
         self.password_hash = hash_password(raw)
+        self.password_secret = encrypt_secret(raw)
 
     def check_password(self, raw: str) -> bool:
         return verify_password(raw, self.password_hash)
+
+    def get_password_plain(self) -> str | None:
+        from apps.databases.crypto import decrypt_secret
+
+        return decrypt_secret(self.password_secret)
 
 
 class MailForwarder(models.Model):

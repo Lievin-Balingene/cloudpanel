@@ -8,13 +8,23 @@ Installation / mise à jour :
 
 ```bash
 sudo bash scripts/install-mail.sh
+sudo bash scripts/install-roundcube.sh
 # ou via update.sh (appelé automatiquement)
 ```
+
+## Webmail Roundcube
+
+- URL : `/webmail/`
+- SSO panel : bouton **Webmail** sur chaque boîte → connexion automatique
+- Login manuel : adresse e-mail complète + mot de passe
+- IMAP `127.0.0.1:143` · SMTP `127.0.0.1:587` (auth = compte mail)
+
+Boîtes créées **avant** cette version : réinitialisez le mot de passe dans le panel pour activer le SSO.
 
 ## Arborescence home (style cPanel)
 
 ```
-/var/lib/vzone/homes/<user>/
+/home/<user>/
   public_html/
   www -> public_html
   mail/<domaine>/<local>/{cur,new,tmp}   # Maildir
@@ -27,12 +37,12 @@ sudo bash scripts/install-mail.sh
 
 ## Fonctions panel
 
-- Domaines mail, boîtes, suspension
+- Domaines mail, boîtes, suspension, reset mot de passe
 - Forwarders / aliases, répondeurs, filtres, listes
 - SPF / MX / DKIM / DMARC + sync zone DNS
 - Export maps : `dovecot-users`, `virtual_mailboxes`, `valiases`, `vdomains`, OpenDKIM
-- Mots de passe **SHA512-CRYPT** (natifs Dovecot)
-- Quotas package (`emails`), lien webmail
+- Mots de passe **SHA512-CRYPT** (natifs Dovecot) + secret Fernet pour SSO
+- Quotas package (`emails`), Roundcube intégré
 
 ## Réputation (checklist)
 
@@ -47,7 +57,9 @@ sudo bash scripts/install-mail.sh
 
 | Variable | Rôle |
 |----------|------|
-| `VZONE_WEBMAIL_URL` | URL webmail |
+| `VZONE_WEBMAIL_URL` | URL Roundcube (`/webmail/`) |
+| `VZONE_ROUNDCUBE_SSO_DIR` | Tokens SSO one-shot |
+| `VZONE_ROUNDCUBE_IMAP_HOST` | Hôte IMAP pour le SSO |
 | `VZONE_MAIL_MAPS_DIR` | Maps Postfix/Dovecot |
 | `VZONE_MAIL_STACK` | `auto` \| `live` \| `mock` |
 | `VZONE_MAIL_PUBLIC_IP` | IP dans le SPF |
@@ -59,6 +71,7 @@ sudo bash scripts/install-mail.sh
 | IMAP | mail.domaine ou IP | 993 | SSL/TLS |
 | SMTP | mail.domaine ou IP | 587 | STARTTLS |
 | SMTP | | 465 | SSL/TLS |
+| Webmail | `/webmail/` | 80/443 | Roundcube |
 
 Identifiant = adresse e-mail complète.
 
@@ -67,6 +80,7 @@ Identifiant = adresse e-mail complète.
 | Méthode | Chemin |
 |---------|--------|
 | GET | `/api/v1/email/overview/` |
+| POST | `/api/v1/email/webmail/sso/` `{ "mailbox_id": N }` |
 | GET/POST | `/api/v1/email/domains/` |
 | GET/DELETE | `/api/v1/email/domains/{id}/` |
 | POST | `/api/v1/email/domains/{id}/dns-sync/` |

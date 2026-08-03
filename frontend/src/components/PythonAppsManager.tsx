@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api";
+import { runWithProgress } from "@/stores/operations";
 
 interface PyOverview {
   apps: number;
@@ -53,7 +54,14 @@ export function PythonAppsManager({ title }: { title: string }) {
 
   const create = useMutation({
     mutationFn: () =>
-      apiRequest("/python/apps/", { method: "POST", body: JSON.stringify(form) }),
+      runWithProgress(
+        `Création app Python · ${form.name || "app"}`,
+        () => apiRequest("/python/apps/", { method: "POST", body: JSON.stringify(form) }),
+        {
+          tickDetail: (ms) =>
+            ms < 2500 ? "Provisionnement venv…" : "Configuration du service…",
+        },
+      ),
     onSuccess: () => {
       setForm({ name: "", mode: "wsgi", framework: "generic", python_version: "3.12", domain_name: "" });
       setError(null);
@@ -63,8 +71,10 @@ export function PythonAppsManager({ title }: { title: string }) {
   });
 
   const action = useMutation({
-    mutationFn: ({ id, op }: { id: number; op: string }) =>
-      apiRequest(`/python/apps/${id}/${op}/`, { method: "POST", body: "{}" }),
+    mutationFn: ({ id, op, name }: { id: number; op: string; name: string }) =>
+      runWithProgress(`Python ${op} · ${name}`, () =>
+        apiRequest(`/python/apps/${id}/${op}/`, { method: "POST", body: "{}" }),
+      ),
     onSuccess: invalidate,
     onError: (err: Error) => setError(err.message),
   });
@@ -206,7 +216,7 @@ export function PythonAppsManager({ title }: { title: string }) {
                       <button
                         type="button"
                         className="text-cp-link hover:underline"
-                        onClick={() => action.mutate({ id: app.id, op: "start" })}
+                        onClick={() => action.mutate({ id: app.id, op: "start", name: app.name })}
                       >
                         Start
                       </button>
@@ -214,7 +224,7 @@ export function PythonAppsManager({ title }: { title: string }) {
                       <button
                         type="button"
                         className="text-cp-link hover:underline"
-                        onClick={() => action.mutate({ id: app.id, op: "stop" })}
+                        onClick={() => action.mutate({ id: app.id, op: "stop", name: app.name })}
                       >
                         Stop
                       </button>
@@ -222,14 +232,14 @@ export function PythonAppsManager({ title }: { title: string }) {
                     <button
                       type="button"
                       className="text-cp-link hover:underline"
-                      onClick={() => action.mutate({ id: app.id, op: "restart" })}
+                      onClick={() => action.mutate({ id: app.id, op: "restart", name: app.name })}
                     >
                       Restart
                     </button>
                     <button
                       type="button"
                       className="text-cp-link hover:underline"
-                      onClick={() => action.mutate({ id: app.id, op: "install" })}
+                      onClick={() => action.mutate({ id: app.id, op: "install", name: app.name })}
                     >
                       pip install
                     </button>

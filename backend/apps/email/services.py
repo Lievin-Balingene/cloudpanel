@@ -544,3 +544,55 @@ def create_mailing_list(
 
 def webmail_url() -> str:
     return getattr(settings, "VZONE_WEBMAIL_URL", "/webmail/")
+
+
+def create_webmail_sso(box: Mailbox) -> dict:
+    """Génère un token one-shot pour ouvrir Roundcube déjà authentifié."""
+    import json
+    import secrets
+    import time
+    from pathlib import Path
+
+    if box.is_suspended or not box.is_active:
+        raise VZoneAPIException(
+            detail="Boîte inactive ou suspendue.",
+            code="inactive",
+            status_code=400,
+        )
+
+    password = box.get_password_plain()
+    if not password:
+        raise VZoneAPIException(
+            detail=(
+                "Mot de passe non disponible pour le SSO (boîte créée avant cette version). "
+                "Réinitialisez le mot de passe de la boîte dans le panel, puis réessayez."
+            ),
+            code="no_secret",
+            status_code=400,
+        )
+
+    sso_dir = Path(
+        getattr(settings, "VZONE_ROUNDCUBE_SSO_DIR", None)
+        or (Path(settings.VZONE_DATA_ROOT) / "roundcube" / "sso")
+    )
+    sso_dir.mkdir(parents=True, exist_ok=True)
+    token = secrets.token_hex(32)
+    payload = {
+        "user": box.address,
+        "password": password,
+        "imap_host": getattr(settings, "VZONE_ROUNDCUBE_IMAP_HOST", "127.0.0.1"),
+        "exp": int(time.time()) + 60,
+    }
+    token_path = sso_dir / f"{token}.json"
+    token_path.write_text(json.dumps(payload), encoding="utf-8")
+    try:
+        token_path.chmod(0o640)
+    except OSError:
+        pass
+
+    base = webmail_url().rstrip("/") + "/"
+    return {
+        "url": f"{base}vzone-sso.php?t={token}",
+        "expires_in": 60,
+        "address": box.address,
+    }

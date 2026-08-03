@@ -1,17 +1,25 @@
 """Collecte et agrégation des métriques dashboard."""
 from __future__ import annotations
 
+import logging
+import os
 import shutil
+import stat as statmod
+import subprocess
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import psutil
+from django.conf import settings
 from django.db.models import Count
 from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.core.services import collect_system_metrics
 from apps.dashboard.models import ResourceSnapshot
+
+logger = logging.getLogger(__name__)
 
 
 def capture_snapshot() -> ResourceSnapshot:
@@ -76,6 +84,230 @@ def service_statuses() -> list[dict[str, Any]]:
     return results
 
 
+def directory_size_bytes(path: Path) -> int:
+    """Taille du répertoire en octets (home compte uniquement, sans suivre les symlinks)."""
+    try:
+        path = path.resolve(strict=False)
+    except OSError:
+        return 0
+    if not path.is_dir():
+        return 0
+
+    # Linux : du -sb (ne suit pas les symlinks) — plus fiable qu'un walk Python
+    try:
+        proc = subprocess.run(
+            ["du", "-sb", "--", str(path)],
+            capture_output=True,
+            text=True,
+            timeout=90,
+            check=False,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            return max(0, int(proc.stdout.split()[0]))
+    except (FileNotFoundError, ValueError, subprocess.TimeoutExpired, OSError) as exc:
+        logger.debug("du fallback pour %s: %s", path, exc)
+
+    total = 0
+    try:
+        root_dev = path.stat().st_dev
+    except OSError:
+        return 0
+    try:
+        for dirpath, dirnames, filenames in os.walk(path, followlinks=False):
+            # Ne pas descendre dans un autre montage / FS
+            try:
+                if Path(dirpath).stat().st_dev != root_dev:
+                    dirnames[:] = []
+                    continue
+            except OSError:
+                dirnames[:] = []
+                continue
+            # Ignorer les symlinks de répertoires
+            alive = []
+            for d in dirnames:
+                dp = Path(dirpath) / d
+                try:
+                    if dp.is_symlink():
+                        continue
+                    if dp.stat().st_dev != root_dev:
+                        continue
+                    alive.append(d)
+                except OSError:
+                    continue
+            dirnames[:] = alive
+            for name in filenames:
+                fp = Path(dirpath) / name
+                try:
+                    st = fp.lstat()
+                    if statmod.S_ISLNK(st.st_mode) or not statmod.S_ISREG(st.st_mode):
+                        continue
+                    total += st.st_size
+                except OSError:
+                    continue
+    except OSError as exc:
+        logger.debug("directory_size_bytes %s: %s", path, exc)
+    return total
+
+
+def _account_home_for_disk(user: User) -> Path | None:
+    """Home strictement sous VZONE_HOME_ROOT/<username> (jamais le root ni /)."""
+    from apps.files.services import personal_home
+
+    root = Path(settings.VZONE_HOME_ROOT).resolve()
+    home_name = (user.system_username or user.username or "").strip().lower()
+    if not home_name or home_name in {".", "..", "root", "home"} or "/" in home_name or "\\" in home_name:
+        logger.warning("Disk usage: username invalide pour %s", user.pk)
+        return None
+
+    home = (root / home_name).resolve()
+    # Doit être un enfant direct de HOME_ROOT
+    try:
+        if home.parent != root:
+            logger.warning("Disk usage: home hors jail %s (root=%s)", home, root)
+            return None
+    except Exception:  # noqa: BLE001
+        return None
+    if home == root or home == Path("/"):
+        return None
+
+    # Préférer personal_home si cohérent
+    try:
+        ph = personal_home(user).resolve()
+        if ph.parent == root and ph.name == home_name:
+            home = ph
+    except OSError:
+        pass
+
+    if not home.is_dir():
+        return home  # taille 0
+    return home
+
+
+def account_disk_breakdown(home: Path) -> dict[str, int]:
+    """Répartition par dossier de premier niveau (Mo utiles pour le debug UI)."""
+    out: dict[str, int] = {}
+    try:
+        for child in home.iterdir():
+            if child.is_symlink():
+                continue
+            if child.is_dir():
+                out[child.name] = directory_size_bytes(child)
+            elif child.is_file():
+                try:
+                    out[child.name] = child.stat().st_size
+                except OSError:
+                    out[child.name] = 0
+    except OSError:
+        pass
+    return out
+
+
+def account_disk_usage(user: User) -> dict[str, Any]:
+    """Disk Usage limité au home du compte (style cPanel) — jamais le disque serveur."""
+    from apps.packages.models import PackageAssignment
+
+    home = _account_home_for_disk(user)
+    used = directory_size_bytes(home) if home and home.is_dir() else 0
+    breakdown = account_disk_breakdown(home) if home and home.is_dir() else {}
+
+    assignment = PackageAssignment.objects.filter(user=user).select_related("package").first()
+    pkg = assignment.package if assignment else None
+    unlimited = bool(pkg and pkg.unlimited_disk)
+    quota = getattr(user, "quota", None)
+
+    if pkg and not unlimited and pkg.disk_mb > 0:
+        total = int(pkg.disk_mb) * 1024 * 1024
+        quota_mb = int(pkg.disk_mb)
+    elif quota and not getattr(quota, "unlimited_disk", False) and (quota.disk_mb or 0) > 0:
+        total = int(quota.disk_mb) * 1024 * 1024
+        quota_mb = int(quota.disk_mb)
+        unlimited = False
+    else:
+        total = used if used > 0 else 1
+        quota_mb = None
+        unlimited = True
+
+    free = max(0, total - used) if not unlimited else 0
+    percent = round(min(100.0, used / total * 100), 2) if total and not unlimited else 0.0
+    used_mb = round(used / (1024 * 1024), 2)
+
+    return {
+        "total": total if not unlimited else used,
+        "used": used,
+        "free": free,
+        "percent": percent,
+        "used_mb": used_mb,
+        "quota_mb": None if unlimited else quota_mb,
+        "unlimited": unlimited,
+        "home_directory": str(home) if home else "",
+        "breakdown_mb": {
+            k: round(v / (1024 * 1024), 2) for k, v in sorted(breakdown.items(), key=lambda x: -x[1])[:12]
+        },
+    }
+
+
+def account_resource_counts(user: User) -> dict[str, int]:
+    """Compteurs d'usage propres au compte."""
+    from apps.domains.models import Domain
+
+    counts: dict[str, int] = {
+        # Domaines « package » : principal + addon (pas les sous-domaines)
+        "domains": Domain.objects.filter(
+            owner=user,
+            domain_type__in={Domain.DomainType.PRIMARY, Domain.DomainType.ADDON},
+        ).count(),
+        "dns_zones": 0,
+        "emails": 0,
+        "databases": 0,
+        "ftp_accounts": 0,
+    }
+    try:
+        from apps.dns.models import DnsZone
+
+        counts["dns_zones"] = DnsZone.objects.filter(owner=user).count()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from apps.email.models import Mailbox
+
+        counts["emails"] = Mailbox.objects.filter(mail_domain__owner=user).count()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from apps.databases.models import Database
+
+        counts["databases"] = Database.objects.filter(owner=user).count()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from apps.ftp.models import FtpAccount
+
+        counts["ftp_accounts"] = FtpAccount.objects.filter(owner=user).count()
+    except Exception:  # noqa: BLE001
+        pass
+    return counts
+
+
+def account_info(user: User) -> dict[str, Any]:
+    from apps.domains.models import Domain
+    from apps.files.services import personal_home
+
+    primary = (
+        Domain.objects.filter(owner=user, domain_type=Domain.DomainType.PRIMARY, is_active=True)
+        .order_by("created_at")
+        .first()
+    )
+    home = personal_home(user)
+    return {
+        "username": user.username,
+        "email": user.email,
+        "home_directory": str(home),
+        "primary_domain": primary.name if primary else "",
+        "last_login_ip": user.last_login_ip or "",
+        "last_login": user.last_login.isoformat() if user.last_login else None,
+    }
+
+
 def overview_for(user: User) -> dict[str, Any]:
     from apps.dns.models import DnsZone
     from apps.domains.models import Domain
@@ -107,14 +339,37 @@ def overview_for(user: User) -> dict[str, Any]:
         users.values("role").annotate(c=Count("id")).values_list("role", "c")
     )
     assignment = PackageAssignment.objects.filter(user=user).select_related("package").first()
-    disk = shutil.disk_usage("/")
+
+    # Compte client : disk + infos limités au home / ressources du compte
+    if user.role == User.Role.CLIENT:
+        disk = account_disk_usage(user)
+        usage = account_resource_counts(user)
+        account = account_info(user)
+        dns_zones_count = usage.get("dns_zones", 0)
+        domains_total = usage.get("domains", 0)
+    else:
+        disk_raw = shutil.disk_usage("/")
+        disk = {
+            "total": disk_raw.total,
+            "used": disk_raw.used,
+            "free": disk_raw.free,
+            "percent": round(disk_raw.used / disk_raw.total * 100, 2) if disk_raw.total else 0,
+            "unlimited": False,
+            "home_directory": "",
+            "quota_mb": None,
+        }
+        usage = None
+        account = None
+        dns_zones_count = zones.count()
+        domains_total = domains.count()
+
     return {
         "users_total": users.count(),
         "users_by_role": role_counts,
         "clients": role_counts.get("client", 0),
         "resellers": role_counts.get("reseller", 0),
-        "dns_zones": zones.count(),
-        "domains_total": domains.count(),
+        "dns_zones": dns_zones_count,
+        "domains_total": domains_total,
         "packages_active": packages.count(),
         "sessions_active": User.objects.filter(
             sessions__is_revoked=False,
@@ -125,12 +380,9 @@ def overview_for(user: User) -> dict[str, Any]:
         if user.role == User.Role.ADMINISTRATOR
         else 0,
         "my_package": assignment.package.name if assignment else None,
-        "disk": {
-            "total": disk.total,
-            "used": disk.used,
-            "free": disk.free,
-            "percent": round(disk.used / disk.total * 100, 2) if disk.total else 0,
-        },
+        "disk": disk,
+        "usage": usage,
+        "account": account,
         "services": service_statuses() if user.role == User.Role.ADMINISTRATOR else [],
         "metrics": collect_system_metrics() if user.role != User.Role.CLIENT else None,
     }

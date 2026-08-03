@@ -60,13 +60,18 @@ def test_create_database_user_and_grant(api: APIClient, db_root):
         format="json",
     )
     assert grant.status_code == 201
+    priv_id = grant.json()["data"]["id"]
+
+    revoke = api.delete(reverse("databases-privilege-delete", kwargs={"pk": priv_id}))
+    assert revoke.status_code == 204
+    assert DatabasePrivilege.objects.count() == 0
 
     overview = api.get(reverse("databases-overview"))
     assert overview.status_code == 200
     ov = overview.json()["data"]
     assert ov["databases"] == 1
     assert ov["users"] == 1
-    assert ov["privileges"] == 1
+    assert ov["privileges"] == 0
     assert ov["phpmyadmin_url"] == "/phpmyadmin/"
 
     pending = list((db_root / "pending").glob("*.sql"))

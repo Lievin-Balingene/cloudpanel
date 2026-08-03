@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api";
+import { runWithProgress } from "@/stores/operations";
 
 interface BackupOverview {
   archives: number;
@@ -90,14 +91,23 @@ export function BackupManager({ title }: { title: string }) {
               form.includes_email ? "email" : null,
             ].filter(Boolean)
           : [];
-      return apiRequest("/backups/archives/", {
-        method: "POST",
-        body: JSON.stringify({
-          backup_type: form.backup_type,
-          label: form.label,
-          includes,
-        }),
-      });
+      return runWithProgress(
+        "Création sauvegarde",
+        () =>
+          apiRequest("/backups/archives/", {
+            method: "POST",
+            body: JSON.stringify({
+              backup_type: form.backup_type,
+              label: form.label,
+              includes,
+            }),
+          }),
+        {
+          detail: form.label || form.backup_type,
+          tickDetail: (ms) =>
+            ms < 3000 ? "Préparation…" : ms < 10000 ? "Archivage des fichiers…" : "Compression…",
+        },
+      );
     },
     onSuccess: () => {
       setForm({
@@ -115,7 +125,14 @@ export function BackupManager({ title }: { title: string }) {
 
   const restore = useMutation({
     mutationFn: (id: number) =>
-      apiRequest(`/backups/archives/${id}/restore/`, { method: "POST", body: "{}" }),
+      runWithProgress(
+        "Restauration sauvegarde",
+        () => apiRequest(`/backups/archives/${id}/restore/`, { method: "POST", body: "{}" }),
+        {
+          tickDetail: (ms) =>
+            ms < 4000 ? "Lecture de l'archive…" : "Restauration en cours…",
+        },
+      ),
     onSuccess: invalidate,
     onError: (err: Error) => setError(err.message),
   });

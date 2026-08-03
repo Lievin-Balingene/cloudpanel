@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api";
+import { runWithProgress } from "@/stores/operations";
 
 interface GitOverview {
   repositories: number;
@@ -67,10 +68,23 @@ export function GitDeployManager({ title }: { title: string }) {
 
   const create = useMutation({
     mutationFn: () =>
-      apiRequest("/git/repos/", {
-        method: "POST",
-        body: JSON.stringify({ ...form, clone_now: true }),
-      }),
+      runWithProgress(
+        `Clone Git · ${form.name || "dépôt"}`,
+        () =>
+          apiRequest("/git/repos/", {
+            method: "POST",
+            body: JSON.stringify({ ...form, clone_now: true }),
+          }),
+        {
+          detail: form.remote_url,
+          tickDetail: (ms) =>
+            ms < 2500
+              ? "Connexion au dépôt distant…"
+              : ms < 7000
+                ? "Clone en cours…"
+                : "Indexation et finalisation…",
+        },
+      ),
     onSuccess: () => {
       setForm({ name: "", remote_url: "", branch: "main" });
       setError(null);
@@ -80,15 +94,24 @@ export function GitDeployManager({ title }: { title: string }) {
   });
 
   const action = useMutation({
-    mutationFn: ({ id, op }: { id: number; op: string }) =>
-      apiRequest(`/git/repos/${id}/${op}/`, { method: "POST", body: "{}" }),
+    mutationFn: ({ id, op, name }: { id: number; op: string; name: string }) =>
+      runWithProgress(
+        `Git ${op} · ${name}`,
+        () => apiRequest(`/git/repos/${id}/${op}/`, { method: "POST", body: "{}" }),
+        {
+          tickDetail: (ms) =>
+            ms < 2000 ? `Exécution ${op}…` : "Synchronisation…",
+        },
+      ),
     onSuccess: invalidate,
     onError: (err: Error) => setError(err.message),
   });
 
   const remove = useMutation({
-    mutationFn: (id: number) =>
-      apiRequest(`/git/repos/${id}/?remove_files=true`, { method: "DELETE" }),
+    mutationFn: ({ id, name }: { id: number; name: string }) =>
+      runWithProgress(`Suppression Git · ${name}`, () =>
+        apiRequest(`/git/repos/${id}/?remove_files=true`, { method: "DELETE" }),
+      ),
     onSuccess: invalidate,
   });
 
@@ -147,7 +170,7 @@ export function GitDeployManager({ title }: { title: string }) {
             onChange={(e) => setForm({ ...form, branch: e.target.value })}
           />
           <button className="vz-btn-primary whitespace-nowrap" type="submit" disabled={create.isPending}>
-            Clone
+            {create.isPending ? "Clone…" : "Clone"}
           </button>
         </div>
       </form>
@@ -199,7 +222,8 @@ export function GitDeployManager({ title }: { title: string }) {
                     <button
                       type="button"
                       className="text-cp-link hover:underline"
-                      onClick={() => action.mutate({ id: repo.id, op: "pull" })}
+                      disabled={action.isPending}
+                      onClick={() => action.mutate({ id: repo.id, op: "pull", name: repo.name })}
                     >
                       Pull
                     </button>
@@ -223,7 +247,8 @@ export function GitDeployManager({ title }: { title: string }) {
                       type="button"
                       className="text-cp-danger hover:underline"
                       onClick={() => {
-                        if (window.confirm(`Supprimer ${repo.name} ?`)) remove.mutate(repo.id);
+                        if (window.confirm(`Supprimer ${repo.name} ?`))
+                          remove.mutate({ id: repo.id, name: repo.name });
                       }}
                     >
                       Supprimer

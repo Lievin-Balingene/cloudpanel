@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api";
+import { runWithProgress } from "@/stores/operations";
 
 interface NodeOverview {
   apps: number;
@@ -51,7 +52,14 @@ export function NodeAppsManager({ title }: { title: string }) {
 
   const create = useMutation({
     mutationFn: () =>
-      apiRequest("/node/apps/", { method: "POST", body: JSON.stringify(form) }),
+      runWithProgress(
+        `Création app Node · ${form.name || "app"}`,
+        () => apiRequest("/node/apps/", { method: "POST", body: JSON.stringify(form) }),
+        {
+          tickDetail: (ms) =>
+            ms < 2500 ? "Préparation du runtime…" : "Configuration du process…",
+        },
+      ),
     onSuccess: () => {
       setForm({ name: "", framework: "generic", node_version: "20", domain_name: "" });
       setError(null);
@@ -61,8 +69,10 @@ export function NodeAppsManager({ title }: { title: string }) {
   });
 
   const action = useMutation({
-    mutationFn: ({ id, op }: { id: number; op: string }) =>
-      apiRequest(`/node/apps/${id}/${op}/`, { method: "POST", body: "{}" }),
+    mutationFn: ({ id, op, name }: { id: number; op: string; name: string }) =>
+      runWithProgress(`Node ${op} · ${name}`, () =>
+        apiRequest(`/node/apps/${id}/${op}/`, { method: "POST", body: "{}" }),
+      ),
     onSuccess: invalidate,
     onError: (err: Error) => setError(err.message),
   });
@@ -194,7 +204,7 @@ export function NodeAppsManager({ title }: { title: string }) {
                       <button
                         type="button"
                         className="text-cp-link hover:underline"
-                        onClick={() => action.mutate({ id: app.id, op: "start" })}
+                        onClick={() => action.mutate({ id: app.id, op: "start", name: app.name })}
                       >
                         Start
                       </button>
@@ -202,7 +212,7 @@ export function NodeAppsManager({ title }: { title: string }) {
                       <button
                         type="button"
                         className="text-cp-link hover:underline"
-                        onClick={() => action.mutate({ id: app.id, op: "stop" })}
+                        onClick={() => action.mutate({ id: app.id, op: "stop", name: app.name })}
                       >
                         Stop
                       </button>
@@ -210,14 +220,14 @@ export function NodeAppsManager({ title }: { title: string }) {
                     <button
                       type="button"
                       className="text-cp-link hover:underline"
-                      onClick={() => action.mutate({ id: app.id, op: "restart" })}
+                      onClick={() => action.mutate({ id: app.id, op: "restart", name: app.name })}
                     >
                       Restart
                     </button>
                     <button
                       type="button"
                       className="text-cp-link hover:underline"
-                      onClick={() => action.mutate({ id: app.id, op: "install" })}
+                      onClick={() => action.mutate({ id: app.id, op: "install", name: app.name })}
                     >
                       npm install
                     </button>

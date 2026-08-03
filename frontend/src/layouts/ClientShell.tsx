@@ -29,6 +29,7 @@ import { apiRequest } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
 import { useAuthStore } from "@/stores/auth";
 import { useThemeStore } from "@/stores/theme";
+import { OperationProgressHost } from "@/components/OperationProgressHost";
 import type { DashboardOverview } from "@/types";
 
 type NavItem = { to: string; label: string; icon: typeof Home; end?: boolean };
@@ -149,12 +150,39 @@ function HostUsagePanel() {
   });
 
   const pkg = assignment?.package;
-  const diskLimitMb = pkg && !pkg.unlimited_disk ? pkg.disk_mb : null;
-  const diskUsedMb = data?.disk ? data.disk.used / (1024 * 1024) : 0;
+  const account = data?.account;
+  const usage = data?.usage;
+  const unlimitedDisk = Boolean(data?.disk?.unlimited || pkg?.unlimited_disk);
+  const diskLimitMb =
+    !unlimitedDisk && (data?.disk?.quota_mb ?? (pkg ? pkg.disk_mb : null))
+      ? Number(data?.disk?.quota_mb ?? pkg?.disk_mb)
+      : null;
+  // Préférer used_mb (explicite) — évite toute confusion d'unités avec le disque serveur
+  const diskUsedMb =
+    typeof data?.disk?.used_mb === "number"
+      ? data.disk.used_mb
+      : data?.disk
+        ? data.disk.used / (1024 * 1024)
+        : 0;
   const diskPct =
     diskLimitMb && diskLimitMb > 0
       ? Math.min(100, (diskUsedMb / diskLimitMb) * 100)
       : data?.disk?.percent ?? 0;
+  const formatUsedMb = (mb: number) =>
+    mb < 0.1 ? "0" : mb < 10 ? mb.toFixed(1) : mb < 100 ? mb.toFixed(1) : mb.toFixed(0);
+  const diskLabel = unlimitedDisk
+    ? `${formatUsedMb(diskUsedMb)} Mo / ∞`
+    : diskLimitMb
+      ? `${formatUsedMb(diskUsedMb)} / ${diskLimitMb} Mo`
+      : data?.disk
+        ? `${formatBytes(data.disk.used)} / ${formatBytes(data.disk.total)}`
+        : "—";
+
+  const fmtQuota = (used: number | undefined, limit: number | undefined) => {
+    const u = used ?? 0;
+    if (limit == null) return String(u);
+    return `${u} / ${limit}`;
+  };
 
   return (
     <aside className="hidden w-72 shrink-0 xl:block">
@@ -166,19 +194,23 @@ function HostUsagePanel() {
           <dl className="space-y-2 p-3 text-sm">
             <div className="flex justify-between gap-2">
               <dt className="text-cp-muted">Current User</dt>
-              <dd className="font-medium text-cp-text">{user?.username ?? "—"}</dd>
+              <dd className="font-medium text-cp-text">{account?.username ?? user?.username ?? "—"}</dd>
             </div>
             <div className="flex justify-between gap-2">
               <dt className="text-cp-muted">Primary Domain</dt>
-              <dd className="truncate font-medium text-cp-text">{user?.email ?? "—"}</dd>
+              <dd className="truncate font-medium text-cp-text" title={account?.primary_domain || undefined}>
+                {account?.primary_domain || "—"}
+              </dd>
             </div>
             <div className="flex justify-between gap-2">
               <dt className="text-cp-muted">Home Directory</dt>
-              <dd className="truncate font-medium text-cp-text">/home/{user?.username ?? "…"}</dd>
+              <dd className="truncate font-medium text-cp-text" title={account?.home_directory || undefined}>
+                {account?.home_directory || `/home/${user?.username ?? "…"}`}
+              </dd>
             </div>
             <div className="flex justify-between gap-2">
               <dt className="text-cp-muted">Last Login IP</dt>
-              <dd className="font-medium text-cp-text">—</dd>
+              <dd className="font-medium text-cp-text">{account?.last_login_ip || "—"}</dd>
             </div>
             <div className="flex justify-between gap-2">
               <dt className="text-cp-muted">Theme</dt>
@@ -192,17 +224,16 @@ function HostUsagePanel() {
             Statistics
           </div>
           <div className="space-y-3 p-3">
-            <UsageBar
-              label="Disk Usage"
-              usedLabel={
-                diskLimitMb
-                  ? `${diskUsedMb.toFixed(0)} / ${diskLimitMb} Mo`
-                  : data?.disk
-                    ? `${formatBytes(data.disk.used)} / ${formatBytes(data.disk.total)}`
-                    : "—"
-              }
-              percent={diskPct}
-            />
+            <UsageBar label="Disk Usage" usedLabel={diskLabel} percent={diskPct} />
+            {data?.disk?.breakdown_mb && Object.keys(data.disk.breakdown_mb).length > 0 && diskUsedMb >= 1 && (
+              <p className="text-[10px] leading-relaxed text-cp-muted">
+                {Object.entries(data.disk.breakdown_mb)
+                  .filter(([, mb]) => mb >= 0.1)
+                  .slice(0, 4)
+                  .map(([name, mb]) => `${name}: ${formatUsedMb(mb)} Mo`)
+                  .join(" · ") || "Home quasi vide"}
+              </p>
+            )}
             <UsageBar
               label="Bandwidth"
               usedLabel={
@@ -215,11 +246,11 @@ function HostUsagePanel() {
               percent={0}
             />
             <InfoRow label="Package" value={data?.my_package ?? pkg?.name ?? "Aucun"} />
-            <InfoRow label="Domains" value={`${data?.domains_total ?? 0}${pkg ? ` / ${pkg.domains}` : ""}`} />
-            <InfoRow label="Email Accounts" value={pkg ? `— / ${pkg.emails}` : "—"} />
-            <InfoRow label="Databases" value={pkg ? `— / ${pkg.databases}` : "—"} />
-            <InfoRow label="FTP Accounts" value={pkg ? `— / ${pkg.ftp_accounts}` : "—"} />
-            <InfoRow label="DNS Zones" value={String(data?.dns_zones ?? 0)} />
+            <InfoRow label="Domains" value={fmtQuota(usage?.domains ?? data?.domains_total, pkg?.domains)} />
+            <InfoRow label="Email Accounts" value={fmtQuota(usage?.emails, pkg?.emails)} />
+            <InfoRow label="Databases" value={fmtQuota(usage?.databases, pkg?.databases)} />
+            <InfoRow label="FTP Accounts" value={fmtQuota(usage?.ftp_accounts, pkg?.ftp_accounts)} />
+            <InfoRow label="DNS Zones" value={String(usage?.dns_zones ?? data?.dns_zones ?? 0)} />
           </div>
         </div>
       </div>
@@ -362,6 +393,7 @@ export function ClientShell() {
         </main>
         <HostUsagePanel />
       </div>
+      <OperationProgressHost />
     </div>
   );
 }

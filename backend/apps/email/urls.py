@@ -18,10 +18,12 @@ from apps.email.views import (
     MailDomainListCreateView,
     MailFilterDeleteView,
     MailingListListCreateView,
+    WebmailSsoView,
 )
 
 urlpatterns = [
     path("overview/", EmailOverviewView.as_view(), name="email-overview"),
+    path("webmail/sso/", WebmailSsoView.as_view(), name="email-webmail-sso"),
     path("domains/", MailDomainListCreateView.as_view(), name="email-domain-list"),
     path("domains/<int:pk>/", MailDomainDetailView.as_view(), name="email-domain-detail"),
     path("domains/<int:pk>/dns-sync/", MailDnsSyncView.as_view(), name="email-dns-sync"),

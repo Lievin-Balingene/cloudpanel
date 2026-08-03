@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { useAuthStore } from "@/stores/auth";
 import { useThemeStore } from "@/stores/theme";
+import { OperationProgressHost } from "@/components/OperationProgressHost";
 
 const nav = [
   { to: "/whm", end: true, label: "Accueil WHM", icon: LayoutDashboard },
@@ -113,6 +114,7 @@ export function WhmShell() {
           <Outlet />
         </main>
       </div>
+      <OperationProgressHost />
     </div>
   );
 }

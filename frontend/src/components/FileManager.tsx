@@ -17,6 +17,7 @@ import {
   Pencil,
   Download,
   Shield,
+  X,
 } from "lucide-react";
 import { apiRequest, ApiClientError } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
@@ -42,6 +43,170 @@ interface Listing {
 
 type ClipMode = "copy" | "cut" | null;
 
+type ConfirmState = {
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  danger?: boolean;
+  onConfirm: () => void | Promise<void>;
+};
+
+type UploadItem = {
+  name: string;
+  size: number;
+  percent: number;
+  status: "pending" | "uploading" | "done" | "error";
+  error?: string;
+};
+
+function uploadWithProgress(
+  file: File,
+  cwd: string,
+  token: string | null,
+  onProgress: (percent: number) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/v1/files/upload/");
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0) {
+        onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)));
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress(100);
+        resolve();
+        return;
+      }
+      let message = `Upload échoué (${xhr.status})`;
+      try {
+        const payload = JSON.parse(xhr.responseText);
+        if (payload?.error?.message) message = payload.error.message;
+      } catch {
+        /* ignore */
+      }
+      reject(new ApiClientError(message, xhr.status));
+    };
+
+    xhr.onerror = () => reject(new ApiClientError("Erreur réseau pendant l'upload.", 0));
+    xhr.onabort = () => reject(new ApiClientError("Upload annulé.", 0));
+
+    const body = new FormData();
+    body.append("path", cwd);
+    body.append("file", file);
+    xhr.send(body);
+  });
+}
+
+function ConfirmDialog({
+  state,
+  busy,
+  onCancel,
+}: {
+  state: ConfirmState;
+  busy: boolean;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
+      <div
+        className="w-full max-w-md rounded border border-cp-border bg-white p-4 shadow-xl dark:border-ink-700 dark:bg-ink-950"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="confirm-title"
+      >
+        <h2 id="confirm-title" className="text-base font-semibold text-cp-text">
+          {state.title}
+        </h2>
+        <p className="mt-2 text-sm text-cp-muted whitespace-pre-wrap">{state.message}</p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button type="button" className="vz-btn-ghost" disabled={busy} onClick={onCancel}>
+            Annuler
+          </button>
+          <button
+            type="button"
+            className={state.danger ? "vz-btn-primary bg-cp-danger hover:opacity-90" : "vz-btn-primary"}
+            disabled={busy}
+            onClick={() => void state.onConfirm()}
+          >
+            {busy ? "…" : state.confirmLabel ?? "Confirmer"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function UploadProgressPanel({
+  items,
+  onDismiss,
+}: {
+  items: UploadItem[];
+  onDismiss: () => void;
+}) {
+  const done = items.every((i) => i.status === "done" || i.status === "error");
+  const overall =
+    items.length === 0
+      ? 0
+      : Math.round(items.reduce((sum, i) => sum + i.percent, 0) / items.length);
+
+  return (
+    <div className="fixed bottom-4 right-4 z-[55] w-full max-w-sm rounded border border-cp-border bg-white shadow-xl dark:border-ink-700 dark:bg-ink-950">
+      <div className="flex items-center justify-between border-b border-cp-border px-3 py-2 dark:border-ink-800">
+        <p className="text-sm font-semibold">
+          {done ? "Upload terminé" : `Upload en cours… ${overall}%`}
+        </p>
+        {done && (
+          <button type="button" className="rounded p-1 hover:bg-cp-canvas" onClick={onDismiss} aria-label="Fermer">
+            <X className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+      <div className="space-y-3 p-3">
+        <div className="h-2 overflow-hidden rounded bg-cp-canvas">
+          <div
+            className={`h-full rounded transition-all duration-200 ${
+              items.some((i) => i.status === "error") ? "bg-cp-danger" : "bg-cp-orange"
+            }`}
+            style={{ width: `${overall}%` }}
+          />
+        </div>
+        <ul className="max-h-40 space-y-2 overflow-y-auto text-xs">
+          {items.map((item) => (
+            <li key={item.name + item.size}>
+              <div className="mb-1 flex justify-between gap-2">
+                <span className="truncate font-medium text-cp-text" title={item.name}>
+                  {item.name}
+                </span>
+                <span className="shrink-0 text-cp-muted">
+                  {item.status === "error"
+                    ? "Erreur"
+                    : item.status === "done"
+                      ? "OK"
+                      : `${item.percent}%`}
+                </span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded bg-cp-canvas">
+                <div
+                  className={`h-full rounded transition-all ${
+                    item.status === "error" ? "bg-cp-danger" : "bg-cp-link"
+                  }`}
+                  style={{ width: `${item.percent}%` }}
+                />
+              </div>
+              {item.error && <p className="mt-0.5 text-cp-danger">{item.error}</p>}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 export function FileManager({ title }: { title: string }) {
   const qc = useQueryClient();
   const token = useAuthStore((s) => s.accessToken);
@@ -53,11 +218,18 @@ export function FileManager({ title }: { title: string }) {
     paths: [],
   });
   const [query, setQuery] = useState("");
-  const [editor, setEditor] = useState<{ path: string; content: string } | null>(null);
+  const [editor, setEditor] = useState<{ path: string; content: string; original: string } | null>(
+    null,
+  );
   const [chmodPath, setChmodPath] = useState<string | null>(null);
   const [chmodMode, setChmodMode] = useState("644");
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [uploads, setUploads] = useState<UploadItem[] | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [renameOpen, setRenameOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data, isLoading, refetch } = useQuery({
@@ -76,54 +248,221 @@ export function FileManager({ title }: { title: string }) {
     return items;
   }, [cwd]);
 
-  const run = useCallback(async (fn: () => Promise<unknown>) => {
-    setError(null);
-    try {
-      await fn();
-      await qc.invalidateQueries({ queryKey: ["files"] });
-      setSelected([]);
-    } catch (err) {
-      const message =
-        err instanceof ApiClientError
-          ? err.message
-          : err instanceof Error
+  const run = useCallback(
+    async (fn: () => Promise<unknown>) => {
+      setError(null);
+      try {
+        await fn();
+        await qc.invalidateQueries({ queryKey: ["files"] });
+        setSelected([]);
+      } catch (err) {
+        const message =
+          err instanceof ApiClientError
             ? err.message
-            : "Opération impossible.";
-      setError(message);
+            : err instanceof Error
+              ? err.message
+              : "Opération impossible.";
+        setError(message);
+        throw err;
+      }
+    },
+    [qc],
+  );
+
+  const askConfirm = useCallback((state: ConfirmState) => {
+    setConfirm(state);
+  }, []);
+
+  const handleConfirm = useCallback(async () => {
+    if (!confirm) return;
+    setConfirmBusy(true);
+    try {
+      await confirm.onConfirm();
+      setConfirm(null);
+    } catch {
+      /* erreur déjà affichée via run */
+    } finally {
+      setConfirmBusy(false);
     }
-  }, [qc]);
+  }, [confirm]);
 
   const uploadFiles = async (files: FileList | File[]) => {
-    await run(async () => {
-      for (const file of Array.from(files)) {
-        const body = new FormData();
-        body.append("path", cwd);
-        body.append("file", file);
-        const response = await fetch(`/api/v1/files/upload/`, {
-          method: "POST",
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-          body,
-        });
-        if (!response.ok) {
-          const payload = await response.json().catch(() => null);
-          throw new ApiClientError(
-            payload?.error?.message ?? `Upload échoué (${response.status})`,
-            response.status,
+    const list = Array.from(files);
+    if (!list.length) return;
+    setError(null);
+    const items: UploadItem[] = list.map((f) => ({
+      name: f.name,
+      size: f.size,
+      percent: 0,
+      status: "pending",
+    }));
+    setUploads(items);
+
+    let failed = false;
+    for (let i = 0; i < list.length; i++) {
+      const file = list[i];
+      setUploads((prev) =>
+        prev
+          ? prev.map((it, idx) =>
+              idx === i ? { ...it, status: "uploading", percent: 0 } : it,
+            )
+          : prev,
+      );
+      try {
+        await uploadWithProgress(file, cwd, token, (percent) => {
+          setUploads((prev) =>
+            prev ? prev.map((it, idx) => (idx === i ? { ...it, percent } : it)) : prev,
           );
-        }
+        });
+        setUploads((prev) =>
+          prev
+            ? prev.map((it, idx) =>
+                idx === i ? { ...it, status: "done", percent: 100 } : it,
+              )
+            : prev,
+        );
+      } catch (err) {
+        failed = true;
+        const message =
+          err instanceof ApiClientError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : "Upload échoué.";
+        setUploads((prev) =>
+          prev
+            ? prev.map((it, idx) =>
+                idx === i ? { ...it, status: "error", error: message } : it,
+              )
+            : prev,
+        );
+        setError(message);
       }
-    });
+    }
+    await qc.invalidateQueries({ queryKey: ["files"] });
+    if (!failed) setSelected([]);
   };
 
   async function openEditor(entry: FileEntry) {
-    if (!entry.is_text && !entry.name.match(/\.(txt|html?|css|js|json|md|py|php|env|conf|ini|yml|yaml|xml|sh|sql|log|csv)$/i)) {
+    if (
+      !entry.is_text &&
+      !entry.name.match(
+        /\.(txt|html?|css|js|json|md|py|php|env|conf|ini|yml|yaml|xml|sh|sql|log|csv)$/i,
+      )
+    ) {
       setError("Prévisualisation texte non disponible pour ce type.");
       return;
     }
     const data = await apiRequest<{ path: string; content: string }>(
       `/files/read/?path=${encodeURIComponent(entry.path)}`,
     );
-    setEditor({ path: data.path, content: data.content });
+    setEditor({ path: data.path, content: data.content, original: data.content });
+  }
+
+  function requestCloseEditor() {
+    if (!editor) return;
+    if (editor.content === editor.original) {
+      setEditor(null);
+      return;
+    }
+    askConfirm({
+      title: "Modifications non enregistrées",
+      message: `Le fichier « ${editor.path} » a été modifié. Fermer sans enregistrer ?`,
+      confirmLabel: "Fermer sans enregistrer",
+      danger: true,
+      onConfirm: () => {
+        setEditor(null);
+      },
+    });
+  }
+
+  function requestSaveEditor() {
+    if (!editor) return;
+    askConfirm({
+      title: "Enregistrer le fichier",
+      message: `Confirmer l'enregistrement de « ${editor.path} » ?`,
+      confirmLabel: "Enregistrer",
+      onConfirm: async () => {
+        await run(async () => {
+          await apiRequest("/files/write/", {
+            method: "PUT",
+            body: JSON.stringify({ path: editor.path, content: editor.content }),
+          });
+          setEditor(null);
+        });
+      },
+    });
+  }
+
+  function requestDelete() {
+    if (!selected.length) return;
+    const names = selected.map((p) => p.split("/").pop() || p);
+    const preview =
+      names.length <= 5
+        ? names.map((n) => `• ${n}`).join("\n")
+        : `${names
+            .slice(0, 5)
+            .map((n) => `• ${n}`)
+            .join("\n")}\n… et ${names.length - 5} autre(s)`;
+    askConfirm({
+      title: "Supprimer",
+      message: `Supprimer définitivement ${selected.length} élément(s) ?\n\n${preview}`,
+      confirmLabel: "Supprimer",
+      danger: true,
+      onConfirm: async () => {
+        await run(() =>
+          apiRequest("/files/delete/", {
+            method: "POST",
+            body: JSON.stringify({ paths: selected }),
+          }),
+        );
+      },
+    });
+  }
+
+  function requestRename() {
+    if (selected.length !== 1) return;
+    const current = selected[0].split("/").pop() || selected[0];
+    setRenameValue(current);
+    setRenameOpen(true);
+  }
+
+  function confirmRename() {
+    const name = renameValue.trim();
+    if (!name || selected.length !== 1) return;
+    const from = selected[0].split("/").pop() || selected[0];
+    setRenameOpen(false);
+    askConfirm({
+      title: "Renommer",
+      message: `Renommer « ${from} » en « ${name} » ?`,
+      confirmLabel: "Renommer",
+      onConfirm: async () => {
+        await run(() =>
+          apiRequest("/files/rename/", {
+            method: "POST",
+            body: JSON.stringify({ path: selected[0], new_name: name }),
+          }),
+        );
+      },
+    });
+  }
+
+  function requestChmodApply() {
+    if (!chmodPath) return;
+    askConfirm({
+      title: "Modifier les permissions",
+      message: `Appliquer le mode ${chmodMode} à « ${chmodPath} » ?`,
+      confirmLabel: "Appliquer",
+      onConfirm: async () => {
+        await run(async () => {
+          await apiRequest("/files/chmod/", {
+            method: "POST",
+            body: JSON.stringify({ path: chmodPath, mode: chmodMode }),
+          });
+          setChmodPath(null);
+        });
+      },
+    });
   }
 
   function toggleSelect(path: string, multi: boolean) {
@@ -266,19 +605,7 @@ export function FileManager({ title }: { title: string }) {
           <ClipboardPaste className="h-4 w-4" />
           Coller
         </button>
-        <button
-          type="button"
-          className="vz-btn-ghost"
-          disabled={!selected.length}
-          onClick={() =>
-            void run(() =>
-              apiRequest("/files/delete/", {
-                method: "POST",
-                body: JSON.stringify({ paths: selected }),
-              }),
-            )
-          }
-        >
+        <button type="button" className="vz-btn-ghost" disabled={!selected.length} onClick={requestDelete}>
           <Trash2 className="h-4 w-4" />
           Supprimer
         </button>
@@ -473,32 +800,26 @@ export function FileManager({ title }: { title: string }) {
                   const entry = data?.entries.find((e) => e.path === selected[0]);
                   if (!entry) return;
                   if (entry.name.match(/\.(zip|tar\.gz|tgz|tar)$/i)) {
-                    void run(() =>
-                      apiRequest("/files/decompress/", {
-                        method: "POST",
-                        body: JSON.stringify({ archive: entry.path, destination: cwd }),
-                      }),
-                    );
+                    askConfirm({
+                      title: "Décompresser",
+                      message: `Décompresser « ${entry.name} » dans le dossier courant ?`,
+                      confirmLabel: "Décompresser",
+                      onConfirm: async () => {
+                        await run(() =>
+                          apiRequest("/files/decompress/", {
+                            method: "POST",
+                            body: JSON.stringify({ archive: entry.path, destination: cwd }),
+                          }),
+                        );
+                      },
+                    });
                   }
                 }}
               >
                 <Archive className="h-4 w-4" />
                 Décompresser
               </button>
-              <button
-                type="button"
-                className="vz-btn-ghost w-full"
-                onClick={() => {
-                  const name = window.prompt("Nouveau nom ?");
-                  if (!name) return;
-                  void run(() =>
-                    apiRequest("/files/rename/", {
-                      method: "POST",
-                      body: JSON.stringify({ path: selected[0], new_name: name }),
-                    }),
-                  );
-                }}
-              >
+              <button type="button" className="vz-btn-ghost w-full" onClick={requestRename}>
                 Renommer
               </button>
             </div>
@@ -542,24 +863,22 @@ export function FileManager({ title }: { title: string }) {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="flex h-[80vh] w-full max-w-4xl flex-col rounded border border-cp-border bg-white shadow-xl dark:border-ink-700 dark:bg-ink-950">
             <div className="flex items-center justify-between border-b border-cp-border px-4 py-3 dark:border-ink-800">
-              <p className="font-semibold">{editor.path}</p>
+              <p className="font-semibold">
+                {editor.path}
+                {editor.content !== editor.original ? (
+                  <span className="ml-2 text-xs font-normal text-cp-muted">(modifié)</span>
+                ) : null}
+              </p>
               <div className="flex gap-2">
                 <button
                   type="button"
                   className="vz-btn-primary"
-                  onClick={() =>
-                    void run(async () => {
-                      await apiRequest("/files/write/", {
-                        method: "PUT",
-                        body: JSON.stringify({ path: editor.path, content: editor.content }),
-                      });
-                      setEditor(null);
-                    })
-                  }
+                  disabled={editor.content === editor.original}
+                  onClick={requestSaveEditor}
                 >
                   Enregistrer
                 </button>
-                <button type="button" className="vz-btn-ghost" onClick={() => setEditor(null)}>
+                <button type="button" className="vz-btn-ghost" onClick={requestCloseEditor}>
                   Fermer
                 </button>
               </div>
@@ -588,25 +907,55 @@ export function FileManager({ title }: { title: string }) {
               <button type="button" className="vz-btn-ghost" onClick={() => setChmodPath(null)}>
                 Annuler
               </button>
-              <button
-                type="button"
-                className="vz-btn-primary"
-                onClick={() =>
-                  void run(async () => {
-                    await apiRequest("/files/chmod/", {
-                      method: "POST",
-                      body: JSON.stringify({ path: chmodPath, mode: chmodMode }),
-                    });
-                    setChmodPath(null);
-                  })
-                }
-              >
+              <button type="button" className="vz-btn-primary" onClick={requestChmodApply}>
                 Appliquer
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {renameOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded border border-cp-border bg-white p-4 shadow-xl dark:border-ink-700 dark:bg-ink-950">
+            <p className="mb-3 font-semibold">Renommer</p>
+            <input
+              className="vz-input mb-3"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") confirmRename();
+              }}
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <button type="button" className="vz-btn-ghost" onClick={() => setRenameOpen(false)}>
+                Annuler
+              </button>
+              <button
+                type="button"
+                className="vz-btn-primary"
+                disabled={!renameValue.trim()}
+                onClick={confirmRename}
+              >
+                Continuer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirm && (
+        <ConfirmDialog
+          state={{ ...confirm, onConfirm: handleConfirm }}
+          busy={confirmBusy}
+          onCancel={() => {
+            if (!confirmBusy) setConfirm(null);
+          }}
+        />
+      )}
+
+      {uploads && <UploadProgressPanel items={uploads} onDismiss={() => setUploads(null)} />}
     </div>
   );
 }

@@ -81,6 +81,9 @@ export interface HostingPackage {
   can_create_packages: boolean;
   allow_dns: boolean;
   allow_ssl: boolean;
+  allow_backup?: boolean;
+  allow_git?: boolean;
+  allow_ssh?: boolean;
   assigned_count?: number;
 }
 
@@ -121,7 +124,32 @@ export interface DashboardOverview {
   packages_active: number;
   sessions_active: number;
   my_package: string | null;
-  disk: { total: number; used: number; free: number; percent: number };
+  disk: {
+    total: number;
+    used: number;
+    free: number;
+    percent: number;
+    unlimited?: boolean;
+    home_directory?: string;
+    quota_mb?: number | null;
+    used_mb?: number;
+    breakdown_mb?: Record<string, number>;
+  };
+  usage?: {
+    domains: number;
+    dns_zones: number;
+    emails: number;
+    databases: number;
+    ftp_accounts: number;
+  } | null;
+  account?: {
+    username: string;
+    email: string;
+    home_directory: string;
+    primary_domain: string;
+    last_login_ip: string;
+    last_login: string | null;
+  } | null;
   services: { name: string; active: boolean }[];
   metrics: SystemMetrics | null;
 }

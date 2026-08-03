@@ -293,6 +293,12 @@ VZONE_MAIL_MAPS_DIR = env("VZONE_MAIL_MAPS_DIR", str(VZONE_DATA_ROOT / "mail" / 
 VZONE_MAIL_HOME_ROOT = env("VZONE_MAIL_HOME_ROOT", str(VZONE_DATA_ROOT / "mail" / "homes"))
 VZONE_MAIL_STACK = env("VZONE_MAIL_STACK", "auto")  # auto | live | mock
 VZONE_MAIL_PUBLIC_IP = env("VZONE_MAIL_PUBLIC_IP", "")
+VZONE_ROUNDCUBE_SSO_DIR = env(
+    "VZONE_ROUNDCUBE_SSO_DIR",
+    str(VZONE_DATA_ROOT / "roundcube" / "sso"),
+)
+VZONE_ROUNDCUBE_IMAP_HOST = env("VZONE_ROUNDCUBE_IMAP_HOST", "127.0.0.1")
+VZONE_ROUNDCUBE_ROOT = env("VZONE_ROUNDCUBE_ROOT", "/opt/vzone/roundcube")
 
 # Bases de données hébergées (provisionnement)
 VZONE_DB_PROVISION_MODE = env("VZONE_DB_PROVISION_MODE", "auto")  # auto | live | mock

@@ -390,7 +390,7 @@ def grant_privilege(
         priv = mysql_privs(privileges)
         sql = (
             f"GRANT {priv} ON `{database.name}`.* "
-            f"TO '{user.username}'@'{_escape_sql_literal(user.host)}';\n"
+            f"TO '{user.username}'@'{_escape_sql_literal(user.host)}'; "
             "FLUSH PRIVILEGES;"
         )
     apply_sql(database.engine, sql, label=f"grant_{database.engine}_{database.name}_{user.username}")
@@ -405,18 +405,51 @@ def grant_privilege(
 
 @transaction.atomic
 def revoke_privilege(priv: DatabasePrivilege) -> None:
+    """Révoque les droits SQL puis retire l'association panel (best-effort)."""
     db = priv.database
     user = priv.user
     if db.engine == DatabaseEngine.POSTGRESQL:
-        sql = f'REVOKE ALL PRIVILEGES ON DATABASE "{db.name}" FROM "{user.username}";'
-    else:
         sql = (
-            f"REVOKE ALL PRIVILEGES ON `{db.name}`.* "
-            f"FROM '{user.username}'@'{_escape_sql_literal(user.host)}';\n"
+            f'REVOKE ALL PRIVILEGES ON DATABASE "{db.name}" FROM "{user.username}"; '
+            f'REVOKE ALL ON SCHEMA public FROM "{user.username}";'
+        )
+    else:
+        # MariaDB/MySQL : ALL PRIVILEGES, GRANT OPTION — une seule ligne pour mysql -e
+        sql = (
+            f"REVOKE ALL PRIVILEGES, GRANT OPTION ON `{db.name}`.* "
+            f"FROM '{user.username}'@'{_escape_sql_literal(user.host)}'; "
             "FLUSH PRIVILEGES;"
         )
-    apply_sql(db.engine, sql, label=f"revoke_{db.engine}_{db.name}_{user.username}")
+    try:
+        apply_sql(db.engine, sql, label=f"revoke_{db.engine}_{db.name}_{user.username}")
+    except VZoneAPIException as exc:
+        # Grant absent / moteur injoignable : on retire quand même le lien panel
+        # (comportement type cPanel) et on journalise.
+        logger.warning(
+            "Revoke SQL échoué pour %s → %s (%s) — suppression panel conservée: %s",
+            user.username,
+            db.name,
+            db.engine,
+            exc,
+        )
+        if not should_execute(db.engine):
+            raise
+        # Mode live : si le REVOKE échoue car « no such grant », on continue ;
+        # sinon on laisse une trace pending pour admin.
+        detail = str(getattr(exc, "detail", exc))
+        extra = getattr(exc, "extra", None) or {}
+        blob = f"{detail} {extra}".lower()
+        soft = any(
+            s in blob
+            for s in ("no such grant", "1141", "1147", "does not exist", "unknown user")
+        )
+        if not soft:
+            _write_pending_sql(
+                f"revoke_{db.engine}_{db.name}_{user.username}_failed.sql",
+                sql + f"\n-- error: {detail}\n",
+            )
     priv.delete()
+    write_inventory()
 
 
 def phpmyadmin_url() -> str:

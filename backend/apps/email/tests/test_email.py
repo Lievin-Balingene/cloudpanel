@@ -92,6 +92,19 @@ def test_create_domain_mailbox_forwarder(api: APIClient, mail_root):
     ).read_text(encoding="utf-8")
     assert "sales@example.test" in (maps / "valiases").read_text(encoding="utf-8")
 
+    box_obj = Mailbox.objects.get(pk=box.json()["data"]["id"])
+    assert box_obj.password_secret
+    assert box_obj.get_password_plain() == "MailPass123!"
+
+    sso = api.post(
+        reverse("email-webmail-sso"),
+        {"mailbox_id": box_obj.pk},
+        format="json",
+    )
+    assert sso.status_code == 200
+    assert "vzone-sso.php?t=" in sso.json()["data"]["url"]
+    assert sso.json()["data"]["address"] == "info@example.test"
+
 
 @pytest.mark.integration
 @pytest.mark.django_db

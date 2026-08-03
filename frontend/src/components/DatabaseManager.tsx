@@ -1,5 +1,12 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Database,
+  ExternalLink,
+  ShieldOff,
+  Trash2,
+  UserPlus,
+} from "lucide-react";
 import { apiRequest } from "@/lib/api";
 
 interface DbOverview {
@@ -41,6 +48,35 @@ interface DbPrivilege {
   privileges: string;
 }
 
+function IconAction({
+  label,
+  onClick,
+  disabled,
+  danger,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      disabled={disabled}
+      onClick={onClick}
+      className={`inline-flex h-8 w-8 items-center justify-center rounded-md border border-transparent transition
+        hover:border-cp-border hover:bg-cp-canvas disabled:cursor-not-allowed disabled:opacity-40
+        ${danger ? "text-cp-danger hover:bg-red-50" : "text-cp-link hover:text-cp-navy"}`}
+    >
+      {children}
+    </button>
+  );
+}
+
 export function DatabaseManager({ title }: { title: string }) {
   const qc = useQueryClient();
   const { data: overview } = useQuery({
@@ -73,6 +109,11 @@ export function DatabaseManager({ title }: { title: string }) {
     privileges: "ALL",
   });
   const [error, setError] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
 
   const invalidateAll = () => {
     void qc.invalidateQueries({ queryKey: ["databases-overview"] });
@@ -118,12 +159,20 @@ export function DatabaseManager({ title }: { title: string }) {
 
   const removeDb = useMutation({
     mutationFn: (id: number) => apiRequest(`/databases/${id}/`, { method: "DELETE" }),
-    onSuccess: invalidateAll,
+    onSuccess: () => {
+      setError(null);
+      invalidateAll();
+    },
+    onError: (err: Error) => setError(err.message),
   });
 
   const removeUser = useMutation({
     mutationFn: (id: number) => apiRequest(`/databases/users/${id}/`, { method: "DELETE" }),
-    onSuccess: invalidateAll,
+    onSuccess: () => {
+      setError(null);
+      invalidateAll();
+    },
+    onError: (err: Error) => setError(err.message),
   });
 
   const openPhpMyAdmin = useMutation({
@@ -141,7 +190,11 @@ export function DatabaseManager({ title }: { title: string }) {
 
   const removeGrant = useMutation({
     mutationFn: (id: number) => apiRequest(`/databases/privileges/${id}/`, { method: "DELETE" }),
-    onSuccess: invalidateAll,
+    onSuccess: () => {
+      setError(null);
+      invalidateAll();
+    },
+    onError: (err: Error) => setError(err.message),
   });
 
   const selectedDbId = grantForm.database_id || databases[0]?.id || 0;
@@ -172,6 +225,10 @@ export function DatabaseManager({ title }: { title: string }) {
     createGrant.mutate(payload);
   }
 
+  function askConfirm(title: string, message: string, onConfirm: () => void) {
+    setConfirm({ title, message, onConfirm });
+  }
+
   return (
     <div className="space-y-4 animate-fade-up">
       <div className="vz-panel p-4">
@@ -190,6 +247,7 @@ export function DatabaseManager({ title }: { title: string }) {
                 target="_blank"
                 rel="noreferrer"
               >
+                <ExternalLink className="h-4 w-4" />
                 phpMyAdmin
               </a>
             )}
@@ -200,6 +258,7 @@ export function DatabaseManager({ title }: { title: string }) {
                 target="_blank"
                 rel="noreferrer"
               >
+                <ExternalLink className="h-4 w-4" />
                 pgAdmin
               </a>
             )}
@@ -242,6 +301,7 @@ export function DatabaseManager({ title }: { title: string }) {
           <option value="postgresql">PostgreSQL</option>
         </select>
         <button className="vz-btn-primary" type="submit" disabled={createDb.isPending}>
+          <Database className="h-4 w-4" />
           Créer base
         </button>
       </form>
@@ -254,7 +314,7 @@ export function DatabaseManager({ title }: { title: string }) {
               <th className="px-3 py-2">Moteur</th>
               <th className="px-3 py-2">Charset</th>
               <th className="px-3 py-2">Privs</th>
-              <th className="px-3 py-2">Actions</th>
+              <th className="px-3 py-2 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -272,15 +332,19 @@ export function DatabaseManager({ title }: { title: string }) {
                 <td className="px-3 py-2">{db.charset}</td>
                 <td className="px-3 py-2">{db.privilege_count}</td>
                 <td className="px-3 py-2">
-                  <button
-                    type="button"
-                    className="text-cp-danger hover:underline"
-                    onClick={() => {
-                      if (window.confirm(`Supprimer ${db.name} ?`)) removeDb.mutate(db.id);
-                    }}
-                  >
-                    Supprimer
-                  </button>
+                  <div className="flex justify-end gap-1">
+                    <IconAction
+                      label={`Supprimer ${db.name}`}
+                      danger
+                      onClick={() =>
+                        askConfirm("Supprimer la base", `Supprimer définitivement « ${db.name} » ?`, () =>
+                          removeDb.mutate(db.id),
+                        )
+                      }
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </IconAction>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -327,6 +391,7 @@ export function DatabaseManager({ title }: { title: string }) {
           onChange={(e) => setUserForm({ ...userForm, host: e.target.value })}
         />
         <button className="vz-btn-primary" type="submit" disabled={createUser.isPending}>
+          <UserPlus className="h-4 w-4" />
           Créer user
         </button>
       </form>
@@ -338,7 +403,7 @@ export function DatabaseManager({ title }: { title: string }) {
               <th className="px-3 py-2">Utilisateur</th>
               <th className="px-3 py-2">Moteur</th>
               <th className="px-3 py-2">Host</th>
-              <th className="px-3 py-2">Actions</th>
+              <th className="px-3 py-2 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -348,26 +413,29 @@ export function DatabaseManager({ title }: { title: string }) {
                 <td className="px-3 py-2">{u.engine}</td>
                 <td className="px-3 py-2">{u.host}</td>
                 <td className="px-3 py-2">
-                  <div className="flex flex-wrap gap-3">
+                  <div className="flex justify-end gap-1">
                     {u.engine === "mysql" && (
-                      <button
-                        type="button"
-                        className="text-cp-orange hover:underline"
+                      <IconAction
+                        label={`Ouvrir phpMyAdmin (${u.username})`}
                         disabled={openPhpMyAdmin.isPending}
                         onClick={() => openPhpMyAdmin.mutate(u.id)}
                       >
-                        phpMyAdmin
-                      </button>
+                        <ExternalLink className="h-4 w-4" />
+                      </IconAction>
                     )}
-                    <button
-                      type="button"
-                      className="text-cp-danger hover:underline"
-                      onClick={() => {
-                        if (window.confirm(`Supprimer ${u.username} ?`)) removeUser.mutate(u.id);
-                      }}
+                    <IconAction
+                      label={`Supprimer ${u.username}`}
+                      danger
+                      onClick={() =>
+                        askConfirm(
+                          "Supprimer l'utilisateur",
+                          `Supprimer définitivement « ${u.username} » ?`,
+                          () => removeUser.mutate(u.id),
+                        )
+                      }
                     >
-                      Supprimer
-                    </button>
+                      <Trash2 className="h-4 w-4" />
+                    </IconAction>
                   </div>
                 </td>
               </tr>
@@ -432,7 +500,7 @@ export function DatabaseManager({ title }: { title: string }) {
               <th className="px-3 py-2">User</th>
               <th className="px-3 py-2">Base</th>
               <th className="px-3 py-2">Droits</th>
-              <th className="px-3 py-2">Actions</th>
+              <th className="px-3 py-2 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -442,13 +510,22 @@ export function DatabaseManager({ title }: { title: string }) {
                 <td className="px-3 py-2 font-mono text-xs">{p.database_name}</td>
                 <td className="px-3 py-2">{p.privileges}</td>
                 <td className="px-3 py-2">
-                  <button
-                    type="button"
-                    className="text-cp-danger hover:underline"
-                    onClick={() => removeGrant.mutate(p.id)}
-                  >
-                    Révoquer
-                  </button>
+                  <div className="flex justify-end gap-1">
+                    <IconAction
+                      label={`Révoquer ${p.username} → ${p.database_name}`}
+                      danger
+                      disabled={removeGrant.isPending}
+                      onClick={() =>
+                        askConfirm(
+                          "Révoquer les privilèges",
+                          `Retirer les droits de « ${p.username} » sur « ${p.database_name} » ?`,
+                          () => removeGrant.mutate(p.id),
+                        )
+                      }
+                    >
+                      <ShieldOff className="h-4 w-4" />
+                    </IconAction>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -462,6 +539,31 @@ export function DatabaseManager({ title }: { title: string }) {
           </tbody>
         </table>
       </div>
+
+      {confirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded border border-cp-border bg-white p-4 shadow-xl dark:border-ink-700 dark:bg-ink-950">
+            <h2 className="text-base font-semibold">{confirm.title}</h2>
+            <p className="mt-2 text-sm text-cp-muted">{confirm.message}</p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" className="vz-btn-ghost" onClick={() => setConfirm(null)}>
+                Annuler
+              </button>
+              <button
+                type="button"
+                className="vz-btn-primary bg-cp-danger hover:opacity-90"
+                onClick={() => {
+                  const fn = confirm.onConfirm;
+                  setConfirm(null);
+                  fn();
+                }}
+              >
+                Confirmer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

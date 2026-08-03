@@ -1,6 +1,7 @@
 import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api";
+import { runWithProgress } from "@/stores/operations";
 import type { Domain } from "@/types";
 
 export function DomainsManager({ title }: { title: string }) {
@@ -78,10 +79,18 @@ export function DomainsManager({ title }: { title: string }) {
   const issueSsl = useMutation({
     mutationFn: () => {
       if (!selected) throw new Error("Sélectionnez un domaine");
-      return apiRequest(`/domains/${selected.id}/ssl/letsencrypt/`, {
-        method: "POST",
-        body: "{}",
-      });
+      return runWithProgress(
+        `SSL Let's Encrypt · ${selected.name}`,
+        () =>
+          apiRequest(`/domains/${selected.id}/ssl/letsencrypt/`, {
+            method: "POST",
+            body: "{}",
+          }),
+        {
+          tickDetail: (ms) =>
+            ms < 4000 ? "Challenge ACME…" : "Émission du certificat…",
+        },
+      );
     },
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["domains"] }),
   });

@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api";
+import { runWithProgress } from "@/stores/operations";
 
 interface DockerOverview {
   containers: number;
@@ -52,17 +53,26 @@ export function DockerManager({ title }: { title: string }) {
 
   const create = useMutation({
     mutationFn: () =>
-      apiRequest("/docker/containers/", {
-        method: "POST",
-        body: JSON.stringify({
-          name: form.name,
-          image: form.image,
-          tag: form.tag,
-          memory_mb: form.memory_mb,
-          ports: form.host_port ? { [form.host_port]: form.container_port || "80" } : {},
-          start_now: true,
-        }),
-      }),
+      runWithProgress(
+        `Docker · ${form.name || form.image}`,
+        () =>
+          apiRequest("/docker/containers/", {
+            method: "POST",
+            body: JSON.stringify({
+              name: form.name,
+              image: form.image,
+              tag: form.tag,
+              memory_mb: form.memory_mb,
+              ports: form.host_port ? { [form.host_port]: form.container_port || "80" } : {},
+              start_now: true,
+            }),
+          }),
+        {
+          detail: `${form.image}:${form.tag}`,
+          tickDetail: (ms) =>
+            ms < 4000 ? "Pull de l'image…" : "Démarrage du conteneur…",
+        },
+      ),
     onSuccess: () => {
       setForm({ name: "", image: "nginx", tag: "alpine", host_port: "8080", container_port: "80", memory_mb: 512 });
       setError(null);
@@ -72,8 +82,10 @@ export function DockerManager({ title }: { title: string }) {
   });
 
   const action = useMutation({
-    mutationFn: ({ id, op }: { id: number; op: string }) =>
-      apiRequest(`/docker/containers/${id}/${op}/`, { method: "POST", body: "{}" }),
+    mutationFn: ({ id, op, name }: { id: number; op: string; name: string }) =>
+      runWithProgress(`Docker ${op} · ${name}`, () =>
+        apiRequest(`/docker/containers/${id}/${op}/`, { method: "POST", body: "{}" }),
+      ),
     onSuccess: invalidate,
     onError: (err: Error) => setError(err.message),
   });
@@ -209,7 +221,7 @@ export function DockerManager({ title }: { title: string }) {
                       <button
                         type="button"
                         className="text-cp-link hover:underline"
-                        onClick={() => action.mutate({ id: c.id, op: "start" })}
+                        onClick={() => action.mutate({ id: c.id, op: "start", name: c.name })}
                       >
                         Start
                       </button>
@@ -217,7 +229,7 @@ export function DockerManager({ title }: { title: string }) {
                       <button
                         type="button"
                         className="text-cp-link hover:underline"
-                        onClick={() => action.mutate({ id: c.id, op: "stop" })}
+                        onClick={() => action.mutate({ id: c.id, op: "stop", name: c.name })}
                       >
                         Stop
                       </button>
@@ -225,7 +237,7 @@ export function DockerManager({ title }: { title: string }) {
                     <button
                       type="button"
                       className="text-cp-link hover:underline"
-                      onClick={() => action.mutate({ id: c.id, op: "restart" })}
+                      onClick={() => action.mutate({ id: c.id, op: "restart", name: c.name })}
                     >
                       Restart
                     </button>

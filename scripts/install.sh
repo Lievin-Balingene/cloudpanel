@@ -196,6 +196,10 @@ PY
   if [[ -f "${SCRIPT_DIR}/install-phpmyadmin.sh" ]]; then
     bash "${SCRIPT_DIR}/install-phpmyadmin.sh" || log "Avertissement: phpMyAdmin non installé"
   fi
+  # Roundcube Webmail
+  if [[ -f "${SCRIPT_DIR}/install-roundcube.sh" ]]; then
+    bash "${SCRIPT_DIR}/install-roundcube.sh" || log "Avertissement: Roundcube non installé"
+  fi
   bash "${SCRIPT_DIR}/ensure-nginx.sh" "${VZONE_ROOT}/deploy/nginx/vzone.conf" || true
 
   HOST_IP="$(hostname -I | awk '{print $1}')"

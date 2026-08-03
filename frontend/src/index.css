@@ -90,4 +90,24 @@ html.dark body {
     background-size: 48px 48px;
     mask-image: radial-gradient(ellipse 70% 70% at 50% 50%, black, transparent);
   }
+
+  .vz-progress-indeterminate {
+    animation: vz-progress-slide 1.1s ease-in-out infinite;
+  }
+
+  .cp-tool-tile {
+    @apply relative flex items-start gap-3 overflow-hidden rounded-xl border bg-white p-3.5
+      shadow-tool transition duration-200
+      hover:-translate-y-0.5 hover:shadow-md
+      dark:bg-ink-950;
+  }
+}
+
+@keyframes vz-progress-slide {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
 }

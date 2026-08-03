@@ -81,11 +81,18 @@ def ensure_cpanel_tree(personal: Path) -> None:
 
 def personal_home(user: User) -> Path:
     """Home personnel du compte (jamais le HOME_ROOT global admin)."""
-    root_base = Path(settings.VZONE_HOME_ROOT)
+    root_base = Path(settings.VZONE_HOME_ROOT).resolve()
     if user.role == User.Role.ADMINISTRATOR:
         return (root_base / "admin").resolve()
-    home_name = user.system_username or user.username
-    return (root_base / home_name).resolve()
+    home_name = (user.system_username or user.username or "").strip().lower()
+    # Empêche Path(root)/'' → root, ou Path(root)/'..' → hors jail
+    if not home_name or home_name in {".", ".."} or "/" in home_name or "\\" in home_name:
+        home_name = "invalid"
+    home = (root_base / home_name).resolve()
+    if home.parent != root_base:
+        # Ne jamais remonter au-dessus de HOME_ROOT
+        return root_base / "invalid"
+    return home
 
 
 def user_home(user: User) -> Path:

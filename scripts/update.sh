@@ -70,6 +70,11 @@ if [[ -f "${REPO_DIR}/scripts/install-phpmyadmin.sh" ]]; then
   bash "${REPO_DIR}/scripts/install-phpmyadmin.sh" || echo "[vzone] Avertissement: install-phpmyadmin.sh a échoué"
 fi
 
+# Roundcube Webmail
+if [[ -f "${REPO_DIR}/scripts/install-roundcube.sh" ]]; then
+  bash "${REPO_DIR}/scripts/install-roundcube.sh" || echo "[vzone] Avertissement: install-roundcube.sh a échoué"
+fi
+
 bash "${REPO_DIR}/scripts/ensure-nginx.sh" "${VZONE_ROOT}/deploy/nginx/vzone.conf"
 
 systemctl daemon-reload

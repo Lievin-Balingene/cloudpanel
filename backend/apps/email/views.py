@@ -33,6 +33,7 @@ from apps.email.services import (
     create_mail_domain,
     create_mailbox,
     create_mailing_list,
+    create_webmail_sso,
     delete_mailbox,
     enable_dkim,
     mail_domains_qs,
@@ -316,3 +317,20 @@ class EmailOverviewView(APIView):
                 },
             }
         )
+
+
+class WebmailSsoView(APIView):
+    """Ouvre Roundcube authentifié pour une boîte (SSO one-shot)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request) -> Response:
+        mailbox_id = request.data.get("mailbox_id")
+        if not mailbox_id:
+            return Response(
+                {"success": False, "error": {"message": "mailbox_id requis.", "code": "validation"}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        box = get_object_or_404(mailboxes_qs(request.user), pk=mailbox_id)
+        data = create_webmail_sso(box)
+        return Response({"success": True, "data": data})

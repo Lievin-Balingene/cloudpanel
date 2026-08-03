@@ -1,5 +1,6 @@
 import { FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ExternalLink, Mail } from "lucide-react";
 import { apiRequest } from "@/lib/api";
 
 interface MailOverview {
@@ -76,6 +77,9 @@ export function EmailManager({ title }: { title: string }) {
     keep_copy: false,
   });
   const [error, setError] = useState<string | null>(null);
+  const [resetPwd, setResetPwd] = useState<{ id: number; address: string; password: string } | null>(
+    null,
+  );
 
   const invalidateAll = () => {
     void qc.invalidateQueries({ queryKey: ["email-overview"] });
@@ -167,6 +171,33 @@ export function EmailManager({ title }: { title: string }) {
     onError: (err: Error) => setError(err.message),
   });
 
+  const openWebmail = useMutation({
+    mutationFn: (mailboxId: number) =>
+      apiRequest<{ url: string; address: string }>("/email/webmail/sso/", {
+        method: "POST",
+        body: JSON.stringify({ mailbox_id: mailboxId }),
+      }),
+    onSuccess: (data) => {
+      setError(null);
+      window.open(data.url, "_blank", "noopener,noreferrer");
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  const changePassword = useMutation({
+    mutationFn: ({ id, password }: { id: number; password: string }) =>
+      apiRequest(`/email/mailboxes/${id}/`, {
+        method: "PATCH",
+        body: JSON.stringify({ password }),
+      }),
+    onSuccess: () => {
+      setResetPwd(null);
+      setError(null);
+      invalidateAll();
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
   const selectedDomainId = boxForm.mail_domain_id || domains[0]?.id || 0;
   const selectedFwdDomainId = fwdForm.mail_domain_id || domains[0]?.id || 0;
 
@@ -211,19 +242,22 @@ export function EmailManager({ title }: { title: string }) {
           <div>
             <h1 className="text-xl font-semibold">{title}</h1>
             <p className="text-sm text-cp-muted">
-              Domaines mail, boîtes, redirections, SPF / DKIM / DMARC.
+              Domaines mail, boîtes, redirections, SPF / DKIM / DMARC — webmail Roundcube.
             </p>
           </div>
-          {overview?.webmail_url && (
-            <a
-              className="vz-btn-primary"
-              href={overview.webmail_url}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Ouvrir Webmail
-            </a>
-          )}
+          <div className="flex flex-wrap gap-2">
+            {overview?.webmail_url && (
+              <a
+                className="vz-btn-ghost"
+                href={overview.webmail_url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <ExternalLink className="h-4 w-4" />
+                Roundcube
+              </a>
+            )}
+          </div>
         </div>
       </div>
 
@@ -248,7 +282,7 @@ export function EmailManager({ title }: { title: string }) {
       <form className="vz-panel grid gap-2 p-4 md:grid-cols-4" onSubmit={onCreateDomain}>
         <input
           className="vz-input md:col-span-2"
-          placeholder="domaine (ex: example.com)"
+          placeholder="domaine (ex: exemple.com)"
           required
           value={domainForm.name}
           onChange={(e) => setDomainForm({ ...domainForm, name: e.target.value })}
@@ -262,60 +296,53 @@ export function EmailManager({ title }: { title: string }) {
           onChange={(e) => setDomainForm({ ...domainForm, max_quota_mb: Number(e.target.value) })}
         />
         <button className="vz-btn-primary" type="submit" disabled={createDomain.isPending}>
-          Ajouter domaine mail
+          Ajouter domaine
         </button>
       </form>
 
-      <div className="vz-panel overflow-x-auto">
-        <table className="min-w-full text-left text-sm">
-          <thead className="bg-cp-canvas text-xs uppercase text-cp-muted dark:bg-ink-900">
-            <tr>
-              <th className="px-3 py-2">Domaine</th>
-              <th className="px-3 py-2">Boîtes</th>
-              <th className="px-3 py-2">DKIM</th>
-              <th className="px-3 py-2">DMARC</th>
-              <th className="px-3 py-2">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {domains.map((d) => (
-              <tr key={d.id} className="border-t border-cp-border dark:border-ink-800">
-                <td className="px-3 py-2 font-mono text-xs">{d.name}</td>
-                <td className="px-3 py-2">{d.mailbox_count}</td>
-                <td className="px-3 py-2">{d.dkim_enabled ? "activé" : "off"}</td>
-                <td className="px-3 py-2">{d.dmarc_policy}</td>
-                <td className="px-3 py-2">
-                  <div className="flex flex-wrap gap-2">
-                    {!d.dkim_enabled && (
+      {domains.length > 0 && (
+        <div className="vz-panel overflow-x-auto">
+          <table className="min-w-full text-left text-sm">
+            <thead className="bg-cp-canvas text-xs uppercase text-cp-muted dark:bg-ink-900">
+              <tr>
+                <th className="px-3 py-2">Domaine</th>
+                <th className="px-3 py-2">Boîtes</th>
+                <th className="px-3 py-2">DKIM</th>
+                <th className="px-3 py-2">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {domains.map((d) => (
+                <tr key={d.id} className="border-t border-cp-border dark:border-ink-800">
+                  <td className="px-3 py-2 font-medium">{d.name}</td>
+                  <td className="px-3 py-2">{d.mailbox_count}</td>
+                  <td className="px-3 py-2">{d.dkim_enabled ? "oui" : "non"}</td>
+                  <td className="px-3 py-2">
+                    <div className="flex flex-wrap gap-2">
+                      {!d.dkim_enabled && (
+                        <button
+                          type="button"
+                          className="text-cp-link hover:underline"
+                          onClick={() => enableDkim.mutate(d.id)}
+                        >
+                          Activer DKIM
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="text-cp-link hover:underline"
-                        onClick={() => enableDkim.mutate(d.id)}
+                        onClick={() => syncDns.mutate(d.id)}
                       >
-                        Activer DKIM
+                        Sync DNS
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      className="text-cp-link hover:underline"
-                      onClick={() => syncDns.mutate(d.id)}
-                    >
-                      Sync DNS
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {domains.length === 0 && (
-              <tr>
-                <td className="px-3 py-4 text-cp-muted" colSpan={5}>
-                  Aucun domaine mail.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <form className="vz-panel grid gap-2 p-4 md:grid-cols-5" onSubmit={onCreateBox}>
         <select
@@ -323,7 +350,6 @@ export function EmailManager({ title }: { title: string }) {
           value={selectedDomainId}
           onChange={(e) => setBoxForm({ ...boxForm, mail_domain_id: Number(e.target.value) })}
         >
-          <option value={0}>Domaine…</option>
           {domains.map((d) => (
             <option key={d.id} value={d.id}>
               {d.name}
@@ -400,6 +426,25 @@ export function EmailManager({ title }: { title: string }) {
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
+                      className="inline-flex items-center gap-1 text-cp-link hover:underline disabled:opacity-50"
+                      disabled={box.status !== "active" || openWebmail.isPending}
+                      onClick={() => openWebmail.mutate(box.id)}
+                      title="Ouvrir Roundcube authentifié"
+                    >
+                      <Mail className="h-3.5 w-3.5" />
+                      Webmail
+                    </button>
+                    <button
+                      type="button"
+                      className="text-cp-link hover:underline"
+                      onClick={() =>
+                        setResetPwd({ id: box.id, address: box.address, password: "" })
+                      }
+                    >
+                      Mot de passe
+                    </button>
+                    <button
+                      type="button"
                       className="text-cp-link hover:underline"
                       onClick={() =>
                         suspend.mutate({ id: box.id, suspended: !box.is_suspended })
@@ -431,13 +476,12 @@ export function EmailManager({ title }: { title: string }) {
         </table>
       </div>
 
-      <form className="vz-panel grid gap-2 p-4 md:grid-cols-5" onSubmit={onCreateFwd}>
+      <form className="vz-panel grid gap-2 p-4 md:grid-cols-4" onSubmit={onCreateFwd}>
         <select
           className="vz-input"
           value={selectedFwdDomainId}
           onChange={(e) => setFwdForm({ ...fwdForm, mail_domain_id: Number(e.target.value) })}
         >
-          <option value={0}>Domaine…</option>
           {domains.map((d) => (
             <option key={d.id} value={d.id}>
               {d.name}
@@ -446,14 +490,14 @@ export function EmailManager({ title }: { title: string }) {
         </select>
         <input
           className="vz-input"
-          placeholder="alias (ex: sales)"
+          placeholder="alias (ex: contact)"
           required
           value={fwdForm.local_part}
           onChange={(e) => setFwdForm({ ...fwdForm, local_part: e.target.value })}
         />
         <input
-          className="vz-input md:col-span-2"
-          placeholder="destinations (séparées par des virgules)"
+          className="vz-input"
+          placeholder="destinations (séparées par virgule)"
           required
           value={fwdForm.destinations}
           onChange={(e) => setFwdForm({ ...fwdForm, destinations: e.target.value })}
@@ -463,46 +507,71 @@ export function EmailManager({ title }: { title: string }) {
         </button>
       </form>
 
-      <div className="vz-panel overflow-x-auto">
-        <div className="border-b border-cp-border bg-cp-canvas px-3 py-2 text-xs font-semibold uppercase text-cp-muted dark:border-ink-800 dark:bg-ink-900">
-          Forwarders
-        </div>
-        <table className="min-w-full text-left text-sm">
-          <thead>
-            <tr className="text-xs uppercase text-cp-muted">
-              <th className="px-3 py-2">Alias</th>
-              <th className="px-3 py-2">Destinations</th>
-              <th className="px-3 py-2">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {forwarders.map((fwd) => (
-              <tr key={fwd.id} className="border-t border-cp-border dark:border-ink-800">
-                <td className="px-3 py-2 font-mono text-xs">{fwd.address}</td>
-                <td className="px-3 py-2 text-xs">{fwd.destinations.join(", ")}</td>
-                <td className="px-3 py-2">
-                  <button
-                    type="button"
-                    className="text-cp-danger hover:underline"
-                    onClick={() => {
-                      if (window.confirm(`Supprimer ${fwd.address} ?`)) removeFwd.mutate(fwd.id);
-                    }}
-                  >
-                    Supprimer
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {forwarders.length === 0 && (
+      {forwarders.length > 0 && (
+        <div className="vz-panel overflow-x-auto">
+          <table className="min-w-full text-left text-sm">
+            <thead className="bg-cp-canvas text-xs uppercase text-cp-muted dark:bg-ink-900">
               <tr>
-                <td className="px-3 py-4 text-cp-muted" colSpan={3}>
-                  Aucun forwarder.
-                </td>
+                <th className="px-3 py-2">Adresse</th>
+                <th className="px-3 py-2">Vers</th>
+                <th className="px-3 py-2">Actions</th>
               </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {forwarders.map((fwd) => (
+                <tr key={fwd.id} className="border-t border-cp-border dark:border-ink-800">
+                  <td className="px-3 py-2 font-mono text-xs">{fwd.address}</td>
+                  <td className="px-3 py-2 text-xs">{fwd.destinations.join(", ")}</td>
+                  <td className="px-3 py-2">
+                    <button
+                      type="button"
+                      className="text-cp-danger hover:underline"
+                      onClick={() => {
+                        if (window.confirm(`Supprimer ${fwd.address} ?`)) removeFwd.mutate(fwd.id);
+                      }}
+                    >
+                      Supprimer
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {resetPwd && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded border border-cp-border bg-white p-4 shadow-xl dark:border-ink-700 dark:bg-ink-950">
+            <p className="mb-1 font-semibold">Nouveau mot de passe</p>
+            <p className="mb-3 text-xs text-cp-muted">{resetPwd.address}</p>
+            <input
+              className="vz-input mb-3"
+              type="password"
+              minLength={8}
+              placeholder="min. 8 caractères"
+              value={resetPwd.password}
+              onChange={(e) => setResetPwd({ ...resetPwd, password: e.target.value })}
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <button type="button" className="vz-btn-ghost" onClick={() => setResetPwd(null)}>
+                Annuler
+              </button>
+              <button
+                type="button"
+                className="vz-btn-primary"
+                disabled={resetPwd.password.length < 8 || changePassword.isPending}
+                onClick={() =>
+                  changePassword.mutate({ id: resetPwd.id, password: resetPwd.password })
+                }
+              >
+                Enregistrer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

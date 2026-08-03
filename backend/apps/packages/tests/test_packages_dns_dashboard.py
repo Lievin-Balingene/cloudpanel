@@ -86,6 +86,53 @@ def test_dashboard_overview_and_capture(api: APIClient):
 
 @pytest.mark.integration
 @pytest.mark.django_db
+def test_client_overview_disk_is_home_only(api: APIClient, tmp_path, settings):
+    """Le Disk Usage client mesure uniquement son home, pas le disque serveur."""
+    from apps.dashboard.services import overview_for
+    from apps.domains.models import Domain
+    from apps.packages.services import apply_package_to_user, seed_default_packages
+
+    settings.VZONE_HOME_ROOT = str(tmp_path)
+    client_user = UserFactory(password="TestPassword123!", role="client", username="diskuser")
+    seed_default_packages()
+    pkg = HostingPackage.objects.filter(package_type="client", is_default=True).first()
+    assert pkg is not None
+    pkg.disk_mb = 100
+    pkg.unlimited_disk = False
+    pkg.save(update_fields=["disk_mb", "unlimited_disk"])
+    apply_package_to_user(client_user, pkg)
+
+    home = tmp_path / "diskuser"
+    home.mkdir(parents=True)
+    (home / "public_html").mkdir()
+    payload = b"x" * (2 * 1024 * 1024)  # 2 Mo
+    (home / "public_html" / "big.bin").write_bytes(payload)
+
+    Domain.objects.create(
+        name="diskuser.test",
+        owner=client_user,
+        domain_type=Domain.DomainType.PRIMARY,
+        document_root=str(home / "public_html"),
+    )
+
+    body = overview_for(client_user)
+    assert body["account"]["home_directory"].endswith("diskuser")
+    assert body["account"]["primary_domain"] == "diskuser.test"
+    assert body["metrics"] is None
+    assert body["disk"]["used"] >= len(payload)
+    assert body["disk"]["quota_mb"] == 100
+    assert body["disk"]["total"] == 100 * 1024 * 1024
+    assert body["disk"]["unlimited"] is False
+    assert body["disk"]["used_mb"] >= 2
+    assert body["disk"]["home_directory"].endswith("diskuser")
+    assert "public_html" in body["disk"]["breakdown_mb"]
+    assert body["usage"]["domains"] == 1
+    # Ne doit pas refléter le disque système (souvent des Go)
+    assert body["disk"]["used"] < 50 * 1024 * 1024
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
 def test_update_and_delete_package(api: APIClient):
     admin = AdminFactory(password="TestPassword123!")
     api.force_authenticate(user=admin)
