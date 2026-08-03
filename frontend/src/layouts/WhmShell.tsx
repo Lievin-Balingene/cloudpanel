@@ -57,19 +57,18 @@ export function WhmShell() {
   const toggle = useThemeStore((s) => s.toggle);
 
   return (
-    <div className="flex min-h-screen bg-cp-canvas dark:bg-surface-dark">
-      <aside className="flex w-64 shrink-0 flex-col bg-cp-sidebar text-white">
-        <div className="flex items-center gap-2 border-b border-white/10 bg-cp-header px-4 py-3">
-          <Server className="h-5 w-5 text-cp-orange" />
+    <div className="flex min-h-screen bg-[#071018] text-white">
+      <aside className="flex w-64 shrink-0 flex-col border-r border-white/10 bg-[#0b1622]">
+        <div className="flex items-center gap-3 border-b border-white/10 px-4 py-4">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-400/15 text-emerald-300">
+            <Server className="h-5 w-5" />
+          </div>
           <div>
-            <p className="text-sm font-semibold tracking-wide">V-zone WHM</p>
-            <p className="text-[11px] text-white/60">Web Host Manager</p>
+            <p className="font-display text-sm font-semibold tracking-wide">V-zone</p>
+            <p className="text-[11px] text-white/45">Web Host Manager</p>
           </div>
         </div>
-        <div className="border-b border-white/10 px-4 py-2 text-[11px] uppercase tracking-wider text-white/50">
-          Navigation serveur
-        </div>
-        <nav className="flex-1 overflow-y-auto">
+        <nav className="flex-1 overflow-y-auto py-2">
           {nav.map((item) => (
             <NavLink
               key={item.to}
@@ -84,24 +83,28 @@ export function WhmShell() {
             </NavLink>
           ))}
         </nav>
-        <div className="border-t border-white/10 p-3 text-xs text-white/70">
+        <div className="border-t border-white/10 p-4 text-xs text-white/55">
           <p className="truncate font-medium text-white">{user?.username}</p>
           <p className="capitalize">{user?.role}</p>
         </div>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-cp-border bg-cp-header px-4 py-2 text-white">
-          <p className="text-sm">
-            Serveur · <span className="text-cp-orange">V-zone Panel</span>
+        <header className="flex items-center justify-between border-b border-white/10 bg-[#0b1622]/90 px-4 py-3 backdrop-blur">
+          <p className="text-sm text-white/70">
+            Serveur · <span className="font-medium text-white">V-zone Panel</span>
           </p>
           <div className="flex items-center gap-2">
-            <button type="button" className="rounded px-2 py-1 hover:bg-white/10" onClick={toggle}>
+            <button
+              type="button"
+              className="rounded-lg px-2 py-1.5 text-white/70 transition hover:bg-white/10 hover:text-white"
+              onClick={toggle}
+            >
               {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
             <button
               type="button"
-              className="inline-flex items-center gap-1 rounded px-2 py-1 text-sm hover:bg-white/10"
+              className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm text-white/70 transition hover:bg-white/10 hover:text-white"
               onClick={() => void logout()}
             >
               <LogOut className="h-4 w-4" />

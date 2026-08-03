@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { LoginPage } from "./pages/LoginPage";
+import { ChangePasswordPage } from "./pages/ChangePasswordPage";
 import { WhmShell } from "./layouts/WhmShell";
 import { ClientShell } from "./layouts/ClientShell";
 import { WhmHomePage } from "./pages/whm/WhmHomePage";
@@ -41,7 +42,9 @@ import { useAuthStore } from "./stores/auth";
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const token = useAuthStore((s) => s.accessToken);
+  const mustChange = useAuthStore((s) => s.user?.must_change_password);
   if (!token) return <Navigate to="/login" replace />;
+  if (mustChange) return <Navigate to="/change-password" replace />;
   return <>{children}</>;
 }
 
@@ -61,7 +64,9 @@ function RequireClient({ children }: { children: ReactNode }) {
 
 function PostLoginRedirect() {
   const role = useAuthStore((s) => s.user?.role);
+  const mustChange = useAuthStore((s) => s.user?.must_change_password);
   if (!role) return <Navigate to="/login" replace />;
+  if (mustChange) return <Navigate to="/change-password" replace />;
   if (role === "client") return <Navigate to="/panel" replace />;
   return <Navigate to="/whm" replace />;
 }
@@ -70,6 +75,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/change-password" element={<ChangePasswordPage />} />
       <Route
         path="/"
         element={

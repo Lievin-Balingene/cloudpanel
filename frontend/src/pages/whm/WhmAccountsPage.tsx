@@ -24,6 +24,7 @@ export function WhmAccountsPage() {
     role: "client",
     package_id: "",
   });
+  const [error, setError] = useState<string | null>(null);
 
   const createUser = useMutation({
     mutationFn: async () => {
@@ -48,23 +49,26 @@ export function WhmAccountsPage() {
       return user;
     },
     onSuccess: () => {
+      setError(null);
       void qc.invalidateQueries({ queryKey: ["users"] });
       void qc.invalidateQueries({ queryKey: ["dashboard-overview"] });
       setForm({ email: "", username: "", password: "", role: "client", package_id: "" });
     },
+    onError: (err: Error) => setError(err.message || "Création impossible."),
   });
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
+    setError(null);
     createUser.mutate();
   }
 
   return (
     <div className="space-y-4 animate-fade-up">
       <div className="vz-panel p-4">
-        <h1 className="text-xl font-semibold">Account Functions</h1>
-        <p className="text-sm text-cp-muted">
-          Création de comptes d&apos;hébergement et assignation de package (flux type WHM).
+        <h1 className="font-display text-xl font-semibold text-white">Comptes</h1>
+        <p className="text-sm text-white/50">
+          Création de comptes d&apos;hébergement et assignation de package.
         </p>
       </div>
 
@@ -109,6 +113,12 @@ export function WhmAccountsPage() {
           Créer compte
         </button>
       </form>
+
+      {error && (
+        <p role="alert" className="rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2.5 text-sm text-rose-100">
+          {error}
+        </p>
+      )}
 
       <div className="vz-panel overflow-x-auto">
         <table className="min-w-full text-left text-sm">

@@ -59,6 +59,12 @@ export async function apiRequest<T>(
 
   if (!response.ok) {
     const err = body as ApiError;
+    const code = err?.error?.code ?? "";
+    if (response.status === 403 && code === "must_change_password") {
+      if (typeof window !== "undefined" && !window.location.pathname.startsWith("/change-password")) {
+        window.location.assign("/change-password");
+      }
+    }
     throw new ApiClientError(
       err?.error?.message ?? `Erreur HTTP ${response.status}`,
       response.status,

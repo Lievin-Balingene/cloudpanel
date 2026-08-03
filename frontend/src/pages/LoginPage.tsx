@@ -25,6 +25,9 @@ export function LoginPage() {
   }, [needsOtp]);
 
   if (token && user) {
+    if (user.must_change_password) {
+      return <Navigate to="/change-password" replace />;
+    }
     return <Navigate to={user.role === "client" ? "/panel" : "/whm"} replace />;
   }
 
@@ -74,8 +77,8 @@ export function LoginPage() {
             onSubmit={onSubmit}
             noValidate
           >
-            <div className="mb-6 flex items-center gap-2 text-sm text-emerald-300/90">
-              <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden />
+            <div className="mb-6 flex items-center gap-2 text-sm text-white/70">
+              <ShieldCheck className="h-4 w-4 shrink-0 text-emerald-300" aria-hidden />
               <span>Connexion chiffrée · session protégée</span>
             </div>
 

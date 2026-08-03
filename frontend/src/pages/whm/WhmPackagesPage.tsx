@@ -18,10 +18,15 @@ export function WhmPackagesPage() {
     emails: 10,
     databases: 5,
   });
+  const [error, setError] = useState<string | null>(null);
 
   const seed = useMutation({
     mutationFn: () => apiRequest("/packages/seed/", { method: "POST", body: "{}" }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["packages"] }),
+    onSuccess: () => {
+      setError(null);
+      void qc.invalidateQueries({ queryKey: ["packages"] });
+    },
+    onError: (err: Error) => setError(err.message || "Échec du seed."),
   });
 
   const create = useMutation({
@@ -37,13 +42,16 @@ export function WhmPackagesPage() {
         }),
       }),
     onSuccess: () => {
+      setError(null);
       void qc.invalidateQueries({ queryKey: ["packages"] });
       setForm((f) => ({ ...f, name: "" }));
     },
+    onError: (err: Error) => setError(err.message || "Création impossible."),
   });
 
   function onCreate(e: FormEvent) {
     e.preventDefault();
+    setError(null);
     create.mutate();
   }
 
@@ -51,9 +59,9 @@ export function WhmPackagesPage() {
     <div className="space-y-4 animate-fade-up">
       <div className="vz-panel flex flex-wrap items-center justify-between gap-3 p-4">
         <div>
-          <h1 className="text-xl font-semibold">Add / Edit Packages</h1>
-          <p className="text-sm text-cp-muted">
-            Plans de ressources synchronisés automatiquement avec les quotas comptes.
+          <h1 className="font-display text-xl font-semibold text-white">Packages</h1>
+          <p className="text-sm text-white/50">
+            Plans de ressources synchronisés avec les quotas comptes.
           </p>
         </div>
         <button className="vz-btn-ghost" type="button" onClick={() => seed.mutate()}>
@@ -99,6 +107,12 @@ export function WhmPackagesPage() {
           Créer
         </button>
       </form>
+
+      {error && (
+        <p role="alert" className="rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2.5 text-sm text-rose-100">
+          {error}
+        </p>
+      )}
 
       <div className="vz-panel overflow-x-auto">
         <table className="min-w-full text-left text-sm">

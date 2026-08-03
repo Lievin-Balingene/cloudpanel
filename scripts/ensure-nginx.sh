@@ -33,11 +33,24 @@ else
 fi
 
 # Droits lecture dist pour www-data
-if [[ -d "${VZONE_ROOT}/frontend/dist" ]]; then
-  chmod -R a+rX "${VZONE_ROOT}/frontend/dist" || true
+if [[ ! -f "${VZONE_ROOT}/frontend/dist/index.html" ]]; then
+  echo "[vzone] ERREUR: ${VZONE_ROOT}/frontend/dist/index.html manquant (build frontend requis)"
+  exit 1
 fi
+chmod -R a+rX "${VZONE_ROOT}/frontend" || true
+# Traversée /opt/vzone pour www-data
+chmod a+x /opt /opt/vzone /opt/vzone/frontend 2>/dev/null || true
 
 nginx -t
 systemctl reload nginx || systemctl restart nginx
+sleep 1
 echo "[vzone] Nginx OK — site V-zone actif"
-curl -sI http://127.0.0.1/login | head -n 1 || true
+code="$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1/login || true)"
+echo "[vzone] GET /login → HTTP ${code}"
+if [[ "$code" != "200" ]]; then
+  echo "[vzone] Diagnostic sites-enabled:"
+  ls -la /etc/nginx/sites-enabled/ 2>/dev/null || true
+  echo "[vzone] root actifs:"
+  nginx -T 2>/dev/null | grep -E "^\s*root |default_server" || true
+  exit 1
+fi

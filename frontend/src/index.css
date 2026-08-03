@@ -3,78 +3,71 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light;
+  color-scheme: dark;
 }
 
 body {
   min-height: 100vh;
-  background: #eef2f6;
-  color: #2c3e50;
+  background: #071018;
+  color: #f4f7fb;
   font-family: "Manrope", system-ui, sans-serif;
-}
-
-.dark body,
-html.dark body {
-  background: #121a24;
-  color: #e8eef6;
 }
 
 @layer components {
   .vz-panel {
-    @apply rounded border border-cp-border bg-white shadow-panel dark:border-ink-800 dark:bg-ink-950;
+    @apply rounded-2xl border border-white/10 bg-[#0c1622]/80 shadow-panel backdrop-blur-md;
   }
 
   .vz-input {
-    @apply w-full rounded border border-cp-border bg-white px-3 py-2 text-sm text-cp-text
-      outline-none transition focus:border-cp-orange focus:ring-1 focus:ring-cp-orange/30
-      dark:border-ink-700 dark:bg-ink-900 dark:text-ink-50;
+    @apply w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white
+      outline-none transition placeholder:text-white/30
+      focus:border-emerald-400/40 focus:bg-white/10 focus:ring-2 focus:ring-emerald-400/20;
   }
 
   .vz-btn {
-    @apply inline-flex items-center justify-center gap-2 rounded px-3.5 py-2 text-sm font-medium
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-3.5 py-2.5 text-sm font-medium
       transition active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .vz-btn-primary {
-    @apply vz-btn bg-cp-orange text-white hover:bg-cp-orange-dark;
+    @apply vz-btn bg-emerald-400 font-semibold text-[#062016] hover:bg-emerald-300;
   }
 
   .vz-btn-ghost {
-    @apply vz-btn border border-cp-border bg-white text-cp-text hover:bg-cp-canvas
-      dark:border-ink-700 dark:bg-transparent dark:text-ink-100 dark:hover:bg-ink-900;
+    @apply vz-btn border border-white/10 bg-white/5 text-white/85 hover:bg-white/10 hover:text-white;
   }
 
   .whm-nav-item {
-    @apply block border-b border-white/10 px-4 py-2.5 text-sm text-white/90 hover:bg-white/10;
+    @apply mx-2 my-0.5 rounded-lg px-3 py-2.5 text-sm text-white/65 transition hover:bg-white/5 hover:text-white;
   }
 
   .whm-nav-item-active {
-    @apply bg-cp-orange text-white hover:bg-cp-orange;
+    @apply bg-emerald-400/15 font-medium text-white hover:bg-emerald-400/20;
   }
 
   .cp-tool {
-    @apply flex flex-col items-center gap-2 rounded border border-cp-border bg-white p-4 text-center
-      shadow-tool transition hover:border-cp-orange hover:shadow-md dark:border-ink-700 dark:bg-ink-950;
+    @apply flex flex-col items-center gap-2 rounded-2xl border border-white/10 bg-[#0c1622]/70 p-4 text-center
+      transition hover:border-emerald-400/40 hover:bg-white/5;
   }
 
   .login-stage {
     background:
-      radial-gradient(ellipse 90% 70% at 15% 10%, rgba(16, 185, 129, 0.22), transparent 55%),
-      radial-gradient(ellipse 70% 60% at 90% 80%, rgba(56, 120, 170, 0.28), transparent 50%),
+      radial-gradient(ellipse 90% 70% at 15% 10%, rgba(16, 185, 129, 0.2), transparent 55%),
+      radial-gradient(ellipse 70% 60% at 90% 80%, rgba(255, 255, 255, 0.06), transparent 50%),
       linear-gradient(160deg, #061018 0%, #0b1a28 45%, #0a1420 100%);
   }
 
   .login-aurora {
     background:
-      radial-gradient(circle at 30% 40%, rgba(52, 211, 153, 0.18), transparent 35%),
-      radial-gradient(circle at 70% 30%, rgba(96, 165, 250, 0.12), transparent 40%);
+      radial-gradient(circle at 30% 40%, rgba(52, 211, 153, 0.16), transparent 35%),
+      radial-gradient(circle at 70% 30%, rgba(255, 255, 255, 0.07), transparent 40%);
     animation: aurora-drift 18s ease-in-out infinite;
   }
 
   .login-grid {
     background-image:
-      linear-gradient(rgba(148, 180, 210, 0.06) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(148, 180, 210, 0.06) 1px, transparent 1px);
+      linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
     background-size: 56px 56px;
     mask-image: radial-gradient(ellipse 80% 70% at 50% 40%, black, transparent);
   }
