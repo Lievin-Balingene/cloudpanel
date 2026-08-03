@@ -5,14 +5,14 @@
 $config = [];
 
 $config['db_dsnw'] = '__DB_DSN__';
-$config['db_prefix'] = 'rc_';
+// Doit rester vide : SQL/mysql.initial.sql crée session, users, etc. sans préfixe.
+$config['db_prefix'] = '';
 
 // IMAP / SMTP locaux (Dovecot + Postfix)
 $config['imap_host'] = '127.0.0.1:143';
-$config['smtp_host'] = '127.0.0.1:587';
+$config['smtp_host'] = 'tls://127.0.0.1:587';
 $config['smtp_user'] = '%u';
 $config['smtp_pass'] = '%p';
-$config['smtp_port'] = 587;
 
 $config['support_url'] = '';
 $config['product_name'] = 'V-zone Webmail';
@@ -33,6 +33,9 @@ $config['login_autocomplete'] = 2;
 $config['log_driver'] = 'file';
 $config['temp_dir'] = '__TEMP_DIR__';
 $config['mime_types'] = null;
+
+// Installé sous /webmail/
+$config['request_path'] = '/webmail/';
 
 // Certificats snakeoil / auto-signés en local
 $config['imap_conn_options'] = [

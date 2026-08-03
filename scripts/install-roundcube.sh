@@ -84,13 +84,23 @@ if [[ "$NEED_EXTRACT" -eq 1 ]]; then
   rm -rf "$TMP"
 fi
 
-# Import schéma SQL si tables absentes
+# Import schéma SQL si tables absentes (sans préfixe : session, users, …)
+HAS_SESSION="$(mysql -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${RC_DB_NAME}' AND table_name='session';" 2>/dev/null || echo 0)"
 TABLE_COUNT="$(mysql -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${RC_DB_NAME}';" 2>/dev/null || echo 0)"
-if [[ "${TABLE_COUNT}" -lt 5 ]]; then
+if [[ "${HAS_SESSION}" -lt 1 ]] || [[ "${TABLE_COUNT}" -lt 5 ]]; then
   if [[ -f "${RC_ROOT}/SQL/mysql.initial.sql" ]]; then
-    echo "[vzone] Import schéma Roundcube"
+    echo "[vzone] Import schéma Roundcube (tables manquantes)"
     mysql "${RC_DB_NAME}" < "${RC_ROOT}/SQL/mysql.initial.sql"
   fi
+fi
+# Tables orphelines rc_* (ancienne config db_prefix) sans table session → réimport stock
+HAS_SESSION="$(mysql -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${RC_DB_NAME}' AND table_name='session';" 2>/dev/null || echo 0)"
+HAS_RC_SESSION="$(mysql -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${RC_DB_NAME}' AND table_name='rc_session';" 2>/dev/null || echo 0)"
+if [[ "${HAS_SESSION}" -lt 1 ]] && [[ "${HAS_RC_SESSION}" -gt 0 ]]; then
+  echo "[vzone] Tables préfixées rc_* détectées — réimport schéma sans préfixe"
+  mysql -e "DROP DATABASE IF EXISTS \`${RC_DB_NAME}\`; CREATE DATABASE \`${RC_DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+  mysql -e "GRANT ALL PRIVILEGES ON \`${RC_DB_NAME}\`.* TO '${RC_DB_USER}'@'localhost'; FLUSH PRIVILEGES;"
+  mysql "${RC_DB_NAME}" < "${RC_ROOT}/SQL/mysql.initial.sql"
 fi
 
 DES_KEY="$(openssl rand -base64 18 | tr -d '/+=' | head -c 24)"
@@ -156,11 +166,20 @@ if [[ -f "$ENV_FILE" ]]; then
   sed -i "s|^VZONE_ROUNDCUBE_ROOT=.*|VZONE_ROUNDCUBE_ROOT=${RC_ROOT}|" "$ENV_FILE"
   grep -q '^VZONE_ROUNDCUBE_SSO_DIR=' "$ENV_FILE" || echo "VZONE_ROUNDCUBE_SSO_DIR=${SSO_DIR}" >> "$ENV_FILE"
   sed -i "s|^VZONE_ROUNDCUBE_SSO_DIR=.*|VZONE_ROUNDCUBE_SSO_DIR=${SSO_DIR}|" "$ENV_FILE"
-  if ! grep -q '^VZONE_ROUNDCUBE_DB_PASSWORD=' "$ENV_FILE"; then
+  if grep -q '^VZONE_ROUNDCUBE_DB_PASSWORD=' "$ENV_FILE"; then
+    sed -i "s|^VZONE_ROUNDCUBE_DB_PASSWORD=.*|VZONE_ROUNDCUBE_DB_PASSWORD=${RC_DB_PASS}|" "$ENV_FILE"
+  else
     echo "VZONE_ROUNDCUBE_DB_PASSWORD=${RC_DB_PASS}" >> "$ENV_FILE"
   fi
   grep -q '^VZONE_ROUNDCUBE_DB_USER=' "$ENV_FILE" || echo "VZONE_ROUNDCUBE_DB_USER=${RC_DB_USER}" >> "$ENV_FILE"
   grep -q '^VZONE_ROUNDCUBE_DB_NAME=' "$ENV_FILE" || echo "VZONE_ROUNDCUBE_DB_NAME=${RC_DB_NAME}" >> "$ENV_FILE"
+fi
+
+# Vérifier la connexion DB avec le DSN final
+if ! mysql -u "${RC_DB_USER}" -p"${RC_DB_PASS}" -N -e "SELECT 1 FROM \`${RC_DB_NAME}\`.session LIMIT 1;" >/dev/null 2>&1; then
+  echo "[vzone] ATTENTION: connexion Roundcube DB ou table session KO — vérifiez /opt/vzone/roundcube/logs/errors.log"
+else
+  echo "[vzone] DB Roundcube OK (table session présente)"
 fi
 
 if nginx -t 2>/dev/null; then
@@ -169,4 +188,4 @@ fi
 systemctl reload php*-fpm 2>/dev/null || systemctl reload php8.1-fpm 2>/dev/null || systemctl reload php8.3-fpm 2>/dev/null || true
 
 echo "[vzone] Roundcube OK → /webmail/ (SSO panel via vzone-sso.php)"
-echo "[vzone] IMAP 127.0.0.1:143 · SMTP 127.0.0.1:587 (identifiant = adresse e-mail complète)"
+echo "[vzone] IMAP 127.0.0.1:143 · SMTP tls://127.0.0.1:587 (identifiant = adresse e-mail complète)"
