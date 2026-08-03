@@ -8,19 +8,28 @@
 
 ## Arborescence (style cPanel)
 
-À la **création du compte client** (WHM / API), le panel provisionne immédiatement :
+Les comptes vivent sous **`/home/<username>/`** (comme cPanel) :
 
 ```
-/home/<username>/          # VZONE_HOME_ROOT (défaut cPanel : /home)
-  public_html/cgi-bin/
-  www → public_html
-  mail/
-  etc/
-  ssl/
-  logs/
-  tmp/
-  .trash/
-  public_html/index.html
+/home/
+  admin/                 # home panneau admin
+  monclient/
+    public_html/
+    www → public_html
+    domains/
+    mail/
+    etc/
+    ssl/
+    logs/
+    tmp/
+    .trash/
+```
+
+Si `ls /home` est vide alors que des comptes existent, exécutez :
+
+```bash
+sudo bash scripts/migrate-homes-cpanel.sh
+sudo systemctl restart vzone-api vzone-worker vzone-beat
 ```
 
 Champs renseignés : `system_username`, `home_directory`.

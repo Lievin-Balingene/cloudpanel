@@ -46,6 +46,20 @@ bash "${REPO_DIR}/scripts/ensure-homes.sh"
 # Recharger env après migration éventuelle de VZONE_HOME_ROOT
 set -a; source /etc/vzone/vzone.env; set +a
 
+# Recrée les homes manquants pour tous les comptes (idempotent)
+if [[ -x "${VZONE_ROOT}/backend/.venv/bin/python" ]]; then
+  export DJANGO_SETTINGS_MODULE=vzone.settings.production
+  "${VZONE_ROOT}/backend/.venv/bin/python" "${VZONE_ROOT}/backend/manage.py" shell <<'PY' || true
+from apps.accounts.models import User
+from apps.accounts.services import provision_account_home
+for u in User.objects.all():
+    try:
+        provision_account_home(u)
+    except Exception as exc:
+        print(u.username, exc)
+PY
+fi
+
 # Stack mail Postfix/Dovecot/OpenDKIM (idempotent)
 if [[ -f "${REPO_DIR}/scripts/install-mail.sh" ]]; then
   bash "${REPO_DIR}/scripts/install-mail.sh" || echo "[vzone] Avertissement: install-mail.sh a échoué"
