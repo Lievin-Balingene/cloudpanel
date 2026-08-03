@@ -18,6 +18,15 @@ from apps.php.models import PhpSelector, PhpVersion
 
 logger = logging.getLogger(__name__)
 
+
+def _refresh_domain_routing() -> None:
+    try:
+        from apps.domains.services import refresh_web_routing
+
+        refresh_web_routing()
+    except Exception:  # noqa: BLE001
+        logger.debug("refresh_web_routing skip", exc_info=True)
+
 PATH_RE = re.compile(r"^[a-zA-Z0-9._/-]+$")
 
 DEFAULT_INI = {
@@ -249,6 +258,7 @@ def create_selector(
     write_htaccess_handler(selector, app_root)
     write_fpm_pool(selector)
     write_selector_meta(selector)
+    _refresh_domain_routing()
     return selector
 
 
@@ -290,6 +300,7 @@ def update_selector(
     write_htaccess_handler(selector, app_root)
     write_fpm_pool(selector)
     write_selector_meta(selector)
+    _refresh_domain_routing()
     return selector
 
 
@@ -307,6 +318,7 @@ def delete_selector(selector: PhpSelector) -> None:
     if pool.exists():
         pool.unlink(missing_ok=True)
     selector.delete()
+    _refresh_domain_routing()
 
 
 @transaction.atomic

@@ -24,6 +24,27 @@ location /phpmyadmin/ {
 EOF
 fi
 
+# Vhosts domaines clients (écrits par le panel)
+DOMAINS_DIR="${VZONE_NGINX_DOMAINS_DIR:-/var/lib/vzone/nginx/domains}"
+mkdir -p "$DOMAINS_DIR" /var/lib/vzone/acme
+chown -R vzone:vzone /var/lib/vzone/nginx /var/lib/vzone/acme 2>/dev/null || true
+chmod 755 "$DOMAINS_DIR"
+# Map WebSocket pour proxy apps
+cat > /etc/nginx/conf.d/vzone-map-upgrade.conf <<'EOF'
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+EOF
+# Include des vhosts domaines (http context)
+cat > /etc/nginx/conf.d/vzone-domains-include.conf <<EOF
+include ${DOMAINS_DIR}/*.conf;
+EOF
+# Fichier placeholder pour éviter erreur include si vide
+if [[ ! -f "${DOMAINS_DIR}/.keep.conf" ]]; then
+  echo "# vzone domains placeholder" > "${DOMAINS_DIR}/.keep.conf"
+fi
+
 # Retirer TOUS les sites default / welcome
 rm -f /etc/nginx/sites-enabled/default \
       /etc/nginx/sites-enabled/default.bak \

@@ -275,6 +275,11 @@ VZONE_DATA_ROOT = Path(env("VZONE_DATA_ROOT", str(BASE_DIR / ".data")))
 VZONE_LOG_ROOT = Path(env("VZONE_LOG_ROOT", str(BASE_DIR / ".logs")))
 VZONE_HOME_ROOT = Path(env("VZONE_HOME_ROOT", str(BASE_DIR / ".homes")))
 VZONE_FRONTEND_URL = env("VZONE_FRONTEND_URL", "http://localhost:5173")
+VZONE_NGINX_DOMAINS_DIR = env(
+    "VZONE_NGINX_DOMAINS_DIR",
+    str(VZONE_DATA_ROOT / "nginx" / "domains"),
+)
+VZONE_WEB_STACK = env("VZONE_WEB_STACK", "auto")  # auto | live | mock
 
 # Modules activés (extensible à l'installation)
 VZONE_ENABLED_MODULES = env_list(

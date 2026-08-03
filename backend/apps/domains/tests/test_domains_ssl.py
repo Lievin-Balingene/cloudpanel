@@ -1,6 +1,8 @@
 """Tests domaines et SSL."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from django.urls import reverse
 from rest_framework.test import APIClient
@@ -9,6 +11,7 @@ from apps.accounts.factories import AdminFactory, UserFactory
 from apps.domains.models import Domain, SslCertificate
 from apps.domains.services import create_domain
 from apps.domains.ssl_services import install_custom_certificate, issue_letsencrypt, issue_self_signed
+from apps.domains.vhosts import resolve_domain_backend, render_vhost
 
 
 @pytest.fixture
@@ -18,7 +21,14 @@ def api() -> APIClient:
 
 @pytest.mark.integration
 @pytest.mark.django_db
-def test_create_domain_creates_dns_zone(api: APIClient):
+def test_create_domain_creates_dns_zone(api: APIClient, tmp_path, settings):
+    settings.VZONE_HOME_ROOT = tmp_path / "homes"
+    settings.VZONE_HOME_ROOT.mkdir(parents=True, exist_ok=True)
+    settings.VZONE_DATA_ROOT = tmp_path / "data"
+    settings.VZONE_DATA_ROOT.mkdir(parents=True, exist_ok=True)
+    settings.VZONE_NGINX_DOMAINS_DIR = str(tmp_path / "nginx")
+    settings.VZONE_WEB_STACK = "mock"
+
     admin = AdminFactory(password="TestPassword123!")
     api.force_authenticate(user=admin)
     response = api.post(
@@ -37,6 +47,10 @@ def test_create_domain_creates_dns_zone(api: APIClient):
     domain = Domain.objects.get(pk=data["id"])
     assert domain.dns_zone is not None
     assert domain.dns_zone.records.filter(record_type="A", name="@").exists()
+    # Primary → ~/public_html (home admin)
+    assert domain.document_root.endswith("public_html")
+    assert Path(domain.document_root).is_dir()
+    assert (Path(domain.document_root) / "index.html").is_file()
 
 
 @pytest.mark.integration
@@ -129,3 +143,48 @@ def test_issue_letsencrypt_service():
     ssl = issue_letsencrypt(domain)
     assert ssl.status == SslCertificate.Status.ACTIVE
     assert "BEGIN CERTIFICATE" in ssl.certificate_pem
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_addon_docroot_and_app_priority(tmp_path, settings):
+    settings.VZONE_HOME_ROOT = tmp_path / "homes"
+    settings.VZONE_HOME_ROOT.mkdir(parents=True, exist_ok=True)
+    settings.VZONE_DATA_ROOT = tmp_path / "data"
+    settings.VZONE_NGINX_DOMAINS_DIR = str(tmp_path / "nginx")
+    settings.VZONE_WEB_STACK = "mock"
+
+    owner = UserFactory(username="siteowner")
+    primary = create_domain(
+        name="primary-app.test", owner=owner, domain_type=Domain.DomainType.PRIMARY
+    )
+    assert primary.document_root.replace("\\", "/").endswith("/siteowner/public_html")
+
+    addon = create_domain(
+        name="addon-app.test", owner=owner, domain_type=Domain.DomainType.ADDON
+    )
+    assert "domains/addon-app.test/public_html" in addon.document_root.replace("\\", "/")
+    assert Path(addon.document_root).is_dir()
+
+    backend = resolve_domain_backend(addon)
+    assert backend.mode == "static"
+    conf = render_vhost(addon, backend)
+    assert "root " in conf
+    assert "addon-app.test" in conf
+
+    from apps.python_apps.models import PythonApp
+
+    app = PythonApp.objects.create(
+        owner=owner,
+        name="django1",
+        port=8123,
+        status=PythonApp.Status.RUNNING,
+        domain_name="addon-app.test",
+        is_active=True,
+    )
+    backend2 = resolve_domain_backend(addon)
+    assert backend2.mode == "proxy"
+    assert backend2.port == 8123
+    conf2 = render_vhost(addon, backend2)
+    assert "proxy_pass http://127.0.0.1:8123" in conf2
+    assert app.name in backend2.app_label

@@ -1,6 +1,7 @@
-"""Services domaines : quotas, DNS, document root."""
+"""Services domaines : quotas, DNS, document root, vhosts."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from django.conf import settings
@@ -11,7 +12,16 @@ from apps.accounts.models import User
 from apps.core.exceptions import QuotaExceeded, VZoneAPIException
 from apps.dns.models import DnsRecord, DnsZone
 from apps.dns.services import create_zone_with_defaults
+from apps.domains.fsutils import (
+    apply_tree_permissions,
+    secure_directory,
+    secure_file,
+    try_chown_vzone,
+)
 from apps.domains.models import Domain, DomainRedirect, normalize_hostname
+from apps.files.services import ensure_cpanel_tree, personal_home
+
+logger = logging.getLogger(__name__)
 
 
 def domains_queryset_for(user: User):
@@ -49,12 +59,60 @@ def _assert_domain_quota(owner: User) -> None:
         )
 
 
-def default_document_root(owner: User, hostname: str) -> str:
-    root = Path(settings.VZONE_HOME_ROOT) / (owner.system_username or owner.username) / "public_html"
-    if hostname:
-        safe = hostname.replace(".", "_")
-        root = root.parent / "domains" / safe / "public_html"
-    return str(root)
+def default_document_root(
+    owner: User,
+    hostname: str,
+    domain_type: str = Domain.DomainType.PRIMARY,
+    parent: Domain | None = None,
+) -> str:
+    """
+    Chemins style cPanel :
+    - primary → ~/public_html
+    - addon / subdomain → ~/domains/<hostname>/public_html
+    - parked / alias → docroot du parent (sinon ~/public_html)
+    """
+    home = personal_home(owner)
+    if domain_type in {Domain.DomainType.ALIAS, Domain.DomainType.PARKED}:
+        if parent and parent.document_root:
+            return parent.document_root
+        return str(home / "public_html")
+    if domain_type == Domain.DomainType.PRIMARY:
+        return str(home / "public_html")
+    # addon / subdomain : dossier dédié (hostname réel, pas underscored)
+    return str(home / "domains" / hostname.lower() / "public_html")
+
+
+def provision_document_root(docroot: str, *, hostname: str, domain_type: str) -> Path:
+    """Crée le docroot avec permissions 755 et index.html de bienvenue."""
+    root = Path(docroot)
+    # Assure aussi l'arbre home parent
+    secure_directory(root, 0o755)
+    secure_directory(root / "cgi-bin", 0o755)
+    # logs du site à côté du public_html si domains/...
+    if root.name == "public_html" and root.parent.name != "admin":
+        site_base = root.parent
+        secure_directory(site_base / "logs", 0o755)
+
+    index = root / "index.html"
+    if not index.exists():
+        index.write_text(
+            "<!DOCTYPE html>\n"
+            "<html lang=\"fr\"><head><meta charset=\"utf-8\">"
+            f"<title>{hostname}</title>"
+            "<style>body{font-family:system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;color:#2c3e50}"
+            "h1{font-size:1.5rem}p{color:#6b7c8f}</style></head>"
+            f"<body><h1>{hostname}</h1>"
+            "<p>Document root V-zone Panel — déposez vos fichiers ici "
+            "(ou liez une app Python/Node/PHP : elle aura la priorité).</p>"
+            f"<p><small>Type&nbsp;: {domain_type}</small></p>"
+            "</body></html>\n",
+            encoding="utf-8",
+        )
+        secure_file(index, 0o644)
+
+    apply_tree_permissions(root, dir_mode=0o755, file_mode=0o644)
+    try_chown_vzone(root)
+    return root
 
 
 def _ensure_a_record(zone: DnsZone, name: str, ipv4: str | None) -> None:
@@ -66,6 +124,21 @@ def _ensure_a_record(zone: DnsZone, name: str, ipv4: str | None) -> None:
         name=name,
         defaults={"content": ipv4, "ttl": zone.ttl_default, "is_active": True},
     )
+
+
+def _sync_vhost_safe(domain: Domain | None = None, *, remove_name: str | None = None) -> None:
+    try:
+        from apps.domains.vhosts import remove_domain_vhost, sync_all_domain_vhosts, sync_domain_vhost
+
+        if remove_name:
+            remove_domain_vhost(remove_name)
+            sync_all_domain_vhosts()
+        elif domain is not None:
+            sync_domain_vhost(domain)
+        else:
+            sync_all_domain_vhosts()
+    except Exception:  # noqa: BLE001
+        logger.exception("Sync vhost échoué")
 
 
 @transaction.atomic
@@ -119,8 +192,16 @@ def create_domain(
             status_code=400,
         )
 
-    docroot = document_root or default_document_root(owner, hostname)
-    Path(docroot).mkdir(parents=True, exist_ok=True)
+    # Home cPanel + docroot
+    ensure_cpanel_tree(personal_home(owner))
+    docroot = document_root or default_document_root(
+        owner, hostname, domain_type=domain_type, parent=parent
+    )
+    if domain_type not in {Domain.DomainType.ALIAS, Domain.DomainType.PARKED}:
+        provision_document_root(docroot, hostname=hostname, domain_type=domain_type)
+    else:
+        # S'assure que le parent a bien un docroot
+        Path(docroot).mkdir(parents=True, exist_ok=True)
 
     zone = None
     if create_dns_zone and domain_type in {
@@ -162,6 +243,7 @@ def create_domain(
         ipv6_address=ipv6_address,
         notes=notes,
     )
+    transaction.on_commit(lambda: _sync_vhost_safe(domain))
     return domain
 
 
@@ -169,10 +251,28 @@ def create_domain(
 def delete_domain(domain: Domain, *, remove_dns_zone: bool = False) -> None:
     zone = domain.dns_zone
     domain_name = domain.name
+    docroot = domain.document_root
+    domain_type = domain.domain_type
     domain.delete()
     if remove_dns_zone and zone and not Domain.objects.filter(dns_zone=zone).exists():
         if zone.name == domain_name:
             zone.delete()
+    transaction.on_commit(lambda: _sync_vhost_safe(remove_name=domain_name))
+
+    # Nettoyage FS addon/subdomain (pas le public_html principal)
+    if (
+        domain_type in {Domain.DomainType.ADDON, Domain.DomainType.SUBDOMAIN}
+        and docroot
+        and "domains" in Path(docroot).parts
+    ):
+        import shutil
+
+        site_dir = Path(docroot).parent  # .../domains/hostname
+        try:
+            if site_dir.exists() and site_dir.name == domain_name.lower():
+                shutil.rmtree(site_dir, ignore_errors=True)
+        except OSError as exc:
+            logger.warning("Nettoyage docroot %s: %s", site_dir, exc)
 
 
 def create_redirect(
@@ -193,3 +293,10 @@ def create_redirect(
         redirect_type=redirect_type,
         wildcard=wildcard,
     )
+
+
+def refresh_web_routing() -> int:
+    """API / hooks apps : régénère tous les vhosts (priorité apps)."""
+    from apps.domains.vhosts import sync_all_domain_vhosts
+
+    return sync_all_domain_vhosts()

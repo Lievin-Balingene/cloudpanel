@@ -63,18 +63,20 @@ class FileEntry:
 
 def ensure_cpanel_tree(personal: Path) -> None:
     """Arborescence type cPanel sous le home du compte."""
+    from apps.domains.fsutils import apply_tree_permissions, secure_directory, try_chown_vzone
+
     personal.mkdir(parents=True, exist_ok=True)
-    for sub in ("public_html", "mail", "tmp", "logs", "etc", "ssl", ".trash"):
-        (personal / sub).mkdir(exist_ok=True)
-    cgi = personal / "public_html" / "cgi-bin"
-    cgi.mkdir(exist_ok=True)
+    for sub in ("public_html", "mail", "tmp", "logs", "etc", "ssl", ".trash", "domains"):
+        secure_directory(personal / sub, 0o755)
+    secure_directory(personal / "public_html" / "cgi-bin", 0o755)
     www = personal / "www"
     if not www.exists() and not www.is_symlink():
         try:
             www.symlink_to("public_html")
         except OSError:
-            # Windows / FS sans symlink : dossier miroir minimal
-            www.mkdir(exist_ok=True)
+            secure_directory(www, 0o755)
+    apply_tree_permissions(personal / "public_html", dir_mode=0o755, file_mode=0o644)
+    try_chown_vzone(personal)
 
 
 def personal_home(user: User) -> Path:

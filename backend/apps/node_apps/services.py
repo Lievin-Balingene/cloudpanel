@@ -22,6 +22,15 @@ from apps.node_apps.models import NodeApp
 
 logger = logging.getLogger(__name__)
 
+
+def _refresh_domain_routing() -> None:
+    try:
+        from apps.domains.services import refresh_web_routing
+
+        refresh_web_routing()
+    except Exception:  # noqa: BLE001
+        logger.debug("refresh_web_routing skip", exc_info=True)
+
 NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{1,47}$")
 
 SERVER_JS = """\
@@ -258,6 +267,7 @@ def create_node_app(
         status=NodeApp.Status.STOPPED,
     )
     write_app_config(app)
+    _refresh_domain_routing()
     return app
 
 
@@ -289,6 +299,7 @@ def update_node_app(
         app.is_active = is_active
     app.save()
     write_app_config(app)
+    _refresh_domain_routing()
     return app
 
 
@@ -360,6 +371,7 @@ def start_node_app(app: NodeApp) -> NodeApp:
         ) from exc
     app.save()
     write_app_config(app)
+    _refresh_domain_routing()
     return app
 
 
@@ -387,6 +399,7 @@ def stop_node_app(app: NodeApp) -> NodeApp:
     app.last_error = ""
     app.save()
     write_app_config(app)
+    _refresh_domain_routing()
     return app
 
 
@@ -410,6 +423,7 @@ def delete_node_app(app: NodeApp, *, remove_files: bool = False) -> None:
         except VZoneAPIException:
             pass
     app.delete()
+    _refresh_domain_routing()
 
 
 def read_logs(app: NodeApp, *, lines: int = 100) -> dict:

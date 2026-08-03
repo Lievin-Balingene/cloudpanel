@@ -23,6 +23,16 @@ from apps.python_apps.models import PythonApp
 
 logger = logging.getLogger(__name__)
 
+
+def _refresh_domain_routing() -> None:
+    """Priorité app → régénère les vhosts Nginx des domaines."""
+    try:
+        from apps.domains.services import refresh_web_routing
+
+        refresh_web_routing()
+    except Exception:  # noqa: BLE001
+        logger.debug("refresh_web_routing skip", exc_info=True)
+
 NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{1,47}$")
 
 WSGI_TEMPLATE = '''\
@@ -298,6 +308,7 @@ def create_python_app(
         status=PythonApp.Status.STOPPED,
     )
     write_app_config(app)
+    _refresh_domain_routing()
     return app
 
 
@@ -326,6 +337,7 @@ def update_python_app(
         app.is_active = is_active
     app.save()
     write_app_config(app)
+    _refresh_domain_routing()
     return app
 
 
@@ -439,6 +451,7 @@ def start_python_app(app: PythonApp) -> PythonApp:
         ) from exc
     app.save()
     write_app_config(app)
+    _refresh_domain_routing()
     return app
 
 
@@ -466,6 +479,7 @@ def stop_python_app(app: PythonApp) -> PythonApp:
     app.last_error = ""
     app.save()
     write_app_config(app)
+    _refresh_domain_routing()
     return app
 
 
@@ -489,6 +503,7 @@ def delete_python_app(app: PythonApp, *, remove_files: bool = False) -> None:
         except VZoneAPIException:
             pass
     app.delete()
+    _refresh_domain_routing()
 
 
 def read_logs(app: PythonApp, *, lines: int = 100) -> dict:

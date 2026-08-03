@@ -4,16 +4,30 @@
 
 Types supportés :
 
-- `primary` — domaine principal
-- `addon` — domaine additionnel
-- `subdomain` — sous-domaine (lié au parent)
-- `parked` / `alias` — pointent vers un domaine cible
+- `primary` — domaine principal → `~/public_html`
+- `addon` — domaine additionnel → `~/domains/<hostname>/public_html`
+- `subdomain` — sous-domaine → `~/domains/<hostname>/public_html`
+- `parked` / `alias` — partagent le docroot du parent
 
-À la création d'un domaine primary/addon/parked/alias :
+À la création d'un domaine primary/addon/subdomain :
 
 1. Vérification du quota package
-2. Création du document root
+2. Création du document root (permissions `755`) + `index.html` + `cgi-bin/`
 3. Création automatique de la zone DNS + enregistrements A (@, www)
+4. Génération d'un **vhost Nginx** dédié
+
+## Routage web (priorité)
+
+L'ordre de priorité pour servir un domaine :
+
+1. **App Python** liée (`domain_name`) et **running** → `proxy_pass` vers son port
+2. **App Node.js** liée et **running** → `proxy_pass`
+3. **Sélecteur PHP** lié → PHP-FPM sur le docroot du sélecteur
+4. Sinon → **fichiers statiques** du `document_root` (+ PHP système si disponible)
+
+Dès qu'une app Django/Flask/Node démarre ou change de domaine, les vhosts sont régénérés.
+
+Fichiers Nginx : `VZONE_NGINX_DOMAINS_DIR` (défaut `/var/lib/vzone/nginx/domains/*.conf`).
 
 ## SSL
 
