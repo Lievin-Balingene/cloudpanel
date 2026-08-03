@@ -11,7 +11,7 @@ REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VERSION="$(tr -d '[:space:]' < "${REPO_DIR}/VERSION")"
 
 echo "[vzone] Mise à jour vers ${VERSION}"
-systemctl stop vzone-api vzone-worker vzone-beat || true
+systemctl stop vzone-api vzone-worker vzone-beat 2>/dev/null || true
 
 rsync -a --delete \
   --exclude '.git' --exclude 'frontend/node_modules' --exclude 'backend/.venv' \
@@ -32,7 +32,21 @@ cd "${VZONE_ROOT}/frontend"
 npm ci || npm install
 npm run build
 
+# (Ré)installe les unités systemd + nginx — utile après une install partielle
+install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-api.service" /etc/systemd/system/
+install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-worker.service" /etc/systemd/system/
+install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-beat.service" /etc/systemd/system/
+install -m 644 "${VZONE_ROOT}/deploy/nginx/vzone.conf" /etc/nginx/sites-available/vzone 2>/dev/null \
+  || install -m 644 "${VZONE_ROOT}/deploy/nginx/vzone.conf" /etc/nginx/conf.d/vzone.conf
+if [[ -d /etc/nginx/sites-enabled ]]; then
+  ln -sfn /etc/nginx/sites-available/vzone /etc/nginx/sites-enabled/vzone
+  rm -f /etc/nginx/sites-enabled/default
+fi
+nginx -t
+
 systemctl daemon-reload
-systemctl start vzone-api vzone-worker vzone-beat
+systemctl enable --now redis-server 2>/dev/null || systemctl enable --now redis 2>/dev/null || true
+systemctl enable --now vzone-api vzone-worker vzone-beat nginx
 systemctl reload nginx || systemctl restart nginx
 echo "[vzone] Mise à jour terminée — version ${VERSION}"
+echo "[vzone] Services : $(systemctl is-active vzone-api vzone-worker vzone-beat nginx | tr '\n' ' ')"
