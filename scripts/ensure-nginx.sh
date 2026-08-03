@@ -206,8 +206,14 @@ chmod -R a+rX "${VZONE_ROOT}/frontend" || true
 chmod a+x /opt /opt/vzone /opt/vzone/frontend "${VZONE_ROOT}/frontend/dist" 2>/dev/null || true
 
 nginx -t
-# restart pour prendre en compte le groupe ssl-cert de www-data
-systemctl restart nginx
+# Pendant une émission SSL panel : reload seulement (pas de restart nginx/API
+# sinon la requête Let's Encrypt en cours reçoit un 502 Bad Gateway).
+if [[ "${VZONE_NGINX_RELOAD_ONLY:-0}" == "1" ]]; then
+  systemctl reload nginx || systemctl restart nginx
+else
+  # restart : prend en compte le groupe ssl-cert de www-data
+  systemctl restart nginx
+fi
 
 sleep 1
 echo "[vzone] Tests locaux"
@@ -241,10 +247,14 @@ if [[ -f "$ENV_FILE" ]]; then
     esac
   done
   MERGED="$(echo "$MERGED" | sed 's/^,//' | sed 's/,,/,/g')"
-  if grep -q '^VZONE_ALLOWED_HOSTS=' "$ENV_FILE"; then
-    sed -i "s|^VZONE_ALLOWED_HOSTS=.*|VZONE_ALLOWED_HOSTS=${MERGED}|" "$ENV_FILE"
-  else
-    echo "VZONE_ALLOWED_HOSTS=${MERGED}" >> "$ENV_FILE"
+  HOSTS_CHANGED=0
+  if [[ "$CURRENT" != "$MERGED" ]]; then
+    HOSTS_CHANGED=1
+    if grep -q '^VZONE_ALLOWED_HOSTS=' "$ENV_FILE"; then
+      sed -i "s|^VZONE_ALLOWED_HOSTS=.*|VZONE_ALLOWED_HOSTS=${MERGED}|" "$ENV_FILE"
+    else
+      echo "VZONE_ALLOWED_HOSTS=${MERGED}" >> "$ENV_FILE"
+    fi
   fi
   if [[ -z "${VZONE_PUBLIC_IP:-}" && -n "$HOST_IP" ]]; then
     grep -q '^VZONE_PUBLIC_IP=' "$ENV_FILE" || echo "VZONE_PUBLIC_IP=${HOST_IP}" >> "$ENV_FILE"
@@ -252,6 +262,9 @@ if [[ -f "$ENV_FILE" ]]; then
   if [[ -z "${VZONE_MAIL_PUBLIC_IP:-}" && -n "$HOST_IP" ]]; then
     grep -q '^VZONE_MAIL_PUBLIC_IP=' "$ENV_FILE" || echo "VZONE_MAIL_PUBLIC_IP=${HOST_IP}" >> "$ENV_FILE"
   fi
-  systemctl try-restart vzone-api 2>/dev/null || true
+  # Ne jamais tuer vzone-api pendant un job SSL (VZONE_SKIP_API_RESTART=1).
+  if [[ "${VZONE_SKIP_API_RESTART:-0}" != "1" && "$HOSTS_CHANGED" -eq 1 ]]; then
+    systemctl try-restart vzone-api 2>/dev/null || true
+  fi
   echo "[vzone] ALLOWED_HOSTS → ${MERGED}"
 fi

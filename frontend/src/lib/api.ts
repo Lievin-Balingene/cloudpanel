@@ -73,11 +73,19 @@ export async function apiRequest<T>(
       err?.error?.message ||
       (typeof err?.raw === "string" ? err.raw : "") ||
       `Erreur HTTP ${response.status}`;
-    const message = messageRaw
+    let message = messageRaw
       .replace(/<[^>]+>/g, " ")
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 240) || `Erreur HTTP ${response.status}`;
+    if (
+      response.status === 502 &&
+      /bad gateway|nginx/i.test(message)
+    ) {
+      message =
+        "502 Bad Gateway : l’API a été coupée pendant l’opération (souvent un reload SSL). " +
+        "Vérifiez si le certificat est déjà actif, puis réessayez si besoin.";
+    }
     throw new ApiClientError(
       message,
       response.status,

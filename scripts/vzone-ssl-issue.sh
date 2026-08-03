@@ -68,7 +68,23 @@ for h in ${PANEL_HOSTS//,/ }; do
   fi
 done
 
+# Annoncer le succès AVANT le reload Nginx : l'API peut finaliser même si
+# la connexion proxy est brièvement coupée pendant le reload.
+python3 - <<PY
+import json
+print(json.dumps({
+    "domain": "${DOMAIN}",
+    "cert_path": "${OUT}/cert.pem",
+    "fullchain_path": "${OUT}/fullchain.pem",
+    "privkey_path": "${OUT}/privkey.pem",
+    "live_dir": "${LIVE}",
+}))
+PY
+
 if [[ "$IS_PANEL" -eq 1 ]]; then
+  # Ne pas restart nginx ni vzone-api pendant le POST /ssl/letsencrypt/
+  export VZONE_SKIP_API_RESTART=1
+  export VZONE_NGINX_RELOAD_ONLY=1
   for script in /opt/vzone-src/scripts/ensure-nginx.sh /opt/vzone/scripts/ensure-nginx.sh; do
     if [[ -f "$script" ]]; then
       bash "$script" || true
@@ -83,15 +99,3 @@ elif command -v nginx >/dev/null 2>&1; then
     nginx -t >&2 || true
   fi
 fi
-
-# JSON compact pour le panel (chemins uniquement — les PEM sont lus par Django)
-python3 - <<PY
-import json
-print(json.dumps({
-    "domain": "${DOMAIN}",
-    "cert_path": "${OUT}/cert.pem",
-    "fullchain_path": "${OUT}/fullchain.pem",
-    "privkey_path": "${OUT}/privkey.pem",
-    "live_dir": "${LIVE}",
-}))
-PY

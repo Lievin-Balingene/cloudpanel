@@ -62,26 +62,43 @@ def process(req: Path) -> None:
             return
 
         cmd = [ISSUE_BIN, domain, email, *extras]
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        if proc.returncode != 0:
-            err = (proc.stderr or proc.stdout or f"exit {proc.returncode}").strip()
+        # stdout non bufferisé : le JSON succès est émis avant le reload Nginx
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=env,
+        )
+        assert proc.stdout is not None
+        meta: dict | None = None
+        stdout_lines: list[str] = []
+        for line in proc.stdout:
+            stdout_lines.append(line)
+            stripped = line.strip()
+            if stripped.startswith("{") and meta is None:
+                try:
+                    parsed = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, dict) and parsed.get("cert_path"):
+                    meta = {"ok": True, "domain": domain, **parsed}
+                    # Notifier l'API avant le reload Nginx (évite 502 panel)
+                    write_result(result, meta)
+        rc = proc.wait()
+        if meta is not None:
+            return
+        if rc != 0:
+            err = ("".join(stdout_lines) or f"exit {rc}").strip()
             write_result(
                 result,
                 {"ok": False, "error": err[-2000:], "domain": domain},
             )
             return
-
-        meta: dict = {"ok": True, "domain": domain}
-        for line in reversed((proc.stdout or "").strip().splitlines()):
-            line = line.strip()
-            if line.startswith("{"):
-                try:
-                    meta.update(json.loads(line))
-                    meta["ok"] = True
-                except json.JSONDecodeError:
-                    pass
-                break
-        write_result(result, meta)
+        # Succès sans JSON (ne devrait pas arriver)
+        write_result(result, {"ok": True, "domain": domain})
     except Exception as exc:  # noqa: BLE001
         write_result(result, {"ok": False, "error": str(exc)})
     finally:
