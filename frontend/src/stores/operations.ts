@@ -31,18 +31,16 @@ export const useOperationsStore = create<OperationsState>((set, get) => ({
   items: [],
   start: ({ title, detail, percent = -1 }) => {
     const id = uid();
+    const item: OperationItem = {
+      id,
+      title,
+      detail,
+      percent,
+      status: "running",
+      startedAt: Date.now(),
+    };
     set((s) => ({
-      items: [
-        {
-          id,
-          title,
-          detail,
-          percent,
-          status: "running",
-          startedAt: Date.now(),
-        },
-        ...s.items,
-      ].slice(0, 8),
+      items: [item, ...s.items].slice(0, 8),
     }));
     return id;
   },
@@ -55,7 +53,7 @@ export const useOperationsStore = create<OperationsState>((set, get) => ({
   },
   succeed: (id, detail) => {
     set((s) => ({
-      items: s.items.map((it) =>
+      items: s.items.map((it): OperationItem =>
         it.id === id
           ? { ...it, status: "success", percent: 100, detail: detail ?? it.detail, error: undefined }
           : it,
@@ -65,7 +63,7 @@ export const useOperationsStore = create<OperationsState>((set, get) => ({
   },
   fail: (id, error) => {
     set((s) => ({
-      items: s.items.map((it) =>
+      items: s.items.map((it): OperationItem =>
         it.id === id ? { ...it, status: "error", percent: 100, error, detail: error } : it,
       ),
     }));
