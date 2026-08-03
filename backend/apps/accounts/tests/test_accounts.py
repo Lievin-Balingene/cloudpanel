@@ -177,6 +177,52 @@ def test_suspend_user(api: APIClient):
     assert client_user.is_suspended is True
     assert client_user.is_active is False
 
+    resume = api.post(
+        reverse("user-suspend", kwargs={"pk": client_user.pk}),
+        {"suspended": False},
+        format="json",
+    )
+    assert resume.status_code == 200
+    client_user.refresh_from_db()
+    assert client_user.is_suspended is False
+    assert client_user.is_active is True
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+def test_update_and_delete_user(api: APIClient, tmp_path, settings):
+    settings.VZONE_HOME_ROOT = tmp_path / "homes"
+    settings.VZONE_HOME_ROOT.mkdir(parents=True, exist_ok=True)
+    admin = AdminFactory(password="TestPassword123!")
+    api.force_authenticate(user=admin)
+    created = api.post(
+        reverse("user-list"),
+        {
+            "email": "editme@vzone.test",
+            "username": "editme",
+            "password": "TestPassword123!",
+            "role": "client",
+        },
+        format="json",
+    )
+    assert created.status_code == 201
+    uid = created.json()["data"]["id"]
+    home = settings.VZONE_HOME_ROOT / "editme"
+    assert home.exists()
+
+    patched = api.patch(
+        reverse("user-detail", kwargs={"pk": uid}),
+        {"email": "edited@vzone.test", "first_name": "Ed"},
+        format="json",
+    )
+    assert patched.status_code == 200
+    assert patched.json()["data"]["email"] == "edited@vzone.test"
+
+    deleted = api.delete(reverse("user-detail", kwargs={"pk": uid}))
+    assert deleted.status_code == 204
+    assert not User.objects.filter(pk=uid).exists()
+    assert not home.exists()
+
 
 @pytest.mark.unit
 @pytest.mark.django_db

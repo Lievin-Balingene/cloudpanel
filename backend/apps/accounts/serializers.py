@@ -65,6 +65,76 @@ class UserSerializer(serializers.ModelSerializer):
         )
 
 
+class UserUpdateSerializer(serializers.ModelSerializer):
+    """Modification compte (username figé — lié au home cPanel)."""
+
+    password = serializers.CharField(
+        write_only=True, required=False, allow_blank=True, min_length=10
+    )
+    quota = ResourceQuotaSerializer(required=False)
+
+    class Meta:
+        model = User
+        fields = (
+            "email",
+            "username",
+            "password",
+            "first_name",
+            "last_name",
+            "role",
+            "is_active",
+            "is_suspended",
+            "must_change_password",
+            "module_permissions",
+            "parent",
+            "quota",
+        )
+        read_only_fields = ("username",)
+
+    def validate_password(self, value: str) -> str:
+        if not value:
+            return value
+        validate_password(value)
+        try:
+            from apps.security.services import validate_password_against_policy
+
+            validate_password_against_policy(value)
+        except ImportError:
+            pass
+        except VZoneAPIException as exc:
+            raise serializers.ValidationError(str(exc.detail)) from exc
+        return value
+
+    def validate_role(self, value: str) -> str:
+        request = self.context.get("request")
+        actor = getattr(request, "user", None)
+        if actor is None or not actor.is_authenticated:
+            raise serializers.ValidationError("Authentification requise.")
+        if actor.role == User.Role.RESELLER and value != User.Role.CLIENT:
+            raise serializers.ValidationError(
+                "Un revendeur ne peut assigner que le rôle client."
+            )
+        return value
+
+    def update(self, instance: User, validated_data: dict) -> User:
+        quota_data = validated_data.pop("quota", None)
+        password = validated_data.pop("password", None) or None
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        if password:
+            instance.set_password(password)
+            instance.must_change_password = False
+        # Cohérence suspension
+        if instance.is_suspended:
+            instance.is_active = False
+        instance.save()
+        if quota_data is not None and hasattr(instance, "quota"):
+            for key, value in quota_data.items():
+                setattr(instance.quota, key, value)
+            instance.quota.save()
+        return instance
+
+
 class UserCreateSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=10)
     quota = ResourceQuotaSerializer(required=False)

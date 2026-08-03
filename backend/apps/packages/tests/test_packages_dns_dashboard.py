@@ -84,6 +84,42 @@ def test_dashboard_overview_and_capture(api: APIClient):
     assert len(history.json()["data"]) >= 1
 
 
+@pytest.mark.integration
+@pytest.mark.django_db
+def test_update_and_delete_package(api: APIClient):
+    admin = AdminFactory(password="TestPassword123!")
+    api.force_authenticate(user=admin)
+    seed_default_packages()
+    pkg = HostingPackage.objects.filter(package_type="client").first()
+    assert pkg is not None
+
+    updated = api.patch(
+        reverse("package-detail", kwargs={"pk": pkg.pk}),
+        {"emails": 99, "name": pkg.name},
+        format="json",
+    )
+    assert updated.status_code == 200
+    assert updated.json()["data"]["emails"] == 99
+
+    lonely = api.post(
+        reverse("package-list"),
+        {
+            "name": "TempPlan",
+            "package_type": "client",
+            "disk_mb": 1000,
+            "domains": 1,
+            "emails": 1,
+            "databases": 1,
+        },
+        format="json",
+    )
+    assert lonely.status_code == 201
+    lid = lonely.json()["data"]["id"]
+    deleted = api.delete(reverse("package-detail", kwargs={"pk": lid}))
+    assert deleted.status_code == 204
+    assert not HostingPackage.objects.filter(pk=lid).exists()
+
+
 @pytest.mark.unit
 @pytest.mark.django_db
 def test_apply_package_syncs_quota():

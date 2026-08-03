@@ -19,6 +19,7 @@ from apps.accounts.serializers import (
     MeSerializer,
     UserCreateSerializer,
     UserSerializer,
+    UserUpdateSerializer,
 )
 from apps.accounts.services import issue_tokens, provisioning_uri, revoke_refresh_token
 from apps.core.permissions import IsAdministrator
@@ -182,8 +183,12 @@ class UserListCreateView(generics.ListCreateAPIView):
 
 class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAuthenticated, CanManageUsers]
-    serializer_class = UserSerializer
     lookup_field = "pk"
+
+    def get_serializer_class(self):
+        if self.request.method in {"PUT", "PATCH"}:
+            return UserUpdateSerializer
+        return UserSerializer
 
     def get_queryset(self):
         user = self.request.user
@@ -196,7 +201,7 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def retrieve(self, request: Request, *args, **kwargs) -> Response:
         instance = self.get_object()
-        return Response({"success": True, "data": self.get_serializer(instance).data})
+        return Response({"success": True, "data": UserSerializer(instance).data})
 
     def update(self, request: Request, *args, **kwargs) -> Response:
         partial = kwargs.pop("partial", False)
@@ -214,10 +219,12 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
             )
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
-        serializer.save()
-        return Response({"success": True, "data": serializer.data})
+        user = serializer.save()
+        return Response({"success": True, "data": UserSerializer(user).data})
 
     def destroy(self, request: Request, *args, **kwargs) -> Response:
+        from apps.accounts.services import delete_account
+
         instance = self.get_object()
         if instance.pk == request.user.pk:
             return Response(
@@ -234,7 +241,7 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
             request, self
         ):
             return Response(status=status.HTTP_403_FORBIDDEN)
-        instance.delete()
+        delete_account(instance)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -248,9 +255,23 @@ class SuspendUserView(APIView):
             return Response(status=status.HTTP_404_NOT_FOUND)
         if request.user.role == User.Role.RESELLER and target.parent_id != request.user.pk:
             return Response(status=status.HTTP_403_FORBIDDEN)
-        target.is_suspended = True
-        target.is_active = False
-        target.save(update_fields=["is_suspended", "is_active"])
+        if target.pk == request.user.pk:
+            return Response(
+                {
+                    "success": False,
+                    "error": {
+                        "code": "forbidden",
+                        "message": "Impossible de suspendre votre propre compte.",
+                    },
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        suspended = request.data.get("suspended", True)
+        if isinstance(suspended, str):
+            suspended = suspended.lower() in {"1", "true", "yes"}
+        target.is_suspended = bool(suspended)
+        target.is_active = not bool(suspended)
+        target.save(update_fields=["is_suspended", "is_active", "updated_at"])
         return Response({"success": True, "data": UserSerializer(target).data})
 
 

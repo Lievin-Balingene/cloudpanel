@@ -2,7 +2,7 @@
 
 Panneau de contrôle d'hébergement web professionnel pour VPS, serveurs dédiés et machines virtuelles.
 
-**Version :** 0.17.2  
+**Version :** 0.17.3  
 **Dépôt :** https://github.com/Lievin-Balingene/cloudpanel
 
 ## Modules livrés

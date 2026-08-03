@@ -98,19 +98,33 @@ class PackageDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def destroy(self, request: Request, *args, **kwargs) -> Response:
         instance = self.get_object()
-        if instance.assignments.exists():
+        if request.user.role == User.Role.RESELLER and instance.owner_id != request.user.pk:
+            return Response(status=status.HTTP_403_FORBIDDEN)
+        force = request.query_params.get("force") in {"1", "true", "yes"}
+        if instance.assignments.exists() and not force:
+            # Désactivation douce (comme WHM quand le plan est utilisé)
+            instance.is_active = False
+            instance.save(update_fields=["is_active", "updated_at"])
+            return Response(
+                {
+                    "success": True,
+                    "data": {
+                        "detail": "Package en cours d'utilisation — désactivé.",
+                        "package": HostingPackageSerializer(instance).data,
+                    },
+                }
+            )
+        if instance.assignments.exists() and force:
             return Response(
                 {
                     "success": False,
                     "error": {
                         "code": "in_use",
-                        "message": "Package assigné à des comptes — désactivez-le plutôt.",
+                        "message": "Package assigné à des comptes — désassignez-les avant suppression forcée.",
                     },
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if request.user.role == User.Role.RESELLER and instance.owner_id != request.user.pk:
-            return Response(status=status.HTTP_403_FORBIDDEN)
         instance.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 

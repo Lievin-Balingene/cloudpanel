@@ -103,6 +103,35 @@ def provision_account_home(user: User) -> Path:
     return home
 
 
+def delete_account(user: User) -> None:
+    """Supprime le compte et son home (sauf le home admin partagé)."""
+    import shutil
+
+    from django.conf import settings
+
+    from apps.files.services import personal_home
+
+    home_path: Path | None = None
+    if user.role != User.Role.ADMINISTRATOR:
+        try:
+            home_path = personal_home(user)
+        except Exception:  # noqa: BLE001
+            home_path = None
+
+    username = user.username
+    user.delete()
+
+    if home_path is not None and home_path.exists():
+        root = Path(settings.VZONE_HOME_ROOT).resolve()
+        try:
+            resolved = home_path.resolve()
+            if resolved != root and root in resolved.parents:
+                shutil.rmtree(resolved, ignore_errors=True)
+                logger.info("Home supprimé pour %s → %s", username, resolved)
+        except OSError as exc:
+            logger.warning("Échec suppression home %s: %s", home_path, exc)
+
+
 def issue_tokens(user: User, request=None) -> dict:  # type: ignore[no-untyped-def]
     """Émet access + refresh JWT et enregistre la session."""
     refresh = RefreshToken.for_user(user)
