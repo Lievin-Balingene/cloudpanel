@@ -159,21 +159,54 @@ else
 fi
 rm -f "$TMP"
 
-if [[ ! -f "${VZONE_ROOT}/frontend/dist/index.html" ]]; then
-  echo "[vzone] ERREUR: ${VZONE_ROOT}/frontend/dist/index.html manquant"
-  exit 1
+# Toujours une seule conf panel : sites-enabled OU conf.d, pas les deux
+if [[ -L /etc/nginx/sites-enabled/vzone || -f /etc/nginx/sites-enabled/vzone ]]; then
+  rm -f /etc/nginx/conf.d/vzone.conf 2>/dev/null || true
 fi
-chmod -R a+rX "${VZONE_ROOT}/frontend" || true
-chmod a+x /opt /opt/vzone /opt/vzone/frontend "${VZONE_ROOT}/frontend/dist" 2>/dev/null || true
 
+# Retirer vhosts domaine qui dupliquent le panel (conflit server_name)
 for h in ${PANEL_HOSTS}; do
   [[ -n "$h" ]] || continue
   safe="$(echo "$h" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/_/g')"
   rm -f "${DOMAINS_DIR}/${safe}.conf" 2>/dev/null || true
 done
+if [[ -d "$DOMAINS_DIR" ]]; then
+  for f in "${DOMAINS_DIR}"/*.conf; do
+    [[ -f "$f" ]] || continue
+    [[ "$(basename "$f")" == ".keep.conf" ]] && continue
+    for h in ${PANEL_HOSTS}; do
+      if grep -qE "server_name[^;]*[[:space:]]${h}([[:space:;]]|$)" "$f" 2>/dev/null; then
+        echo "[vzone] Suppression conflit $f ($h)"
+        rm -f "$f"
+      fi
+    done
+  done
+fi
+
+if [[ ! -f "${VZONE_ROOT}/frontend/dist/index.html" ]]; then
+  SRC_FE=""
+  for candidate in /opt/vzone-src/frontend "${VZONE_ROOT}/../vzone-src/frontend"; do
+    [[ -f "${candidate}/package.json" ]] && SRC_FE="$candidate" && break
+  done
+  if [[ -n "$SRC_FE" ]]; then
+    echo "[vzone] dist manquant — build frontend depuis ${SRC_FE}"
+    mkdir -p "${VZONE_ROOT}/frontend"
+    rsync -a --delete --exclude node_modules "${SRC_FE}/" "${VZONE_ROOT}/frontend/"
+    cd "${VZONE_ROOT}/frontend"
+    npm ci || npm install
+    npm run build
+  fi
+fi
+if [[ ! -f "${VZONE_ROOT}/frontend/dist/index.html" ]]; then
+  echo "[vzone] ERREUR: ${VZONE_ROOT}/frontend/dist/index.html manquant"
+  echo "[vzone] Exécutez: sudo bash /opt/vzone-src/scripts/repair-nginx-500.sh"
+  exit 1
+fi
+chmod -R a+rX "${VZONE_ROOT}/frontend" || true
+chmod a+x /opt /opt/vzone /opt/vzone/frontend "${VZONE_ROOT}/frontend/dist" 2>/dev/null || true
 
 nginx -t
-# restart (pas seulement reload) pour prendre en compte le nouveau groupe ssl-cert de www-data
+# restart pour prendre en compte le groupe ssl-cert de www-data
 systemctl restart nginx
 
 sleep 1
