@@ -12,8 +12,12 @@ from vzone import __version__
 BASE_DIR = Path(__file__).resolve().parents[2]
 REPO_ROOT = BASE_DIR.parent
 
-load_dotenv(REPO_ROOT / ".env")
-load_dotenv(BASE_DIR / ".env")
+for _dotenv_path in (REPO_ROOT / ".env", BASE_DIR / ".env"):
+    try:
+        load_dotenv(_dotenv_path)
+    except OSError:
+        # En prod, .env peut être un symlink root:vzone — ignorer si illisible.
+        pass
 
 
 def env(key: str, default: str | None = None) -> str:

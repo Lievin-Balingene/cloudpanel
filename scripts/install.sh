@@ -142,7 +142,8 @@ VZONE_SECURE_SSL_REDIRECT=false
 VZONE_VERSION=${VZONE_VERSION}
 VZONE_ENABLED_MODULES=core,accounts,packages,dns,dashboard,domains,files,ftp,email,databases,python_apps,node_apps,php,git_deploy,docker_mgmt,backups,monitoring,firewall,security
 EOF
-  chmod 600 /etc/vzone/vzone.env
+  chown root:"${VZONE_USER}" /etc/vzone/vzone.env
+  chmod 640 /etc/vzone/vzone.env
   ln -sfn /etc/vzone/vzone.env "${VZONE_ROOT}/.env"
 
   python3 -m venv "${VZONE_ROOT}/backend/.venv"
@@ -210,7 +211,8 @@ EOF
   echo " Utilisateur admin    : admin"
   echo " Mot de passe temp.   : ${ADMIN_PASS}"
   echo " Changer le mot de passe :"
-  echo "   sudo -u ${VZONE_USER} ${VZONE_ROOT}/backend/.venv/bin/python \\"
+  echo "   sudo DJANGO_SETTINGS_MODULE=vzone.settings.production \\"
+  echo "     ${VZONE_ROOT}/backend/.venv/bin/python \\"
   echo "     ${VZONE_ROOT}/backend/manage.py changepassword admin"
   echo " Version installée    : ${VZONE_VERSION}"
   echo " Services actifs      : vzone-api, vzone-worker, vzone-beat, nginx, postgresql, redis"

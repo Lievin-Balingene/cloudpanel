@@ -36,6 +36,11 @@ npm run build
 install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-api.service" /etc/systemd/system/
 install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-worker.service" /etc/systemd/system/
 install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-beat.service" /etc/systemd/system/
+# Droits .env : lisible par l'utilisateur système vzone (commandes manage.py)
+if [[ -f /etc/vzone/vzone.env ]]; then
+  chown root:vzone /etc/vzone/vzone.env 2>/dev/null || chown root:vzone /etc/vzone/vzone.env
+  chmod 640 /etc/vzone/vzone.env
+fi
 install -m 644 "${VZONE_ROOT}/deploy/nginx/vzone.conf" /etc/nginx/sites-available/vzone 2>/dev/null \
   || install -m 644 "${VZONE_ROOT}/deploy/nginx/vzone.conf" /etc/nginx/conf.d/vzone.conf
 if [[ -d /etc/nginx/sites-enabled ]]; then
