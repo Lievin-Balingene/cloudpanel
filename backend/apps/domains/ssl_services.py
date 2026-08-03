@@ -279,7 +279,7 @@ def issue_with_certbot(domain: Domain, email: str) -> CertificateMaterial:
                 meta = _enqueue_ssl_job(domain.name, email, [])
                 if not meta.get("ok"):
                     err = str(meta.get("error") or err)
-        raise VZoneAPIException(
+                    raise VZoneAPIException(
                         detail=_clean_le_error(err),
                         code="letsencrypt_failed",
                         status_code=502,
