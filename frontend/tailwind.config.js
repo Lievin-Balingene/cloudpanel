@@ -5,21 +5,23 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Palette inspirée WHM / cPanel (sans marque)
+        // Palette WHM/cPanel sobre : navy + bleu, orange réservé (quasi retiré)
         cp: {
-          orange: "#ff6c2c",
-          "orange-dark": "#e55a1b",
-          "orange-soft": "#fff1ea",
-          navy: "#1a2b3c",
-          "navy-soft": "#243447",
-          sidebar: "#2b3d4f",
-          header: "#1f2d3d",
+          orange: "#1a5fb4",
+          "orange-dark": "#154a8f",
+          "orange-soft": "#e8f0fa",
+          navy: "#152536",
+          "navy-soft": "#1e3348",
+          sidebar: "#1b2d3f",
+          header: "#152536",
           border: "#d5dde5",
           canvas: "#eef2f6",
           panel: "#ffffff",
           text: "#2c3e50",
           muted: "#6b7c8f",
           link: "#1a5fb4",
+          "link-dark": "#154a8f",
+          "link-soft": "#e8f0fa",
           success: "#2e7d32",
           danger: "#c62828",
         },
@@ -37,9 +39,9 @@ export default {
           950: "#1a2433",
         },
         accent: {
-          DEFAULT: "#ff6c2c",
-          soft: "#ff8f5c",
-          deep: "#e55a1b",
+          DEFAULT: "#1a5fb4",
+          soft: "#4d8fd4",
+          deep: "#154a8f",
         },
         surface: {
           light: "#eef2f6",
@@ -47,22 +49,28 @@ export default {
         },
       },
       fontFamily: {
-        display: ['"Manrope"', "system-ui", "sans-serif"],
+        display: ['"Outfit"', "system-ui", "sans-serif"],
         sans: ['"Manrope"', "system-ui", "sans-serif"],
         mono: ['Consolas', '"Courier New"', "monospace"],
       },
       boxShadow: {
         panel: "0 1px 3px rgba(26, 43, 60, 0.12)",
         tool: "0 1px 2px rgba(0,0,0,0.08)",
+        login: "0 24px 64px rgba(15, 28, 42, 0.28)",
       },
       keyframes: {
         "fade-up": {
-          "0%": { opacity: "0", transform: "translateY(6px)" },
+          "0%": { opacity: "0", transform: "translateY(10px)" },
           "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+        "fade-in": {
+          "0%": { opacity: "0" },
+          "100%": { opacity: "1" },
         },
       },
       animation: {
-        "fade-up": "fade-up 0.25s ease-out both",
+        "fade-up": "fade-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) both",
+        "fade-in": "fade-in 0.6s ease both",
       },
     },
   },

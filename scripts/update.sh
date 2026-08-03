@@ -46,6 +46,16 @@ bash "${REPO_DIR}/scripts/ensure-homes.sh"
 # Recharger env après migration éventuelle de VZONE_HOME_ROOT
 set -a; source /etc/vzone/vzone.env; set +a
 
+# Stack mail Postfix/Dovecot/OpenDKIM (idempotent)
+if [[ -f "${REPO_DIR}/scripts/install-mail.sh" ]]; then
+  bash "${REPO_DIR}/scripts/install-mail.sh" || echo "[vzone] Avertissement: install-mail.sh a échoué"
+fi
+
+# phpMyAdmin + MariaDB + PHP-FPM
+if [[ -f "${REPO_DIR}/scripts/install-phpmyadmin.sh" ]]; then
+  bash "${REPO_DIR}/scripts/install-phpmyadmin.sh" || echo "[vzone] Avertissement: install-phpmyadmin.sh a échoué"
+fi
+
 bash "${REPO_DIR}/scripts/ensure-nginx.sh" "${VZONE_ROOT}/deploy/nginx/vzone.conf"
 
 systemctl daemon-reload

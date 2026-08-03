@@ -8,12 +8,14 @@ from apps.databases.views import (
     DatabaseOverviewView,
     DatabaseUserDetailView,
     DatabaseUserListCreateView,
+    PhpMyAdminSsoView,
     PrivilegeDeleteView,
     PrivilegeListCreateView,
 )
 
 urlpatterns = [
     path("overview/", DatabaseOverviewView.as_view(), name="databases-overview"),
+    path("phpmyadmin/sso/", PhpMyAdminSsoView.as_view(), name="databases-phpmyadmin-sso"),
     path("users/", DatabaseUserListCreateView.as_view(), name="databases-user-list"),
     path("users/<int:pk>/", DatabaseUserDetailView.as_view(), name="databases-user-detail"),
     path("privileges/", PrivilegeListCreateView.as_view(), name="databases-privilege-list"),

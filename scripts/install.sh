@@ -3,7 +3,9 @@
 # Usage: sudo bash scripts/install.sh [--non-interactive]
 set -euo pipefail
 
-VZONE_VERSION="$(tr -d '[:space:]' < "$(dirname "$0")/../VERSION" 2>/dev/null || echo "0.1.0")"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+VZONE_VERSION="$(tr -d '[:space:]' < "${REPO_DIR}/VERSION" 2>/dev/null || echo "0.1.0")"
 VZONE_ROOT="${VZONE_ROOT:-/opt/vzone}"
 VZONE_DATA="${VZONE_DATA:-/var/lib/vzone}"
 VZONE_LOG="${VZONE_LOG:-/var/log/vzone}"
@@ -90,7 +92,7 @@ create_system_user() {
     useradd --system --home-dir "$VZONE_DATA" --shell /usr/sbin/nologin "$VZONE_USER"
     ok "Utilisateur système ${VZONE_USER} créé"
   fi
-  mkdir -p "$VZONE_ROOT" "$VZONE_DATA" "$VZONE_LOG" "${VZONE_DATA}/homes" /etc/vzone
+  mkdir -p "$VZONE_ROOT" "$VZONE_DATA" "$VZONE_LOG" /home /etc/vzone
   chown -R "$VZONE_USER":"$VZONE_USER" "$VZONE_DATA" "$VZONE_LOG"
 }
 
@@ -137,7 +139,7 @@ VZONE_CELERY_BROKER_URL=redis://127.0.0.1:6379/1
 VZONE_CHANNELS_REDIS_URL=redis://127.0.0.1:6379/2
 VZONE_DATA_ROOT=${VZONE_DATA}
 VZONE_LOG_ROOT=${VZONE_LOG}
-VZONE_HOME_ROOT=${VZONE_DATA}/homes
+VZONE_HOME_ROOT=/home
 VZONE_SECURE_SSL_REDIRECT=false
 VZONE_VERSION=${VZONE_VERSION}
 VZONE_ENABLED_MODULES=core,accounts,packages,dns,dashboard,domains,files,ftp,email,databases,python_apps,node_apps,php,git_deploy,docker_mgmt,backups,monitoring,firewall,security
@@ -179,12 +181,22 @@ PY
   install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-api.service" /etc/systemd/system/
   install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-worker.service" /etc/systemd/system/
   install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-beat.service" /etc/systemd/system/
+  bash "${SCRIPT_DIR}/ensure-homes.sh"
   bash "${SCRIPT_DIR}/ensure-nginx.sh" "${VZONE_ROOT}/deploy/nginx/vzone.conf"
   systemctl daemon-reload
   systemctl enable --now redis-server 2>/dev/null || systemctl enable --now redis
   systemctl enable --now vzone-api vzone-worker vzone-beat nginx
 
   configure_firewall
+  # Stack mail (Postfix + Dovecot + OpenDKIM)
+  if [[ -f "${SCRIPT_DIR}/install-mail.sh" ]]; then
+    bash "${SCRIPT_DIR}/install-mail.sh" || log "Avertissement: stack mail non installée"
+  fi
+  # phpMyAdmin
+  if [[ -f "${SCRIPT_DIR}/install-phpmyadmin.sh" ]]; then
+    bash "${SCRIPT_DIR}/install-phpmyadmin.sh" || log "Avertissement: phpMyAdmin non installé"
+  fi
+  bash "${SCRIPT_DIR}/ensure-nginx.sh" "${VZONE_ROOT}/deploy/nginx/vzone.conf" || true
 
   HOST_IP="$(hostname -I | awk '{print $1}')"
   cat > /etc/vzone/install-info.txt <<EOF
@@ -218,15 +230,36 @@ configure_firewall() {
     ufw allow OpenSSH || true
     ufw allow 80/tcp || true
     ufw allow 443/tcp || true
+    ufw allow 25/tcp || true
+    ufw allow 587/tcp || true
+    ufw allow 465/tcp || true
+    ufw allow 143/tcp || true
+    ufw allow 993/tcp || true
+    ufw allow 110/tcp || true
+    ufw allow 995/tcp || true
     ufw --force enable || true
   elif command -v firewall-cmd >/dev/null 2>&1; then
     systemctl enable --now firewalld
     firewall-cmd --permanent --add-service=ssh
     firewall-cmd --permanent --add-service=http
     firewall-cmd --permanent --add-service=https
+    firewall-cmd --permanent --add-service=smtp
+    firewall-cmd --permanent --add-service=smtps
+    firewall-cmd --permanent --add-port=587/tcp
+    firewall-cmd --permanent --add-service=imap
+    firewall-cmd --permanent --add-service=imaps
+    firewall-cmd --permanent --add-service=pop3
+    firewall-cmd --permanent --add-service=pop3s
     firewall-cmd --reload
   fi
   systemctl enable --now fail2ban 2>/dev/null || true
+  if [[ -f "${REPO_DIR:-}/deploy/fail2ban/jail.d/vzone-mail.conf" ]]; then
+    install -m 644 "${REPO_DIR}/deploy/fail2ban/jail.d/vzone-mail.conf" /etc/fail2ban/jail.d/vzone-mail.conf
+    systemctl reload fail2ban 2>/dev/null || true
+  elif [[ -f "${SCRIPT_DIR:-}/../deploy/fail2ban/jail.d/vzone-mail.conf" ]]; then
+    install -m 644 "${SCRIPT_DIR}/../deploy/fail2ban/jail.d/vzone-mail.conf" /etc/fail2ban/jail.d/vzone-mail.conf
+    systemctl reload fail2ban 2>/dev/null || true
+  fi
 }
 
 main() {

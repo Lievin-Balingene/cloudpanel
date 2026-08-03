@@ -427,6 +427,60 @@ def pgadmin_url() -> str:
     return getattr(settings, "VZONE_PGADMIN_URL", "/pgadmin/")
 
 
+def create_phpmyadmin_sso(user: DatabaseUser) -> dict:
+    """Génère un token one-shot pour ouvrir phpMyAdmin déjà authentifié."""
+    import json
+    import secrets
+    import time
+    from pathlib import Path
+
+    if user.engine != DatabaseEngine.MYSQL:
+        raise VZoneAPIException(
+            detail="phpMyAdmin est réservé aux utilisateurs MySQL/MariaDB.",
+            code="not_mysql",
+            status_code=400,
+        )
+    if not user.is_active:
+        raise VZoneAPIException(detail="Utilisateur SQL inactif.", code="inactive", status_code=400)
+
+    password = user.get_password_plain()
+    if not password:
+        raise VZoneAPIException(
+            detail=(
+                "Mot de passe non disponible pour le SSO (utilisateur créé avant cette version). "
+                "Réinitialisez le mot de passe SQL dans le panel, puis réessayez."
+            ),
+            code="no_secret",
+            status_code=400,
+        )
+
+    sso_dir = Path(
+        getattr(settings, "VZONE_PHPMYADMIN_SSO_DIR", None)
+        or (Path(settings.VZONE_DATA_ROOT) / "phpmyadmin" / "sso")
+    )
+    sso_dir.mkdir(parents=True, exist_ok=True)
+    token = secrets.token_hex(32)
+    payload = {
+        "user": user.username,
+        "password": password,
+        "host": user.host or "localhost",
+        "exp": int(time.time()) + 60,
+    }
+    token_path = sso_dir / f"{token}.json"
+    token_path.write_text(json.dumps(payload), encoding="utf-8")
+    try:
+        token_path.chmod(0o640)
+    except OSError:
+        pass
+
+    base = phpmyadmin_url().rstrip("/") + "/"
+    return {
+        "url": f"{base}vzone-sso.php?t={token}",
+        "expires_in": 60,
+        "username": user.username,
+    }
+
+
 def overview_for(user: User) -> dict:
     dbs = databases_qs(user)
     users = db_users_qs(user)

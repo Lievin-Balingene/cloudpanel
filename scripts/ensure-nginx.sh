@@ -9,6 +9,21 @@ SRC="${1:-${VZONE_ROOT}/deploy/nginx/vzone.conf}"
 
 [[ -f "$SRC" ]] || { echo "Config introuvable: $SRC"; exit 1; }
 
+# Snippet phpMyAdmin : stub si pas encore installé (évite nginx -t en échec)
+mkdir -p /etc/nginx/snippets
+if [[ ! -f /etc/nginx/snippets/vzone-phpmyadmin.inc ]]; then
+  cat > /etc/nginx/snippets/vzone-phpmyadmin.inc <<'EOF'
+# phpMyAdmin non installé — exécutez: sudo bash scripts/install-phpmyadmin.sh
+location = /phpmyadmin {
+    return 302 /phpmyadmin/;
+}
+location /phpmyadmin/ {
+    default_type text/plain;
+    return 503 "phpMyAdmin n'est pas encore installé. Exécutez: sudo bash /opt/vzone-src/scripts/install-phpmyadmin.sh\n";
+}
+EOF
+fi
+
 # Retirer TOUS les sites default / welcome
 rm -f /etc/nginx/sites-enabled/default \
       /etc/nginx/sites-enabled/default.bak \

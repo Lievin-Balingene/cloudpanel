@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
@@ -23,7 +26,8 @@ from apps.email.models import (
     MailForwarder,
     MailingList,
 )
-from apps.files.services import user_home
+from apps.email.passwd import dovecot_password_field
+from apps.files.services import personal_home, user_home
 
 logger = logging.getLogger(__name__)
 
@@ -64,18 +68,46 @@ def _assert_email_quota(owner: User) -> None:
 
 
 def mail_storage_root() -> Path:
-    root = Path(getattr(settings, "VZONE_MAIL_MAPS_DIR", None) or (Path(settings.VZONE_DATA_ROOT) / "mail"))
+    root = Path(
+        getattr(settings, "VZONE_MAIL_MAPS_DIR", None)
+        or (Path(settings.VZONE_DATA_ROOT) / "mail" / "maps")
+    )
     root.mkdir(parents=True, exist_ok=True)
+    (root / "dkim").mkdir(parents=True, exist_ok=True)
     return root
 
 
 def mailbox_maildir(owner: User, address: str) -> Path:
-    safe = address.replace("@", "_at_").replace(".", "_")
-    path = user_home(owner) / "mail" / safe
+    """Maildir style cPanel : ~/mail/<domaine>/<local>/{cur,new,tmp}."""
+    user_home(owner)
+    local, _, domain = address.partition("@")
+    path = personal_home(owner) / "mail" / domain.lower() / local.lower()
     path.mkdir(parents=True, exist_ok=True)
     for sub in ("cur", "new", "tmp"):
         (path / sub).mkdir(exist_ok=True)
+    _chown_vmail(path)
     return path
+
+
+def _chown_vmail(path: Path) -> None:
+    """Attribue le Maildir à vmail quand possible (production)."""
+    try:
+        import grp
+        import pwd
+
+        uid = pwd.getpwnam("vmail").pw_uid
+        gid = grp.getgrnam("vmail").gr_gid
+    except (ImportError, KeyError):
+        return
+    try:
+        for dirpath, _dirnames, filenames in os.walk(path):
+            os.chown(dirpath, uid, gid)
+            os.chmod(dirpath, 0o770)
+            for name in filenames:
+                fp = Path(dirpath) / name
+                os.chown(fp, uid, gid)
+    except (PermissionError, OSError) as exc:
+        logger.debug("chown vmail skip %s: %s", path, exc)
 
 
 def generate_dkim_keys() -> tuple[str, str]:
@@ -93,7 +125,6 @@ def generate_dkim_keys() -> tuple[str, str]:
         )
         .decode("utf-8")
     )
-    # DNS TXT value: strip PEM headers
     public_b64 = "".join(
         line for line in public_pem.splitlines() if not line.startswith("-----")
     )
@@ -101,12 +132,20 @@ def generate_dkim_keys() -> tuple[str, str]:
 
 
 def default_spf(domain_name: str) -> str:
-    return f"v=spf1 mx a:{domain_name} ~all"
+    """SPF orienté réputation : IP publique + MX, softfail (~all)."""
+    parts = ["v=spf1"]
+    public_ip = (getattr(settings, "VZONE_MAIL_PUBLIC_IP", "") or "").strip()
+    if public_ip:
+        parts.append(f"ip4:{public_ip}")
+    parts.append("mx")
+    parts.append(f"a:{domain_name}")
+    parts.append("~all")
+    return " ".join(parts)
 
 
 def dmarc_record(policy: str, rua: str, domain_name: str) -> str:
     rua_part = f" rua=mailto:{rua}" if rua else f" rua=mailto:dmarc@{domain_name}"
-    return f"v=DMARC1; p={policy};{rua_part}; adkim=s; aspf=s"
+    return f"v=DMARC1; p={policy};{rua_part}; adkim=s; aspf=s; pct=100"
 
 
 def ensure_dns_zone_for_mail(owner: User, domain_name: str) -> DnsZone:
@@ -178,48 +217,133 @@ def enable_dkim(mail_domain: MailDomain, selector: str = "default") -> MailDomai
     mail_domain.dkim_private_key = private_pem
     mail_domain.dkim_public_key = public_b64
     mail_domain.save()
-    # Store private key on disk for OpenDKIM
     key_dir = mail_storage_root() / "dkim" / mail_domain.name
     key_dir.mkdir(parents=True, exist_ok=True)
-    (key_dir / f"{mail_domain.dkim_selector}.private").write_text(private_pem, encoding="utf-8")
+    priv_path = key_dir / f"{mail_domain.dkim_selector}.private"
+    priv_path.write_text(private_pem, encoding="utf-8")
+    try:
+        os.chmod(priv_path, 0o640)
+    except OSError:
+        pass
     (key_dir / f"{mail_domain.dkim_selector}.txt").write_text(
         f"v=DKIM1; k=rsa; p={public_b64}",
         encoding="utf-8",
     )
     sync_mail_dns(mail_domain)
+    write_mail_maps()
     return mail_domain
 
 
-def write_mail_maps() -> Path:
-    """Exporte maps virtuelles Postfix/Dovecot."""
-    root = mail_storage_root()
-    passwd = root / "vmailbox"
-    aliases = root / "valiases"
-    passwd_lines: list[str] = []
-    alias_lines: list[str] = []
+def _mail_stack_live() -> bool:
+    mode = (getattr(settings, "VZONE_MAIL_STACK", "auto") or "auto").lower()
+    if mode == "live":
+        return True
+    if mode == "mock":
+        return False
+    return shutil.which("postmap") is not None and Path("/etc/dovecot").exists()
 
-    for box in Mailbox.objects.filter(is_active=True, is_suspended=False).select_related("mail_domain"):
-        # format: user@domain:password:uid:gid::maildir::
-        passwd_lines.append(
-            f"{box.address}:{box.password_hash}::::{box.maildir}::"
+
+def reload_mail_services() -> None:
+    """postmap + reload Postfix / Dovecot / OpenDKIM si stack live."""
+    if not _mail_stack_live():
+        return
+    root = mail_storage_root()
+    for name in ("valiases", "virtual_mailboxes", "vdomains"):
+        path = root / name
+        if path.exists():
+            subprocess.run(["postmap", str(path)], check=False, capture_output=True)
+    for src_name, dest in (
+        ("opendkim-KeyTable", Path("/etc/opendkim/KeyTable")),
+        ("opendkim-SigningTable", Path("/etc/opendkim/SigningTable")),
+    ):
+        src = root / src_name
+        if src.exists() and dest.parent.is_dir():
+            try:
+                shutil.copy2(src, dest)
+                os.chmod(dest, 0o640)
+            except OSError as exc:
+                logger.warning("OpenDKIM table copy failed: %s", exc)
+    for unit in ("opendkim", "dovecot", "postfix"):
+        subprocess.run(
+            ["systemctl", "reload", unit],
+            check=False,
+            capture_output=True,
         )
+
+
+def write_mail_maps() -> Path:
+    """Exporte maps Postfix + Dovecot + OpenDKIM."""
+    root = mail_storage_root()
+    dovecot_users = root / "dovecot-users"
+    vmailbox_legacy = root / "vmailbox"
+    virtual_mailboxes = root / "virtual_mailboxes"
+    valiases = root / "valiases"
+    vdomains = root / "vdomains"
+    key_table = root / "opendkim-KeyTable"
+    signing_table = root / "opendkim-SigningTable"
+
+    dovecot_lines: list[str] = []
+    mailbox_lines: list[str] = []
+    alias_lines: list[str] = []
+    domain_lines: list[str] = []
+    key_lines: list[str] = []
+    sign_lines: list[str] = []
+    legacy_lines: list[str] = []
+
+    for md in MailDomain.objects.filter(is_active=True):
+        domain_lines.append(f"{md.name} OK")
+        if md.dkim_enabled and md.dkim_private_key:
+            selector = md.dkim_selector or "default"
+            key_path = root / "dkim" / md.name / f"{selector}.private"
+            if key_path.exists():
+                key_id = f"{selector}._domainkey.{md.name}"
+                key_lines.append(f"{key_id} {md.name}:{selector}:{key_path}")
+                sign_lines.append(f"*@{md.name} {key_id}")
+
+    for box in Mailbox.objects.filter(is_active=True, is_suspended=False).select_related(
+        "mail_domain", "mail_domain__owner"
+    ):
+        maildir = Path(box.maildir) if box.maildir else None
+        if maildir is None or not maildir.exists():
+            maildir = mailbox_maildir(box.mail_domain.owner, box.address)
+            box.maildir = str(maildir)
+            box.save(update_fields=["maildir", "updated_at"])
+        pwd = dovecot_password_field(box.password_hash)
+        dovecot_lines.append(f"{box.address}:{pwd}:5000:5000::{maildir}::")
+        mailbox_lines.append(f"{box.address} {box.mail_domain.name}/{box.local_part}/")
+        legacy_lines.append(f"{box.address}:{box.password_hash}::::{maildir}::")
 
     for fwd in MailForwarder.objects.filter(is_active=True).select_related("mail_domain"):
         dests = ",".join(fwd.destinations)
         if fwd.keep_copy:
             dests = f"{fwd.address},{dests}" if dests else fwd.address
-        alias_lines.append(f"{fwd.address}: {dests}")
+        alias_lines.append(f"{fwd.address} {dests}")
 
     for lst in MailingList.objects.filter(is_active=True).select_related("mail_domain"):
         members = ",".join(lst.members)
-        alias_lines.append(f"{lst.address}: {members}")
+        alias_lines.append(f"{lst.address} {members}")
 
     for md in MailDomain.objects.filter(is_active=True):
         if md.catch_all:
-            alias_lines.append(f"@{md.name}: {md.catch_all}")
+            alias_lines.append(f"@{md.name} {md.catch_all}")
 
-    passwd.write_text("\n".join(passwd_lines) + ("\n" if passwd_lines else ""), encoding="utf-8")
-    aliases.write_text("\n".join(alias_lines) + ("\n" if alias_lines else ""), encoding="utf-8")
+    def _write(path: Path, lines: list[str]) -> None:
+        path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+
+    _write(dovecot_users, dovecot_lines)
+    _write(virtual_mailboxes, mailbox_lines)
+    _write(valiases, alias_lines)
+    _write(vdomains, domain_lines)
+    _write(vmailbox_legacy, legacy_lines)
+    _write(key_table, key_lines)
+    _write(signing_table, sign_lines)
+
+    try:
+        os.chmod(dovecot_users, 0o640)
+    except OSError:
+        pass
+
+    reload_mail_services()
     return root
 
 

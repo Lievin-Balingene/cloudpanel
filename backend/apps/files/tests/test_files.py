@@ -33,7 +33,12 @@ def test_list_mkdir_upload_download(api: APIClient, user_home):
 
     listing = api.get(reverse("files-list"))
     assert listing.status_code == 200
-    assert "public_html" in {e["name"] for e in listing.json()["data"]["entries"]}
+    names = {e["name"] for e in listing.json()["data"]["entries"]}
+    assert "public_html" in names
+    assert "mail" in names
+    assert "etc" in names
+    assert "ssl" in names
+    assert ".trash" in names
 
     mkdir = api.post(reverse("files-mkdir"), {"path": "", "name": "docs"}, format="json")
     assert mkdir.status_code == 201

@@ -3,8 +3,28 @@
 ## Sécurité
 
 - Jail filesystem dans `VZONE_HOME_ROOT/<username>`
-- Admins : accès à tout `VZONE_HOME_ROOT`
+- Admins : accès à tout `VZONE_HOME_ROOT` (home personnel dans `admin/`)
 - Protection path traversal (`..`) et zip/tar slip
+
+## Arborescence (style cPanel)
+
+À la **création du compte client** (WHM / API), le panel provisionne immédiatement :
+
+```
+/home/<username>/          # VZONE_HOME_ROOT (défaut cPanel : /home)
+  public_html/cgi-bin/
+  www → public_html
+  mail/
+  etc/
+  ssl/
+  logs/
+  tmp/
+  .trash/
+  public_html/index.html
+```
+
+Champs renseignés : `system_username`, `home_directory`.
+Les boîtes mail vivent sous `mail/<domaine>/<utilisateur>/` (Maildir).
 
 ## Fonctions
 

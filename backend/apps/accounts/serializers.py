@@ -83,6 +83,14 @@ class UserCreateSerializer(serializers.ModelSerializer):
             "quota",
         )
 
+    def validate_username(self, value: str) -> str:
+        from apps.accounts.services import validate_system_username
+
+        try:
+            return validate_system_username(value)
+        except VZoneAPIException as exc:
+            raise serializers.ValidationError(str(exc.detail)) from exc
+
     def validate_password(self, value: str) -> str:
         validate_password(value)
         try:
@@ -109,13 +117,18 @@ class UserCreateSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data: dict) -> User:
+        from apps.accounts.services import provision_account_home
+
         quota_data = validated_data.pop("quota", None)
         password = validated_data.pop("password")
+        # Username déjà normalisé (minuscules) via validate_username
         user = User.objects.create_user(password=password, **validated_data)
         if quota_data:
             for key, value in quota_data.items():
                 setattr(user.quota, key, value)
             user.quota.save()
+        provision_account_home(user)
+        user.refresh_from_db()
         return user
 
 

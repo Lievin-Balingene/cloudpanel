@@ -1,0 +1,80 @@
+# Postfix — V-zone Panel (virtual users + Dovecot LMTP + OpenDKIM)
+smtpd_banner = $myhostname ESMTP V-zone
+biff = no
+append_dot_mydomain = no
+readme_directory = no
+compatibility_level = 3.6
+
+myhostname = __HOSTNAME__
+mydomain = __HOSTNAME__
+myorigin = $mydomain
+mydestination = localhost.localdomain, localhost
+mynetworks = 127.0.0.0/8 [::1]/128
+inet_interfaces = all
+inet_protocols = all
+
+# TLS (utilise le certificat système / snakeoil en attendant Let's Encrypt mail.)
+smtpd_tls_cert_file=/etc/ssl/certs/ssl-cert-snakeoil.pem
+smtpd_tls_key_file=/etc/ssl/private/ssl-cert-snakeoil.key
+smtpd_tls_security_level = may
+smtp_tls_security_level = may
+smtpd_tls_auth_only = yes
+smtpd_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
+smtp_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
+tls_preempt_cipherlist = yes
+
+# Auth via Dovecot SASL (submission)
+smtpd_sasl_type = dovecot
+smtpd_sasl_path = private/auth
+smtpd_sasl_auth_enable = yes
+smtpd_sasl_security_options = noanonymous
+smtpd_sasl_local_domain = $myhostname
+broken_sasl_auth_clients = yes
+
+# Restrictions anti-spam / réputation
+smtpd_helo_required = yes
+smtpd_helo_restrictions =
+    permit_mynetworks,
+    reject_invalid_helo_hostname,
+    reject_non_fqdn_helo_hostname,
+    permit
+smtpd_sender_restrictions =
+    permit_mynetworks,
+    permit_sasl_authenticated,
+    reject_non_fqdn_sender,
+    reject_unknown_sender_domain,
+    permit
+smtpd_recipient_restrictions =
+    permit_mynetworks,
+    permit_sasl_authenticated,
+    reject_unauth_destination,
+    reject_unknown_recipient_domain,
+    reject_non_fqdn_recipient,
+    permit
+smtpd_relay_restrictions =
+    permit_mynetworks,
+    permit_sasl_authenticated,
+    reject_unauth_destination
+
+disable_vrfy_command = yes
+strict_rfc821_envelopes = yes
+smtpd_delay_reject = yes
+maximal_queue_lifetime = 1d
+bounce_queue_lifetime = 1d
+message_size_limit = 52428800
+
+# Domaines / boîtes virtuelles
+virtual_mailbox_domains = hash:__MAPS_DIR__/vdomains
+virtual_mailbox_maps = hash:__MAPS_DIR__/virtual_mailboxes
+virtual_alias_maps = hash:__MAPS_DIR__/valiases
+virtual_uid_maps = static:5000
+virtual_gid_maps = static:5000
+virtual_minimum_uid = 5000
+virtual_transport = lmtp:unix:private/dovecot-lmtp
+virtual_mailbox_base = /
+
+# OpenDKIM milter
+milter_default_action = accept
+milter_protocol = 6
+smtpd_milters = inet:localhost:8891
+non_smtpd_milters = inet:localhost:8891

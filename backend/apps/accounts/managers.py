@@ -56,4 +56,10 @@ class UserManager(BaseUserManager):
             quota.node_apps = 0
             quota.docker_containers = 0
             quota.save()
+            try:
+                from apps.accounts.services import provision_account_home
+
+                provision_account_home(user)
+            except Exception:  # noqa: BLE001
+                pass
         return user

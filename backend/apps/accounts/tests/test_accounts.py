@@ -1,6 +1,8 @@
 """Tests d'authentification et de gestion des utilisateurs."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from django.urls import reverse
 from rest_framework.test import APIClient
@@ -74,7 +76,10 @@ def test_me_authenticated(api: APIClient):
 
 @pytest.mark.integration
 @pytest.mark.django_db
-def test_reseller_creates_client_only(api: APIClient):
+def test_reseller_creates_client_only(api: APIClient, tmp_path, settings):
+    settings.VZONE_HOME_ROOT = tmp_path / "homes"
+    settings.VZONE_HOME_ROOT.mkdir(parents=True, exist_ok=True)
+
     reseller = ResellerFactory(password="TestPassword123!")
     api.force_authenticate(user=reseller)
     response = api.post(
@@ -90,6 +95,15 @@ def test_reseller_creates_client_only(api: APIClient):
     assert response.status_code == 201
     created = User.objects.get(username="newclient")
     assert created.parent_id == reseller.pk
+    assert created.system_username == "newclient"
+    home = settings.VZONE_HOME_ROOT / "newclient"
+    assert Path(created.home_directory).resolve() == home.resolve()
+    assert (home / "public_html").is_dir()
+    assert (home / "mail").is_dir()
+    assert (home / "etc").is_dir()
+    assert (home / "ssl").is_dir()
+    assert (home / ".trash").is_dir()
+    assert (home / "public_html" / "index.html").is_file()
 
     forbidden = api.post(
         reverse("user-list"),

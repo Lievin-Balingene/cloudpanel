@@ -21,6 +21,7 @@ from apps.databases.serializers import (
 from apps.databases.services import (
     create_database,
     create_database_user,
+    create_phpmyadmin_sso,
     databases_qs,
     db_users_qs,
     delete_database,
@@ -173,3 +174,23 @@ class PrivilegeDeleteView(APIView):
         priv = get_object_or_404(privileges_qs(request.user), pk=pk)
         revoke_privilege(priv)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class PhpMyAdminSsoView(APIView):
+    """SSO one-shot vers phpMyAdmin (comme cPanel)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request) -> Response:
+        user_id = request.data.get("user_id")
+        if not user_id:
+            return Response(
+                {
+                    "success": False,
+                    "error": {"code": "missing_user", "message": "user_id requis."},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        db_user = get_object_or_404(db_users_qs(request.user), pk=user_id)
+        data = create_phpmyadmin_sso(db_user)
+        return Response({"success": True, "data": data})

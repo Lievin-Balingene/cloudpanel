@@ -1,6 +1,6 @@
 import { FormEvent, useId, useState } from "react";
 import { Navigate } from "react-router-dom";
-import { Eye, EyeOff, KeyRound, Loader2 } from "lucide-react";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { ApiClientError, apiRequest } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
 
@@ -51,23 +51,16 @@ export function ChangePasswordPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-cp-navy p-4">
-      <div className="w-full max-w-md overflow-hidden rounded border border-black/20 bg-white shadow-lg animate-fade-up">
-        <div className="bg-cp-orange px-6 py-5 text-white">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded bg-white/15">
-              <KeyRound className="h-6 w-6" />
-            </div>
-            <div>
-              <h1 className="text-xl font-semibold">Changer le mot de passe</h1>
-              <p className="text-sm text-white/90">Obligatoire avant d&apos;utiliser le panneau</p>
-            </div>
-          </div>
-        </div>
+    <div className="vz-login-bg relative flex min-h-screen items-center justify-center overflow-hidden p-5">
+      <div className="vz-login-grid pointer-events-none absolute inset-0" aria-hidden />
+      <div className="relative z-10 w-full max-w-[420px] animate-fade-up rounded-2xl border border-white/10 bg-white p-7 shadow-login sm:p-9">
+        <p className="font-display text-2xl font-semibold text-cp-navy">V-zone</p>
+        <h1 className="mt-4 font-display text-xl font-semibold text-cp-navy">Nouveau mot de passe</h1>
+        <p className="mt-1 text-sm text-cp-muted">Obligatoire avant d&apos;accéder au panneau</p>
 
-        <form className="space-y-4 p-6" onSubmit={onSubmit}>
+        <form className="mt-6 space-y-4" onSubmit={onSubmit}>
           <div>
-            <label className="mb-1 block text-xs font-semibold uppercase text-cp-muted" htmlFor={`${id}-cur`}>
+            <label className="mb-1.5 block text-xs font-semibold text-cp-muted" htmlFor={`${id}-cur`}>
               Mot de passe actuel
             </label>
             <input
@@ -81,7 +74,7 @@ export function ChangePasswordPage() {
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-semibold uppercase text-cp-muted" htmlFor={`${id}-new`}>
+            <label className="mb-1.5 block text-xs font-semibold text-cp-muted" htmlFor={`${id}-new`}>
               Nouveau mot de passe
             </label>
             <div className="relative">
@@ -106,7 +99,7 @@ export function ChangePasswordPage() {
             </div>
           </div>
           <div>
-            <label className="mb-1 block text-xs font-semibold uppercase text-cp-muted" htmlFor={`${id}-cf`}>
+            <label className="mb-1.5 block text-xs font-semibold text-cp-muted" htmlFor={`${id}-cf`}>
               Confirmer
             </label>
             <input
@@ -122,7 +115,7 @@ export function ChangePasswordPage() {
           </div>
 
           {error && (
-            <p role="alert" className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-cp-danger">
+            <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-cp-danger">
               {error}
             </p>
           )}

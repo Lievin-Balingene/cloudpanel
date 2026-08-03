@@ -286,12 +286,18 @@ VZONE_ENABLED_MODULES = env_list(
 VZONE_WEBMAIL_URL = env("VZONE_WEBMAIL_URL", "/webmail/")
 VZONE_MAIL_MAPS_DIR = env("VZONE_MAIL_MAPS_DIR", str(VZONE_DATA_ROOT / "mail" / "maps"))
 VZONE_MAIL_HOME_ROOT = env("VZONE_MAIL_HOME_ROOT", str(VZONE_DATA_ROOT / "mail" / "homes"))
+VZONE_MAIL_STACK = env("VZONE_MAIL_STACK", "auto")  # auto | live | mock
+VZONE_MAIL_PUBLIC_IP = env("VZONE_MAIL_PUBLIC_IP", "")
 
 # Bases de données hébergées (provisionnement)
 VZONE_DB_PROVISION_MODE = env("VZONE_DB_PROVISION_MODE", "auto")  # auto | live | mock
 VZONE_DB_MAPS_DIR = env("VZONE_DB_MAPS_DIR", str(VZONE_DATA_ROOT / "databases"))
 VZONE_PHPMYADMIN_URL = env("VZONE_PHPMYADMIN_URL", "/phpmyadmin/")
 VZONE_PGADMIN_URL = env("VZONE_PGADMIN_URL", "/pgadmin/")
+VZONE_PHPMYADMIN_SSO_DIR = env(
+    "VZONE_PHPMYADMIN_SSO_DIR",
+    str(VZONE_DATA_ROOT / "phpmyadmin" / "sso"),
+)
 VZONE_MYSQL_HOST = env("VZONE_MYSQL_HOST", "")
 VZONE_MYSQL_PORT = env_int("VZONE_MYSQL_PORT", 3306)
 VZONE_MYSQL_ADMIN_USER = env("VZONE_MYSQL_ADMIN_USER", "")

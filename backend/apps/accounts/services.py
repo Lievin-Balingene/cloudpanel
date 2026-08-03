@@ -1,14 +1,106 @@
-"""Services métier comptes : JWT, 2FA, audit de connexion."""
+"""Services métier comptes : JWT, 2FA, audit de connexion, homes cPanel."""
 from __future__ import annotations
 
+import logging
+import re
 from datetime import timedelta
+from pathlib import Path
 
 import pyotp
 from django.utils import timezone
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.accounts.models import User, UserSession
+from apps.core.exceptions import VZoneAPIException
 from apps.core.models import AuditLog
+
+logger = logging.getLogger(__name__)
+
+# Style cPanel : commence par une lettre, alphanumérique / _ / -, 3–32 car.
+SYSTEM_USERNAME_RE = re.compile(r"^[a-z][a-z0-9_-]{2,31}$")
+RESERVED_USERNAMES = frozenset(
+    {
+        "admin",
+        "root",
+        "vzone",
+        "vmail",
+        "nobody",
+        "www",
+        "mail",
+        "ftp",
+        "mysql",
+        "postgres",
+    }
+)
+
+
+def normalize_system_username(username: str) -> str:
+    return (username or "").strip().lower()
+
+
+def validate_system_username(username: str) -> str:
+    name = normalize_system_username(username)
+    if not SYSTEM_USERNAME_RE.match(name):
+        raise VZoneAPIException(
+            detail=(
+                "Nom d'utilisateur invalide (style cPanel) : "
+                "3–32 caractères, commencer par une lettre, "
+                "uniquement a-z, 0-9, _ ou -."
+            ),
+            code="invalid_username",
+            status_code=400,
+        )
+    if name in RESERVED_USERNAMES:
+        raise VZoneAPIException(
+            detail=f"Le nom d'utilisateur « {name} » est réservé.",
+            code="reserved_username",
+            status_code=400,
+        )
+    return name
+
+
+def provision_account_home(user: User) -> Path:
+    """
+    Crée le home du compte comme cPanel : VZONE_HOME_ROOT/<username>/
+    avec public_html, mail, etc., et renseigne system_username / home_directory.
+    """
+    from apps.files.services import ensure_cpanel_tree, personal_home
+
+    if user.role == User.Role.ADMINISTRATOR:
+        sys_name = (user.system_username or "admin").strip().lower() or "admin"
+    else:
+        sys_name = validate_system_username(user.system_username or user.username)
+        if user.username != sys_name:
+            if not User.objects.filter(username=sys_name).exclude(pk=user.pk).exists():
+                user.username = sys_name
+
+    user.system_username = sys_name
+
+    home = personal_home(user)
+    try:
+        ensure_cpanel_tree(home)
+        index = home / "public_html" / "index.html"
+        if not index.exists():
+            index.write_text(
+                "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\">"
+                f"<title>{sys_name}</title></head>"
+                f"<body><h1>Account {sys_name}</h1>"
+                "<p>V-zone Panel — document root (public_html).</p></body></html>\n",
+                encoding="utf-8",
+            )
+    except OSError as exc:
+        raise VZoneAPIException(
+            detail=f"Impossible de créer le home {home}: {exc}",
+            code="home_provision_failed",
+            status_code=500,
+        ) from exc
+
+    user.home_directory = str(home)
+    user.save(
+        update_fields=["username", "system_username", "home_directory", "updated_at"]
+    )
+    logger.info("Home provisionné pour %s → %s", user.username, home)
+    return home
 
 
 def issue_tokens(user: User, request=None) -> dict:  # type: ignore[no-untyped-def]
@@ -16,7 +108,9 @@ def issue_tokens(user: User, request=None) -> dict:  # type: ignore[no-untyped-d
     refresh = RefreshToken.for_user(user)
     access = refresh.access_token
     jti = str(refresh["jti"])
-    expires_at = timezone.now() + timedelta(seconds=int(refresh.access_token.lifetime.total_seconds()))
+    expires_at = timezone.now() + timedelta(
+        seconds=int(refresh.access_token.lifetime.total_seconds())
+    )
 
     ip = None
     ua = ""

@@ -24,6 +24,8 @@ def mail_root(tmp_path, settings):
     settings.VZONE_DATA_ROOT = tmp_path / "data"
     settings.VZONE_DATA_ROOT.mkdir(parents=True, exist_ok=True)
     settings.VZONE_MAIL_MAPS_DIR = str(tmp_path / "mail")
+    settings.VZONE_MAIL_STACK = "mock"
+    settings.VZONE_MAIL_PUBLIC_IP = "203.0.113.10"
     settings.VZONE_WEBMAIL_URL = "/webmail/"
     return Path(settings.VZONE_MAIL_MAPS_DIR)
 
@@ -42,6 +44,7 @@ def test_create_domain_mailbox_forwarder(api: APIClient, mail_root):
     assert domain.status_code == 201
     md_id = domain.json()["data"]["id"]
     assert domain.json()["data"]["spf_record"].startswith("v=spf1")
+    assert "ip4:203.0.113.10" in domain.json()["data"]["spf_record"]
 
     box = api.post(
         reverse("email-mailbox-list"),
@@ -55,7 +58,10 @@ def test_create_domain_mailbox_forwarder(api: APIClient, mail_root):
     )
     assert box.status_code == 201
     assert box.json()["data"]["address"] == "info@example.test"
-    assert Path(box.json()["data"]["maildir"]).exists()
+    maildir = Path(box.json()["data"]["maildir"])
+    assert maildir.exists()
+    assert maildir.parts[-2:] == ("example.test", "info")
+    assert (maildir / "cur").is_dir()
 
     fwd = api.post(
         reverse("email-forwarder-list"),
@@ -80,6 +86,10 @@ def test_create_domain_mailbox_forwarder(api: APIClient, mail_root):
     maps = write_mail_maps()
     assert (maps / "vmailbox").exists()
     assert "info@example.test" in (maps / "vmailbox").read_text(encoding="utf-8")
+    assert "info@example.test" in (maps / "dovecot-users").read_text(encoding="utf-8")
+    assert "{SHA512-CRYPT}" in (maps / "dovecot-users").read_text(encoding="utf-8") or "$6$" in (
+        maps / "dovecot-users"
+    ).read_text(encoding="utf-8")
     assert "sales@example.test" in (maps / "valiases").read_text(encoding="utf-8")
 
 

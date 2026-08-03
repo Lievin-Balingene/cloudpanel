@@ -327,7 +327,7 @@ export function ClientShell() {
 
   return (
     <div className="min-h-screen bg-cp-canvas dark:bg-surface-dark">
-      <header className="sticky top-0 z-20 border-b border-black/10 bg-cp-orange text-white shadow-sm">
+      <header className="sticky top-0 z-20 border-b border-black/10 bg-cp-header text-white shadow-sm">
         <div className="flex items-center justify-between px-4 py-2.5">
           <div className="flex items-center gap-2.5">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/20 backdrop-blur">

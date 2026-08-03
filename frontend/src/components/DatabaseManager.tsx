@@ -126,6 +126,19 @@ export function DatabaseManager({ title }: { title: string }) {
     onSuccess: invalidateAll,
   });
 
+  const openPhpMyAdmin = useMutation({
+    mutationFn: (userId: number) =>
+      apiRequest<{ url: string }>("/databases/phpmyadmin/sso/", {
+        method: "POST",
+        body: JSON.stringify({ user_id: userId }),
+      }),
+    onSuccess: (data) => {
+      setError(null);
+      window.open(data.url, "_blank", "noopener,noreferrer");
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
   const removeGrant = useMutation({
     mutationFn: (id: number) => apiRequest(`/databases/privileges/${id}/`, { method: "DELETE" }),
     onSuccess: invalidateAll,
@@ -335,15 +348,27 @@ export function DatabaseManager({ title }: { title: string }) {
                 <td className="px-3 py-2">{u.engine}</td>
                 <td className="px-3 py-2">{u.host}</td>
                 <td className="px-3 py-2">
-                  <button
-                    type="button"
-                    className="text-cp-danger hover:underline"
-                    onClick={() => {
-                      if (window.confirm(`Supprimer ${u.username} ?`)) removeUser.mutate(u.id);
-                    }}
-                  >
-                    Supprimer
-                  </button>
+                  <div className="flex flex-wrap gap-3">
+                    {u.engine === "mysql" && (
+                      <button
+                        type="button"
+                        className="text-cp-orange hover:underline"
+                        disabled={openPhpMyAdmin.isPending}
+                        onClick={() => openPhpMyAdmin.mutate(u.id)}
+                      >
+                        phpMyAdmin
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="text-cp-danger hover:underline"
+                      onClick={() => {
+                        if (window.confirm(`Supprimer ${u.username} ?`)) removeUser.mutate(u.id);
+                      }}
+                    >
+                      Supprimer
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

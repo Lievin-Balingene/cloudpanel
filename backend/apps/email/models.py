@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 from django.conf import settings
-from django.contrib.auth.hashers import check_password, make_password
 from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils import timezone
+
+from apps.email.passwd import hash_password, verify_password
 
 
 class MailDomain(models.Model):
@@ -89,10 +90,11 @@ class Mailbox(models.Model):
         return "active"
 
     def set_password(self, raw: str) -> None:
-        self.password_hash = make_password(raw)
+        # SHA512-CRYPT ($6$) — natif Dovecot / Postfix SASL
+        self.password_hash = hash_password(raw)
 
     def check_password(self, raw: str) -> bool:
-        return check_password(raw, self.password_hash)
+        return verify_password(raw, self.password_hash)
 
 
 class MailForwarder(models.Model):

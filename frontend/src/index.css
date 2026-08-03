@@ -34,7 +34,7 @@ html.dark body {
 
   .vz-input {
     @apply w-full rounded-lg border border-cp-border bg-white px-3 py-2 text-sm text-cp-text
-      outline-none transition focus:border-cp-orange focus:ring-2 focus:ring-cp-orange/20
+      outline-none transition focus:border-cp-link focus:ring-2 focus:ring-cp-link/20
       dark:border-ink-700 dark:bg-ink-900 dark:text-ink-50;
   }
 
@@ -44,11 +44,11 @@ html.dark body {
   }
 
   .vz-btn-primary {
-    @apply vz-btn bg-cp-orange text-white shadow-sm hover:bg-cp-orange-dark hover:shadow;
+    @apply vz-btn bg-cp-navy text-white shadow-sm hover:bg-cp-navy-soft hover:shadow;
   }
 
   .vz-btn-ghost {
-    @apply vz-btn border border-cp-border bg-white text-cp-text hover:border-cp-orange/40 hover:bg-cp-orange-soft
+    @apply vz-btn border border-cp-border bg-white text-cp-text hover:border-cp-link/40 hover:bg-cp-link-soft
       dark:border-ink-700 dark:bg-transparent dark:text-ink-100 dark:hover:bg-ink-900;
   }
 
@@ -57,12 +57,12 @@ html.dark body {
   }
 
   .whm-nav-item-active {
-    @apply bg-cp-orange text-white hover:bg-cp-orange;
+    @apply bg-cp-link text-white hover:bg-cp-link;
   }
 
   .cp-tool {
     @apply flex flex-col items-center gap-2 rounded-[10px] border border-cp-border bg-white p-4 text-center
-      shadow-tool transition duration-200 hover:-translate-y-0.5 hover:border-cp-orange hover:shadow-md
+      shadow-tool transition duration-200 hover:-translate-y-0.5 hover:border-cp-link hover:shadow-md
       dark:border-ink-700 dark:bg-ink-950;
   }
 
@@ -73,5 +73,21 @@ html.dark body {
   select.vz-input option {
     color: #2c3e50;
     background: #fff;
+  }
+
+  /* Fond login atmosphérique */
+  .vz-login-bg {
+    background:
+      radial-gradient(ellipse 80% 60% at 10% 20%, rgba(26, 95, 180, 0.35), transparent 55%),
+      radial-gradient(ellipse 70% 50% at 90% 80%, rgba(30, 51, 72, 0.55), transparent 50%),
+      linear-gradient(145deg, #0f1c2a 0%, #152536 45%, #1a2f44 100%);
+  }
+
+  .vz-login-grid {
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse 70% 70% at 50% 50%, black, transparent);
   }
 }

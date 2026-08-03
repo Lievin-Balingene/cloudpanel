@@ -6,8 +6,8 @@ registry.register(
     ModuleMeta(
         name="email",
         label="E-mail",
-        version="0.6.0",
-        description="Boîtes mail, aliases, forwarders, répondeurs, SPF/DKIM/DMARC.",
+        version="0.17.0",
+        description="Postfix/Dovecot/OpenDKIM — boîtes, aliases, SPF/DKIM/DMARC, maps live.",
         dependencies=("core", "accounts", "domains", "dns"),
         api_prefix="email",
         permissions=("email.view", "email.manage"),

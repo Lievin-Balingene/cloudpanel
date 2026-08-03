@@ -60,7 +60,7 @@ export function WhmShell() {
     <div className="flex min-h-screen bg-cp-canvas dark:bg-surface-dark">
       <aside className="flex w-64 shrink-0 flex-col bg-cp-sidebar text-white">
         <div className="flex items-center gap-2 border-b border-white/10 bg-cp-header px-4 py-3">
-          <Server className="h-5 w-5 text-cp-orange" />
+          <Server className="h-5 w-5 text-white/80" />
           <div>
             <p className="text-sm font-semibold tracking-wide">V-zone WHM</p>
             <p className="text-[11px] text-white/60">Web Host Manager</p>
@@ -93,7 +93,7 @@ export function WhmShell() {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex items-center justify-between border-b border-cp-border bg-cp-header px-4 py-2 text-white">
           <p className="text-sm">
-            Serveur · <span className="text-cp-orange">V-zone Panel</span>
+            Serveur · <span className="font-semibold text-white">V-zone Panel</span>
           </p>
           <div className="flex items-center gap-2">
             <button type="button" className="rounded px-2 py-1 hover:bg-white/10" onClick={toggle}>

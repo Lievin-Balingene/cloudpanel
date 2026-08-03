@@ -65,7 +65,7 @@ export function WhmResourcesPage() {
               <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} />
               <Tooltip />
               <Legend />
-              <Line type="monotone" dataKey="cpu_percent" name="CPU %" stroke="#ff6c2c" dot={false} />
+              <Line type="monotone" dataKey="cpu_percent" name="CPU %" stroke="#1a5fb4" dot={false} />
               <Line type="monotone" dataKey="ram_percent" name="RAM %" stroke="#1a5fb4" dot={false} />
               <Line
                 type="monotone"

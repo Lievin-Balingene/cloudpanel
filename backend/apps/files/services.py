@@ -61,9 +61,33 @@ class FileEntry:
     is_text: bool
 
 
+def ensure_cpanel_tree(personal: Path) -> None:
+    """Arborescence type cPanel sous le home du compte."""
+    personal.mkdir(parents=True, exist_ok=True)
+    for sub in ("public_html", "mail", "tmp", "logs", "etc", "ssl", ".trash"):
+        (personal / sub).mkdir(exist_ok=True)
+    cgi = personal / "public_html" / "cgi-bin"
+    cgi.mkdir(exist_ok=True)
+    www = personal / "www"
+    if not www.exists() and not www.is_symlink():
+        try:
+            www.symlink_to("public_html")
+        except OSError:
+            # Windows / FS sans symlink : dossier miroir minimal
+            www.mkdir(exist_ok=True)
+
+
+def personal_home(user: User) -> Path:
+    """Home personnel du compte (jamais le HOME_ROOT global admin)."""
+    root_base = Path(settings.VZONE_HOME_ROOT)
+    if user.role == User.Role.ADMINISTRATOR:
+        return (root_base / "admin").resolve()
+    home_name = user.system_username or user.username
+    return (root_base / home_name).resolve()
+
+
 def user_home(user: User) -> Path:
     """Racine jailée du compte (toujours writable par le processus panel)."""
-    home_name = user.system_username or user.username
     root_base = Path(settings.VZONE_HOME_ROOT)
     try:
         root_base.mkdir(parents=True, exist_ok=True)
@@ -79,14 +103,13 @@ def user_home(user: User) -> Path:
         root = root_base
         personal = root_base / "admin"
     else:
+        home_name = user.system_username or user.username
         root = root_base / home_name
         personal = root
 
     try:
         root.mkdir(parents=True, exist_ok=True)
-        personal.mkdir(parents=True, exist_ok=True)
-        for sub in ("public_html", "mail", "tmp", "logs"):
-            (personal / sub).mkdir(exist_ok=True)
+        ensure_cpanel_tree(personal)
     except OSError as exc:
         raise VZoneAPIException(
             detail=(

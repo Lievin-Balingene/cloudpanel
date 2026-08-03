@@ -49,6 +49,8 @@ class DatabaseUser(models.Model):
     engine = models.CharField(max_length=16, choices=DatabaseEngine.choices, default=DatabaseEngine.MYSQL)
     username = models.CharField(max_length=64, db_index=True)
     password_hash = models.CharField(max_length=256)
+    # Mot de passe chiffré (Fernet) pour SSO phpMyAdmin style cPanel
+    password_secret = models.TextField(blank=True, default="")
     host = models.CharField(max_length=64, default="localhost")
     is_active = models.BooleanField(default=True)
     notes = models.CharField(max_length=255, blank=True, default="")
@@ -64,10 +66,18 @@ class DatabaseUser(models.Model):
         return f"{self.username}@{self.host}"
 
     def set_password(self, raw: str) -> None:
+        from apps.databases.crypto import encrypt_secret
+
         self.password_hash = make_password(raw)
+        self.password_secret = encrypt_secret(raw)
 
     def check_password(self, raw: str) -> bool:
         return check_password(raw, self.password_hash)
+
+    def get_password_plain(self) -> str | None:
+        from apps.databases.crypto import decrypt_secret
+
+        return decrypt_secret(self.password_secret)
 
 
 class DatabasePrivilege(models.Model):
