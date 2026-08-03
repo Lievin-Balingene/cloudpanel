@@ -20,10 +20,10 @@ fi
 
 PANEL_HOSTS="${VZONE_PANEL_HOSTNAMES:-vpanel.vzonecloud.co.uk}"
 PANEL_HOSTS="${PANEL_HOSTS//,/ }"
-HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+# Uniquement les hostnames panel — PAS l'IP publique (sinon tout HTTP/HTTPS
+# sans vhost domaine risque de matcher le panel).
 PANEL_NAMES="$PANEL_HOSTS"
-for extra in localhost 127.0.0.1 ${HOST_IP}; do
-  [[ -n "$extra" ]] || continue
+for extra in localhost 127.0.0.1; do
   case " ${PANEL_NAMES} " in
     *" ${extra} "*) ;;
     *) PANEL_NAMES="${PANEL_NAMES} ${extra}" ;;
@@ -33,6 +33,13 @@ PANEL_NAMES="$(echo "$PANEL_NAMES" | xargs)"
 PANEL_PRIMARY="$(echo "$PANEL_HOSTS" | awk '{print $1}')"
 
 echo "[vzone] Panel server_name: ${PANEL_NAMES}"
+
+# Snakeoil pour le default_server HTTPS (parking)
+export DEBIAN_FRONTEND=noninteractive
+apt-get install -y -qq ssl-cert 2>/dev/null || true
+if [[ ! -f /etc/ssl/certs/ssl-cert-snakeoil.pem ]]; then
+  make-ssl-cert generate-default-snakeoil >/dev/null 2>&1 || true
+fi
 
 mkdir -p /etc/nginx/snippets /var/lib/vzone/parking /var/lib/vzone/acme
 

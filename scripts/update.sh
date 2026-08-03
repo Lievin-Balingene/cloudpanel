@@ -87,6 +87,11 @@ if [[ -f "${REPO_DIR}/scripts/ensure-https.sh" ]]; then
   bash "${REPO_DIR}/scripts/ensure-https.sh" || echo "[vzone] Avertissement: ensure-https.sh a échoué"
 fi
 
+# Vérifier que le default_server n'est plus le panel
+if nginx -T 2>/dev/null | awk '/default_server/,/}/' | grep -q 'frontend/dist'; then
+  echo "[vzone] ALERTE: default_server pointe encore vers le panel — lancez scripts/fix-site-routing.sh"
+fi
+
 systemctl daemon-reload
 systemctl enable --now redis-server 2>/dev/null || systemctl enable --now redis 2>/dev/null || true
 systemctl enable --now vzone-api vzone-worker vzone-beat nginx

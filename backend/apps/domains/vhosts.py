@@ -66,9 +66,13 @@ def resolve_domain_backend(domain: Domain) -> DomainBackend:
 
     panel_hosts = {
         h.strip().lower()
-        for h in str(getattr(settings, "VZONE_PANEL_HOSTNAMES", "") or "").split(",")
+        for h in re.split(
+            r"[,;\s]+",
+            str(getattr(settings, "VZONE_PANEL_HOSTNAMES", "") or ""),
+        )
         if h.strip()
     }
+    # Jamais traiter un domaine client comme panel sauf hostname exact
     if domain.name.lower() in panel_hosts or target.name.lower() in panel_hosts:
         panel_root = Path(getattr(settings, "VZONE_ROOT", "/opt/vzone")) / "frontend" / "dist"
         return DomainBackend(
