@@ -51,107 +51,92 @@ export function ChangePasswordPage() {
   }
 
   return (
-    <div className="login-stage relative flex min-h-screen items-center justify-center overflow-hidden px-6 py-12">
-      <div className="login-aurora pointer-events-none absolute inset-0" aria-hidden />
-      <div className="login-grid pointer-events-none absolute inset-0" aria-hidden />
-
-      <div className="login-reveal relative z-10 w-full max-w-md">
-        <p className="mb-6 text-center font-display text-4xl font-semibold text-white">V-zone</p>
-        <form
-          className="rounded-2xl border border-white/10 bg-[#0c1622]/78 p-6 shadow-[0_24px_80px_rgba(0,0,0,0.35)] backdrop-blur-xl sm:p-8"
-          onSubmit={onSubmit}
-        >
-          <div className="mb-6 flex items-start gap-3">
-            <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-400/15 text-emerald-300">
-              <KeyRound className="h-5 w-5" />
+    <div className="flex min-h-screen items-center justify-center bg-cp-navy p-4">
+      <div className="w-full max-w-md overflow-hidden rounded border border-black/20 bg-white shadow-lg animate-fade-up">
+        <div className="bg-cp-orange px-6 py-5 text-white">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded bg-white/15">
+              <KeyRound className="h-6 w-6" />
             </div>
             <div>
-              <h1 className="font-display text-xl font-semibold text-white">
-                Changer le mot de passe
-              </h1>
-              <p className="mt-1 text-sm text-white/55">
-                Obligatoire avant d’utiliser le panneau. Choisissez un mot de passe fort (≥ 10 caractères).
-              </p>
+              <h1 className="text-xl font-semibold">Changer le mot de passe</h1>
+              <p className="text-sm text-white/90">Obligatoire avant d&apos;utiliser le panneau</p>
             </div>
           </div>
+        </div>
 
-          <div className="space-y-4">
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-white/80" htmlFor={`${id}-cur`}>
-                Mot de passe actuel
-              </label>
+        <form className="space-y-4 p-6" onSubmit={onSubmit}>
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase text-cp-muted" htmlFor={`${id}-cur`}>
+              Mot de passe actuel
+            </label>
+            <input
+              id={`${id}-cur`}
+              className="vz-input"
+              type={show ? "text" : "password"}
+              required
+              autoComplete="current-password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase text-cp-muted" htmlFor={`${id}-new`}>
+              Nouveau mot de passe
+            </label>
+            <div className="relative">
               <input
-                id={`${id}-cur`}
-                className="login-input"
-                type={show ? "text" : "password"}
-                required
-                autoComplete="current-password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-white/80" htmlFor={`${id}-new`}>
-                Nouveau mot de passe
-              </label>
-              <div className="relative">
-                <input
-                  id={`${id}-new`}
-                  className="login-input pr-11"
-                  type={show ? "text" : "password"}
-                  required
-                  minLength={10}
-                  autoComplete="new-password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                />
-                <button
-                  type="button"
-                  className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-white/50 hover:text-white"
-                  onClick={() => setShow((v) => !v)}
-                  aria-label={show ? "Masquer" : "Afficher"}
-                >
-                  {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-            </div>
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-white/80" htmlFor={`${id}-cf`}>
-                Confirmer
-              </label>
-              <input
-                id={`${id}-cf`}
-                className="login-input"
+                id={`${id}-new`}
+                className="vz-input pr-10"
                 type={show ? "text" : "password"}
                 required
                 minLength={10}
                 autoComplete="new-password"
-                value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
               />
+              <button
+                type="button"
+                className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-cp-muted hover:text-cp-text"
+                onClick={() => setShow((v) => !v)}
+                aria-label={show ? "Masquer" : "Afficher"}
+              >
+                {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
             </div>
-
-            {error && (
-              <p role="alert" className="rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2.5 text-sm text-rose-100">
-                {error}
-              </p>
-            )}
-
-            <button
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-400 px-4 py-3 text-sm font-semibold text-[#062016] transition hover:bg-emerald-300 disabled:opacity-60"
-              type="submit"
-              disabled={loading}
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Enregistrement…
-                </>
-              ) : (
-                "Enregistrer et continuer"
-              )}
-            </button>
           </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase text-cp-muted" htmlFor={`${id}-cf`}>
+              Confirmer
+            </label>
+            <input
+              id={`${id}-cf`}
+              className="vz-input"
+              type={show ? "text" : "password"}
+              required
+              minLength={10}
+              autoComplete="new-password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+            />
+          </div>
+
+          {error && (
+            <p role="alert" className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-cp-danger">
+              {error}
+            </p>
+          )}
+
+          <button className="vz-btn-primary w-full py-2.5" type="submit" disabled={loading}>
+            {loading ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Enregistrement…
+              </>
+            ) : (
+              "Enregistrer et continuer"
+            )}
+          </button>
         </form>
       </div>
     </div>

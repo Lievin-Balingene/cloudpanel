@@ -66,8 +66,8 @@ export function WhmAccountsPage() {
   return (
     <div className="space-y-4 animate-fade-up">
       <div className="vz-panel p-4">
-        <h1 className="font-display text-xl font-semibold text-white">Comptes</h1>
-        <p className="text-sm text-white/50">
+        <h1 className="text-xl font-semibold text-cp-text">Comptes</h1>
+        <p className="text-sm text-cp-muted">
           Création de comptes d&apos;hébergement et assignation de package.
         </p>
       </div>
@@ -115,7 +115,7 @@ export function WhmAccountsPage() {
       </form>
 
       {error && (
-        <p role="alert" className="rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2.5 text-sm text-rose-100">
+        <p role="alert" className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-cp-danger">
           {error}
         </p>
       )}
