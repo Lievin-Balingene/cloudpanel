@@ -220,3 +220,38 @@ if [[ -n "$HOST_IP" ]]; then
   echo "  Host ${HOST_IP}/login → HTTP ${code}"
 fi
 echo "[vzone] Nginx OK — panel accessible via IP, hostname et HTTPS"
+
+# Synchroniser ALLOWED_HOSTS (sinon API domaines échoue via vpanel / IP)
+if [[ -f "$ENV_FILE" ]]; then
+  HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  NEED_HOSTS="localhost,127.0.0.1"
+  [[ -n "$HOST_IP" ]] && NEED_HOSTS="${NEED_HOSTS},${HOST_IP}"
+  for h in ${PANEL_HOSTS}; do
+    [[ -n "$h" ]] && NEED_HOSTS="${NEED_HOSTS},${h}"
+  done
+  CURRENT="$(grep '^VZONE_ALLOWED_HOSTS=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)"
+  MERGED="$CURRENT"
+  IFS=',' read -ra PARTS <<< "$NEED_HOSTS"
+  for p in "${PARTS[@]}"; do
+    p="$(echo "$p" | xargs)"
+    [[ -z "$p" ]] && continue
+    case ",${MERGED}," in
+      *",${p},"*) ;;
+      *) MERGED="${MERGED},${p}" ;;
+    esac
+  done
+  MERGED="$(echo "$MERGED" | sed 's/^,//' | sed 's/,,/,/g')"
+  if grep -q '^VZONE_ALLOWED_HOSTS=' "$ENV_FILE"; then
+    sed -i "s|^VZONE_ALLOWED_HOSTS=.*|VZONE_ALLOWED_HOSTS=${MERGED}|" "$ENV_FILE"
+  else
+    echo "VZONE_ALLOWED_HOSTS=${MERGED}" >> "$ENV_FILE"
+  fi
+  if [[ -z "${VZONE_PUBLIC_IP:-}" && -n "$HOST_IP" ]]; then
+    grep -q '^VZONE_PUBLIC_IP=' "$ENV_FILE" || echo "VZONE_PUBLIC_IP=${HOST_IP}" >> "$ENV_FILE"
+  fi
+  if [[ -z "${VZONE_MAIL_PUBLIC_IP:-}" && -n "$HOST_IP" ]]; then
+    grep -q '^VZONE_MAIL_PUBLIC_IP=' "$ENV_FILE" || echo "VZONE_MAIL_PUBLIC_IP=${HOST_IP}" >> "$ENV_FILE"
+  fi
+  systemctl try-restart vzone-api 2>/dev/null || true
+  echo "[vzone] ALLOWED_HOSTS → ${MERGED}"
+fi

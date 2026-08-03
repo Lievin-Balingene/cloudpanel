@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 
 from django.conf import settings
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Q
 
@@ -22,6 +23,14 @@ from apps.domains.models import Domain, DomainRedirect, normalize_hostname
 from apps.files.services import ensure_cpanel_tree, personal_home
 
 logger = logging.getLogger(__name__)
+
+
+def _default_ipv4() -> str | None:
+    for key in ("VZONE_MAIL_PUBLIC_IP", "VZONE_PUBLIC_IP"):
+        val = (getattr(settings, key, None) or "").strip()
+        if val:
+            return val
+    return None
 
 
 def domains_queryset_for(user: User):
@@ -49,13 +58,15 @@ def _assert_domain_quota(owner: User) -> None:
     quota = getattr(owner, "quota", None)
     if quota is None:
         return
-    limit = quota.domains
-    if limit == 0 and owner.role == User.Role.ADMINISTRATOR:
+    limit = int(quota.domains or 0)
+    # 0 = illimité (style cPanel / admin)
+    if limit <= 0:
         return
-    if limit > 0 and _count_domains(owner) >= limit:
+    used = _count_domains(owner)
+    if used >= limit:
         raise QuotaExceeded(
-            detail="Quota de domaines atteint.",
-            extra={"limit": limit, "used": _count_domains(owner)},
+            detail=f"Quota de domaines atteint ({used}/{limit}).",
+            extra={"limit": limit, "used": used},
         )
 
 
@@ -154,7 +165,15 @@ def create_domain(
     document_root: str = "",
     notes: str = "",
 ) -> Domain:
-    hostname = normalize_hostname(name)
+    try:
+        hostname = normalize_hostname(name)
+    except DjangoValidationError as exc:
+        messages = getattr(exc, "messages", None) or [str(exc)]
+        raise VZoneAPIException(
+            detail=str(messages[0]),
+            code="invalid_hostname",
+            status_code=400,
+        ) from exc
 
     if Domain.objects.filter(name=hostname).exists():
         raise VZoneAPIException(
@@ -192,16 +211,29 @@ def create_domain(
             status_code=400,
         )
 
+    if not ipv4_address:
+        ipv4_address = _default_ipv4()
+
     # Home cPanel + docroot
-    ensure_cpanel_tree(personal_home(owner))
-    docroot = document_root or default_document_root(
-        owner, hostname, domain_type=domain_type, parent=parent
-    )
-    if domain_type not in {Domain.DomainType.ALIAS, Domain.DomainType.PARKED}:
-        provision_document_root(docroot, hostname=hostname, domain_type=domain_type)
-    else:
-        # S'assure que le parent a bien un docroot
-        Path(docroot).mkdir(parents=True, exist_ok=True)
+    try:
+        ensure_cpanel_tree(personal_home(owner))
+        docroot = document_root or default_document_root(
+            owner, hostname, domain_type=domain_type, parent=parent
+        )
+        if domain_type not in {Domain.DomainType.ALIAS, Domain.DomainType.PARKED}:
+            provision_document_root(docroot, hostname=hostname, domain_type=domain_type)
+        else:
+            Path(docroot).mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        home = personal_home(owner)
+        raise VZoneAPIException(
+            detail=(
+                f"Impossible d'écrire dans {home} ({exc}). "
+                "Exécutez: sudo bash /opt/vzone-src/scripts/ensure-homes.sh"
+            ),
+            code="docroot_permission_denied",
+            status_code=500,
+        ) from exc
 
     zone = None
     if create_dns_zone and domain_type in {

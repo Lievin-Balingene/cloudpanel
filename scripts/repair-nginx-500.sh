@@ -69,7 +69,10 @@ fi
 chmod -R a+rX "${VZONE_ROOT}/frontend/dist"
 echo "  OK ${VZONE_ROOT}/frontend/dist/index.html"
 
-echo "[5] ensure-nginx"
+echo "[5] ensure-homes (ACL écriture panel)"
+bash "${REPO_DIR}/scripts/ensure-homes.sh" || true
+
+echo "[6] ensure-nginx"
 bash "${REPO_DIR}/scripts/ensure-nginx.sh" "${VZONE_ROOT}/deploy/nginx/vzone.conf"
 
 echo "[6] Vérifier conflits server_name"

@@ -111,11 +111,37 @@ class DomainCreateSerializer(serializers.Serializer):
     )
     owner_id = serializers.IntegerField(required=False)
     parent_id = serializers.IntegerField(required=False, allow_null=True)
-    ipv4_address = serializers.IPAddressField(protocol="IPv4", required=False, allow_null=True)
-    ipv6_address = serializers.IPAddressField(protocol="IPv6", required=False, allow_null=True)
+    ipv4_address = serializers.IPAddressField(
+        protocol="IPv4", required=False, allow_null=True, allow_blank=True
+    )
+    ipv6_address = serializers.IPAddressField(
+        protocol="IPv6", required=False, allow_null=True, allow_blank=True
+    )
     create_dns_zone = serializers.BooleanField(default=True)
     document_root = serializers.CharField(required=False, allow_blank=True, default="")
     notes = serializers.CharField(required=False, allow_blank=True, default="")
+
+    def validate_ipv4_address(self, value: str | None) -> str | None:
+        if value in ("", None):
+            return None
+        return value
+
+    def validate_ipv6_address(self, value: str | None) -> str | None:
+        if value in ("", None):
+            return None
+        return value
+
+    def validate_name(self, value: str) -> str:
+        from django.core.exceptions import ValidationError as DjangoValidationError
+
+        from apps.domains.models import normalize_hostname
+
+        try:
+            return normalize_hostname(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(
+                getattr(exc, "messages", [str(exc)])[0]
+            ) from exc
 
 
 class SubdomainCreateSerializer(serializers.Serializer):

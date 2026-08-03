@@ -54,6 +54,25 @@ fi
 ensure_cpanel_home "${TARGET_HOME}/admin"
 chown -R "${VZONE_USER}:${VZONE_USER}" "${TARGET_HOME}/admin"
 
+# ACL : le panel (user vzone) doit pouvoir créer docroots dans tous les homes
+if command -v setfacl >/dev/null 2>&1; then
+  setfacl -m "u:${VZONE_USER}:rwx" "${TARGET_HOME}" || true
+  setfacl -d -m "u:${VZONE_USER}:rwx" "${TARGET_HOME}" || true
+  for home in "${TARGET_HOME}"/*; do
+    [[ -d "$home" ]] || continue
+    setfacl -R -m "u:${VZONE_USER}:rwx" "$home" 2>/dev/null || true
+    setfacl -R -d -m "u:${VZONE_USER}:rwx" "$home" 2>/dev/null || true
+  done
+  echo "[vzone] ACL u:${VZONE_USER}:rwx appliquée sur ${TARGET_HOME}/*"
+else
+  # Fallback sans ACL : groupe commun
+  for home in "${TARGET_HOME}"/*; do
+    [[ -d "$home" ]] || continue
+    chmod -R g+rwX "$home" 2>/dev/null || true
+    chgrp -R "${VZONE_USER}" "$home" 2>/dev/null || true
+  done
+fi
+
 if getent group vmail >/dev/null 2>&1; then
   usermod -aG vmail "${VZONE_USER}" 2>/dev/null || true
 fi

@@ -6,7 +6,7 @@ import type { Domain } from "@/types";
 
 export function DomainsManager({ title }: { title: string }) {
   const qc = useQueryClient();
-  const { data: domains = [], isLoading } = useQuery({
+  const { data: domains = [], isLoading, isError: domainsLoadError, error: domainsError } = useQuery({
     queryKey: ["domains"],
     queryFn: () => apiRequest<Domain[]>("/domains/"),
   });
@@ -39,15 +39,15 @@ export function DomainsManager({ title }: { title: string }) {
       apiRequest("/domains/", {
         method: "POST",
         body: JSON.stringify({
-          name: form.name,
+          name: form.name.trim(),
           domain_type: form.domain_type,
-          ipv4_address: form.ipv4_address || null,
+          ipv4_address: form.ipv4_address.trim() || null,
           parent_id: form.parent_id ? Number(form.parent_id) : null,
           create_dns_zone: true,
         }),
       }),
     onSuccess: () => {
-      setForm({ name: "", domain_type: "primary", ipv4_address: "", parent_id: "" });
+      setForm({ name: "", domain_type: "primary", ipv4_address: form.ipv4_address, parent_id: "" });
       void qc.invalidateQueries({ queryKey: ["domains"] });
       void qc.invalidateQueries({ queryKey: ["dns-zones"] });
       void qc.invalidateQueries({ queryKey: ["dashboard-overview"] });
@@ -117,6 +117,11 @@ export function DomainsManager({ title }: { title: string }) {
         <p className="text-sm text-cp-muted">
           Domaines, addon, parked, alias, sous-domaines, redirections et SSL Let&apos;s Encrypt.
         </p>
+        {domainsLoadError && (
+          <p className="mt-2 text-sm text-cp-danger">
+            Impossible de charger les domaines : {(domainsError as Error)?.message || "erreur API"}
+          </p>
+        )}
       </div>
 
       <form className="vz-panel grid gap-2 p-4 md:grid-cols-6" onSubmit={onCreate}>
@@ -139,7 +144,7 @@ export function DomainsManager({ title }: { title: string }) {
         </select>
         <input
           className="vz-input"
-          placeholder="IPv4"
+          placeholder="IPv4 (auto si vide)"
           value={form.ipv4_address}
           onChange={(e) => setForm({ ...form, ipv4_address: e.target.value })}
         />
@@ -156,8 +161,19 @@ export function DomainsManager({ title }: { title: string }) {
           ))}
         </select>
         <button className="vz-btn-primary" type="submit" disabled={createDomain.isPending}>
-          Ajouter
+          {createDomain.isPending ? "Ajout…" : "Ajouter"}
         </button>
+        {(createDomain.isError || createSub.isError || createRedirect.isError || issueSsl.isError) && (
+          <p className="md:col-span-6 text-sm text-cp-danger">
+            {(createDomain.error as Error)?.message ||
+              (createSub.error as Error)?.message ||
+              (createRedirect.error as Error)?.message ||
+              (issueSsl.error as Error)?.message}
+          </p>
+        )}
+        {createDomain.isSuccess && (
+          <p className="md:col-span-6 text-sm text-emerald-700">Domaine ajouté.</p>
+        )}
       </form>
 
       <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
