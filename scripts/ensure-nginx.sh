@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installe Nginx V-zone : parking (default) + panel (hostnames) + domaines clients.
+# Installe Nginx V-zone : panel = default_server (IP OK) + vhosts domaines.
 set -euo pipefail
 
 [[ ${EUID:-0} -eq 0 ]] || { echo "Root requis"; exit 1; }
@@ -7,7 +7,6 @@ set -euo pipefail
 VZONE_ROOT="${VZONE_ROOT:-/opt/vzone}"
 SRC="${1:-${VZONE_ROOT}/deploy/nginx/vzone.conf}"
 ENV_FILE="${ENV_FILE:-/etc/vzone/vzone.env}"
-REPO_PARKING="${VZONE_ROOT}/deploy/nginx/parking.html"
 
 [[ -f "$SRC" ]] || { echo "Config introuvable: $SRC"; exit 1; }
 
@@ -21,61 +20,71 @@ fi
 PANEL_HOSTS="${VZONE_PANEL_HOSTNAMES:-vpanel.vzonecloud.co.uk}"
 PANEL_HOSTS="${PANEL_HOSTS//,/ }"
 HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
-# Panel = hostnames dédiés + localhost (+ IP pour admin). Les sites clients
-# matchent leur propre server_name et ne tombent pas ici.
-PANEL_NAMES="$PANEL_HOSTS"
-for extra in localhost 127.0.0.1 ${HOST_IP}; do
-  [[ -n "$extra" ]] || continue
-  case " ${PANEL_NAMES} " in
-    *" ${extra} "*) ;;
-    *) PANEL_NAMES="${PANEL_NAMES} ${extra}" ;;
-  esac
-done
+PANEL_NAMES="_ ${PANEL_HOSTS} localhost 127.0.0.1"
+[[ -n "$HOST_IP" ]] && PANEL_NAMES="${PANEL_NAMES} ${HOST_IP}"
 PANEL_NAMES="$(echo "$PANEL_NAMES" | xargs)"
 PANEL_PRIMARY="$(echo "$PANEL_HOSTS" | awk '{print $1}')"
 
 echo "[vzone] Panel server_name: ${PANEL_NAMES}"
 
-# Snakeoil pour le default_server HTTPS (parking)
 export DEBIAN_FRONTEND=noninteractive
 apt-get install -y -qq ssl-cert 2>/dev/null || true
-if [[ ! -f /etc/ssl/certs/ssl-cert-snakeoil.pem ]]; then
-  make-ssl-cert generate-default-snakeoil >/dev/null 2>&1 || true
+if [[ ! -f /etc/ssl/certs/ssl-cert-snakeoil.pem || ! -f /etc/ssl/private/ssl-cert-snakeoil.key ]]; then
+  make-ssl-cert generate-default-snakeoil --force-overwrite >/dev/null 2>&1 || \
+  openssl req -x509 -nodes -newkey rsa:2048 \
+    -keyout /etc/ssl/private/ssl-cert-snakeoil.key \
+    -out /etc/ssl/certs/ssl-cert-snakeoil.pem \
+    -days 3650 -subj "/CN=vzone-panel" 2>/dev/null || true
 fi
 
-mkdir -p /etc/nginx/snippets /var/lib/vzone/parking /var/lib/vzone/acme
+# www-data doit lire les clés SSL (sinon HTTPS → 500 nginx)
+usermod -aG ssl-cert www-data 2>/dev/null || true
+chmod 644 /etc/ssl/certs/ssl-cert-snakeoil.pem 2>/dev/null || true
+chmod 640 /etc/ssl/private/ssl-cert-snakeoil.key 2>/dev/null || true
+chown root:ssl-cert /etc/ssl/private/ssl-cert-snakeoil.key 2>/dev/null || true
 
-if [[ ! -f /etc/nginx/snippets/vzone-phpmyadmin.inc ]]; then
-  cat > /etc/nginx/snippets/vzone-phpmyadmin.inc <<'EOF'
+mkdir -p /etc/nginx/snippets /var/lib/vzone/acme /var/lib/vzone/ssl /var/lib/vzone/nginx/domains
+
+install_stub() {
+  local path="$1"
+  local name="$2"
+  if [[ -f "$path" ]] && grep -q 'fastcgi_pass' "$path" 2>/dev/null; then
+    echo "[vzone] Conservation snippet ${name}"
+    return
+  fi
+  if [[ "$name" == "phpmyadmin" ]]; then
+    cat > "$path" <<'EOF'
 location = /phpmyadmin { return 302 /phpmyadmin/; }
 location /phpmyadmin/ {
     default_type text/plain;
-    return 503 "phpMyAdmin n'est pas encore installé.\n";
+    return 503 "phpMyAdmin non installé.\n";
 }
 EOF
-fi
-
-if [[ ! -f /etc/nginx/snippets/vzone-roundcube.inc ]]; then
-  cat > /etc/nginx/snippets/vzone-roundcube.inc <<'EOF'
+  else
+    cat > "$path" <<'EOF'
 location = /webmail { return 302 /webmail/; }
 location /webmail/ {
     default_type text/plain;
-    return 503 "Roundcube n'est pas encore installé.\n";
+    return 503 "Roundcube non installé.\n";
 }
 EOF
-fi
+  fi
+}
 
-if [[ -f "$REPO_PARKING" ]]; then
-  install -m 644 "$REPO_PARKING" /var/lib/vzone/parking/index.html
-else
-  printf '%s\n' '<h1>Site not configured</h1>' > /var/lib/vzone/parking/index.html
-fi
-chmod -R a+rX /var/lib/vzone/parking /var/lib/vzone/acme
+install_stub /etc/nginx/snippets/vzone-phpmyadmin.inc phpmyadmin
+install_stub /etc/nginx/snippets/vzone-roundcube.inc roundcube
 
 DOMAINS_DIR="${VZONE_NGINX_DOMAINS_DIR:-/var/lib/vzone/nginx/domains}"
-mkdir -p "$DOMAINS_DIR"
 chown -R vzone:vzone /var/lib/vzone/nginx /var/lib/vzone/acme 2>/dev/null || true
-chmod 755 "$DOMAINS_DIR"
+chmod 755 "$DOMAINS_DIR" /var/lib/vzone/acme
+chmod -R a+rX /var/lib/vzone/acme
+
+SSL_DIR="/var/lib/vzone/ssl/${PANEL_PRIMARY}"
+if [[ -d /var/lib/vzone/ssl ]]; then
+  chown -R vzone:www-data /var/lib/vzone/ssl
+  find /var/lib/vzone/ssl -type d -exec chmod 750 {} \; 2>/dev/null || true
+  find /var/lib/vzone/ssl -type f -name '*.pem' -exec chmod 640 {} \; 2>/dev/null || true
+fi
 
 cat > /etc/nginx/conf.d/vzone-map-upgrade.conf <<'EOF'
 map $http_upgrade $connection_upgrade {
@@ -86,110 +95,46 @@ EOF
 cat > /etc/nginx/conf.d/vzone-domains-include.conf <<EOF
 include ${DOMAINS_DIR}/*.conf;
 EOF
-if [[ ! -f "${DOMAINS_DIR}/.keep.conf" ]]; then
-  echo "# vzone domains placeholder" > "${DOMAINS_DIR}/.keep.conf"
+[[ -f "${DOMAINS_DIR}/.keep.conf" ]] || echo "# placeholder" > "${DOMAINS_DIR}/.keep.conf"
+
+CERT="/etc/ssl/certs/ssl-cert-snakeoil.pem"
+KEY="/etc/ssl/private/ssl-cert-snakeoil.key"
+if [[ -n "$PANEL_PRIMARY" && -f "${SSL_DIR}/fullchain.pem" && -f "${SSL_DIR}/privkey.pem" ]]; then
+  CERT="${SSL_DIR}/fullchain.pem"
+  KEY="${SSL_DIR}/privkey.pem"
+  echo "[vzone] HTTPS panel: Let's Encrypt (${PANEL_PRIMARY})"
+else
+  echo "[vzone] HTTPS panel: snakeoil (en attendant Let's Encrypt)"
+fi
+
+# Vérifier lisibilité par www-data
+if ! sudo -u www-data test -r "$CERT" 2>/dev/null; then
+  echo "[vzone] ALERTE: www-data ne lit pas $CERT — correction droits"
+  chmod a+r "$CERT" 2>/dev/null || true
+fi
+if ! sudo -u www-data test -r "$KEY" 2>/dev/null; then
+  echo "[vzone] ALERTE: www-data ne lit pas $KEY — correction droits"
+  chown root:ssl-cert "$KEY" 2>/dev/null || true
+  chmod 640 "$KEY" 2>/dev/null || true
+  usermod -aG ssl-cert www-data 2>/dev/null || true
 fi
 
 TMP="$(mktemp)"
-export TMP PANEL_NAMES PANEL_PRIMARY
-export SSL_DIR="/var/lib/vzone/ssl/${PANEL_PRIMARY}"
+export TMP PANEL_NAMES CERT KEY
 cp "$SRC" "$TMP"
-
 python3 - <<'PY'
 import os
 from pathlib import Path
-
 tmp = Path(os.environ["TMP"])
 text = tmp.read_text(encoding="utf-8")
-panel_names = os.environ["PANEL_NAMES"]
-primary = (os.environ.get("PANEL_PRIMARY") or "").strip()
-ssl_dir = Path(os.environ.get("SSL_DIR") or "")
-
-text = text.replace("__PANEL_SERVER_NAMES__", panel_names)
-
-ssl_block = ""
-fullchain = ssl_dir / "fullchain.pem"
-privkey = ssl_dir / "privkey.pem"
-if primary and fullchain.is_file() and privkey.is_file():
-    ssl_block = f"""
-server {{
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    server_name {panel_names};
-
-    client_max_body_size 128m;
-
-    ssl_certificate     {fullchain};
-    ssl_certificate_key {privkey};
-    ssl_session_timeout 1d;
-    ssl_session_cache shared:SSL:10m;
-    ssl_protocols TLSv1.2 TLSv1.3;
-
-    root /opt/vzone/frontend/dist;
-    index index.html;
-
-    location ^~ /.well-known/acme-challenge/ {{
-        root /var/lib/vzone/acme;
-        default_type "text/plain";
-        allow all;
-    }}
-
-    location /assets/ {{
-        try_files $uri =404;
-        expires 30d;
-        add_header Cache-Control "public, immutable";
-        access_log off;
-    }}
-
-    location /api/ {{
-        proxy_pass http://vzone_asgi;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Connection "";
-        proxy_read_timeout 120s;
-    }}
-
-    location /ws/ {{
-        proxy_pass http://vzone_asgi;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 86400;
-    }}
-
-    location /admin/ {{
-        proxy_pass http://vzone_asgi;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }}
-
-    location /static/ {{
-        alias /opt/vzone/backend/staticfiles/;
-        expires 7d;
-        access_log off;
-    }}
-
-    include /etc/nginx/snippets/vzone-phpmyadmin.inc;
-    include /etc/nginx/snippets/vzone-roundcube.inc;
-
-    location / {{
-        try_files $uri $uri/ /index.html;
-    }}
-}}
-"""
-
-text = text.replace("# __PANEL_SSL_SERVER__", ssl_block)
+text = text.replace("__PANEL_SERVER_NAMES__", os.environ["PANEL_NAMES"])
+text = text.replace("__SSL_CERTIFICATE__", os.environ["CERT"])
+text = text.replace("__SSL_CERTIFICATE_KEY__", os.environ["KEY"])
+for token in ("__PANEL_SERVER_NAMES__", "__SSL_CERTIFICATE__", "__SSL_CERTIFICATE_KEY__"):
+    if token in text:
+        raise SystemExit(f"placeholder non remplacé: {token}")
 tmp.write_text(text, encoding="utf-8")
-print(f"[vzone] SSL panel: {'oui' if ssl_block else 'non'}")
+print("[vzone] conf panel assemblée")
 PY
 
 rm -f /etc/nginx/sites-enabled/default \
@@ -219,15 +164,26 @@ if [[ ! -f "${VZONE_ROOT}/frontend/dist/index.html" ]]; then
   exit 1
 fi
 chmod -R a+rX "${VZONE_ROOT}/frontend" || true
-chmod a+x /opt /opt/vzone /opt/vzone/frontend 2>/dev/null || true
+chmod a+x /opt /opt/vzone /opt/vzone/frontend "${VZONE_ROOT}/frontend/dist" 2>/dev/null || true
+
+for h in ${PANEL_HOSTS}; do
+  [[ -n "$h" ]] || continue
+  safe="$(echo "$h" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/_/g')"
+  rm -f "${DOMAINS_DIR}/${safe}.conf" 2>/dev/null || true
+done
 
 nginx -t
-systemctl reload nginx || systemctl restart nginx
-sleep 1
+# restart (pas seulement reload) pour prendre en compte le nouveau groupe ssl-cert de www-data
+systemctl restart nginx
 
-PANEL_TEST_HOST="$PANEL_PRIMARY"
-echo "[vzone] Nginx OK — parking default + panel sur ${PANEL_TEST_HOST}"
-code_park="$(curl -s -o /dev/null -w "%{http_code}" -H "Host: unknown.invalid" http://127.0.0.1/ || true)"
-code_panel="$(curl -s -o /dev/null -w "%{http_code}" -H "Host: ${PANEL_TEST_HOST}" http://127.0.0.1/login || true)"
-echo "[vzone] GET Host unknown → HTTP ${code_park} (parking attendu)"
-echo "[vzone] GET Host ${PANEL_TEST_HOST}/login → HTTP ${code_panel} (panel)"
+sleep 1
+echo "[vzone] Tests locaux"
+for url in "http://127.0.0.1/login" "https://127.0.0.1/login"; do
+  code="$(curl -sk -o /dev/null -w "%{http_code}" "$url" || true)"
+  echo "  $url → HTTP ${code}"
+done
+if [[ -n "$HOST_IP" ]]; then
+  code="$(curl -sk -o /dev/null -w "%{http_code}" -H "Host: ${HOST_IP}" "http://127.0.0.1/login" || true)"
+  echo "  Host ${HOST_IP}/login → HTTP ${code}"
+fi
+echo "[vzone] Nginx OK — panel accessible via IP, hostname et HTTPS"
