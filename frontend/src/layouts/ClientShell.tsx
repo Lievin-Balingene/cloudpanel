@@ -1,4 +1,5 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import {
   Home,
   Globe,
@@ -19,27 +20,304 @@ import {
   Box,
   HardDrive,
   KeyRound,
+  Shield,
+  ChevronDown,
+  Activity,
 } from "lucide-react";
+import { useMemo, useState } from "react";
+import { apiRequest } from "@/lib/api";
+import { formatBytes } from "@/lib/format";
 import { useAuthStore } from "@/stores/auth";
 import { useThemeStore } from "@/stores/theme";
+import type { DashboardOverview } from "@/types";
 
-const nav = [
-  { to: "/panel", end: true, label: "Accueil", icon: Home },
-  { to: "/panel/domains", label: "Domains", icon: AppWindow },
-  { to: "/panel/files", label: "File Manager", icon: FolderOpen },
-  { to: "/panel/ftp", label: "FTP", icon: Upload },
-  { to: "/panel/email", label: "Email", icon: Mail },
-  { to: "/panel/databases", label: "Databases", icon: Database },
-  { to: "/panel/python", label: "Python", icon: Code2 },
-  { to: "/panel/node", label: "Node.js", icon: Terminal },
-  { to: "/panel/php", label: "PHP", icon: FileCode2 },
-  { to: "/panel/git", label: "Git", icon: GitBranch },
-  { to: "/panel/docker", label: "Docker", icon: Box },
-  { to: "/panel/backups", label: "Backups", icon: HardDrive },
-  { to: "/panel/security", label: "Sécurité", icon: KeyRound },
-  { to: "/panel/dns", label: "Zone Editor", icon: Globe },
-  { to: "/panel/package", label: "Mon package", icon: Package },
+type NavItem = { to: string; label: string; icon: typeof Home; end?: boolean };
+
+type NavSection = { id: string; label: string; items: NavItem[] };
+
+const sections: NavSection[] = [
+  {
+    id: "files",
+    label: "Files",
+    items: [
+      { to: "/panel/files", label: "File Manager", icon: FolderOpen },
+      { to: "/panel/ftp", label: "FTP Accounts", icon: Upload },
+      { to: "/panel/backups", label: "Backup", icon: HardDrive },
+    ],
+  },
+  {
+    id: "databases",
+    label: "Databases",
+    items: [{ to: "/panel/databases", label: "MySQL® / PostgreSQL", icon: Database }],
+  },
+  {
+    id: "domains",
+    label: "Domains",
+    items: [
+      { to: "/panel/domains", label: "Domains", icon: AppWindow },
+      { to: "/panel/dns", label: "Zone Editor", icon: Globe },
+    ],
+  },
+  {
+    id: "email",
+    label: "Email",
+    items: [{ to: "/panel/email", label: "Email Accounts", icon: Mail }],
+  },
+  {
+    id: "metrics",
+    label: "Metrics",
+    items: [{ to: "/panel/package", label: "Resource Usage", icon: Activity }],
+  },
+  {
+    id: "security",
+    label: "Security",
+    items: [
+      { to: "/panel/security", label: "Security / 2FA", icon: KeyRound },
+      { to: "/panel/domains", label: "SSL/TLS Status", icon: Shield },
+    ],
+  },
+  {
+    id: "software",
+    label: "Software",
+    items: [
+      { to: "/panel/php", label: "Select PHP Version", icon: FileCode2 },
+      { to: "/panel/python", label: "Setup Python App", icon: Code2 },
+      { to: "/panel/node", label: "Setup Node.js App", icon: Terminal },
+      { to: "/panel/git", label: "Git Version Control", icon: GitBranch },
+      { to: "/panel/docker", label: "Docker Containers", icon: Box },
+    ],
+  },
+  {
+    id: "preferences",
+    label: "Preferences",
+    items: [
+      { to: "/panel", label: "Home", icon: Home, end: true },
+      { to: "/panel/package", label: "Mon package", icon: Package },
+    ],
+  },
 ];
+
+function UsageBar({
+  label,
+  usedLabel,
+  percent,
+}: {
+  label: string;
+  usedLabel: string;
+  percent: number;
+}) {
+  const pct = Math.max(0, Math.min(100, percent));
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between text-xs">
+        <span className="font-medium text-cp-text">{label}</span>
+        <span className="text-cp-muted">{usedLabel}</span>
+      </div>
+      <div className="h-2 overflow-hidden rounded bg-cp-canvas">
+        <div
+          className={`h-full rounded ${pct >= 90 ? "bg-cp-danger" : pct >= 70 ? "bg-amber-500" : "bg-cp-orange"}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function HostUsagePanel() {
+  const user = useAuthStore((s) => s.user);
+  const { data } = useQuery({
+    queryKey: ["dashboard-overview"],
+    queryFn: () => apiRequest<DashboardOverview>("/dashboard/overview/"),
+    refetchInterval: 30000,
+  });
+  const { data: assignment } = useQuery({
+    queryKey: ["package-mine"],
+    queryFn: () =>
+      apiRequest<{
+        package: {
+          name: string;
+          disk_mb: number;
+          bandwidth_mb: number;
+          domains: number;
+          emails: number;
+          databases: number;
+          ftp_accounts: number;
+          unlimited_disk: boolean;
+          unlimited_bandwidth: boolean;
+        };
+      } | null>("/packages/mine/"),
+  });
+
+  const pkg = assignment?.package;
+  const diskLimitMb = pkg && !pkg.unlimited_disk ? pkg.disk_mb : null;
+  const diskUsedMb = data?.disk ? data.disk.used / (1024 * 1024) : 0;
+  const diskPct =
+    diskLimitMb && diskLimitMb > 0
+      ? Math.min(100, (diskUsedMb / diskLimitMb) * 100)
+      : data?.disk?.percent ?? 0;
+
+  return (
+    <aside className="hidden w-72 shrink-0 xl:block">
+      <div className="sticky top-4 space-y-3">
+        <div className="vz-panel overflow-hidden">
+          <div className="border-b border-cp-border bg-cp-header px-3 py-2 text-xs font-semibold uppercase tracking-wide text-white">
+            General Information
+          </div>
+          <dl className="space-y-2 p-3 text-sm">
+            <div className="flex justify-between gap-2">
+              <dt className="text-cp-muted">Current User</dt>
+              <dd className="font-medium text-cp-text">{user?.username ?? "—"}</dd>
+            </div>
+            <div className="flex justify-between gap-2">
+              <dt className="text-cp-muted">Primary Domain</dt>
+              <dd className="truncate font-medium text-cp-text">{user?.email ?? "—"}</dd>
+            </div>
+            <div className="flex justify-between gap-2">
+              <dt className="text-cp-muted">Home Directory</dt>
+              <dd className="truncate font-medium text-cp-text">/home/{user?.username ?? "…"}</dd>
+            </div>
+            <div className="flex justify-between gap-2">
+              <dt className="text-cp-muted">Last Login IP</dt>
+              <dd className="font-medium text-cp-text">—</dd>
+            </div>
+            <div className="flex justify-between gap-2">
+              <dt className="text-cp-muted">Theme</dt>
+              <dd className="font-medium text-cp-text">V-zone</dd>
+            </div>
+          </dl>
+        </div>
+
+        <div className="vz-panel overflow-hidden">
+          <div className="border-b border-cp-border bg-cp-header px-3 py-2 text-xs font-semibold uppercase tracking-wide text-white">
+            Statistics
+          </div>
+          <div className="space-y-3 p-3">
+            <UsageBar
+              label="Disk Usage"
+              usedLabel={
+                diskLimitMb
+                  ? `${diskUsedMb.toFixed(0)} / ${diskLimitMb} Mo`
+                  : data?.disk
+                    ? `${formatBytes(data.disk.used)} / ${formatBytes(data.disk.total)}`
+                    : "—"
+              }
+              percent={diskPct}
+            />
+            <UsageBar
+              label="Bandwidth"
+              usedLabel={
+                pkg?.unlimited_bandwidth
+                  ? "∞"
+                  : pkg
+                    ? `0 / ${pkg.bandwidth_mb} Mo`
+                    : "—"
+              }
+              percent={0}
+            />
+            <InfoRow label="Package" value={data?.my_package ?? pkg?.name ?? "Aucun"} />
+            <InfoRow label="Domains" value={`${data?.domains_total ?? 0}${pkg ? ` / ${pkg.domains}` : ""}`} />
+            <InfoRow label="Email Accounts" value={pkg ? `— / ${pkg.emails}` : "—"} />
+            <InfoRow label="Databases" value={pkg ? `— / ${pkg.databases}` : "—"} />
+            <InfoRow label="FTP Accounts" value={pkg ? `— / ${pkg.ftp_accounts}` : "—"} />
+            <InfoRow label="DNS Zones" value={String(data?.dns_zones ?? 0)} />
+          </div>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function InfoRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between border-t border-cp-border pt-2 text-xs first:border-0 first:pt-0">
+      <span className="text-cp-muted">{label}</span>
+      <span className="font-semibold text-cp-text">{value}</span>
+    </div>
+  );
+}
+
+function AsideMenu() {
+  const location = useLocation();
+  const initiallyOpen = useMemo(() => {
+    const open = new Set<string>(["files", "domains", "email", "software"]);
+    for (const section of sections) {
+      if (section.items.some((i) => location.pathname === i.to || (i.to !== "/panel" && location.pathname.startsWith(i.to)))) {
+        open.add(section.id);
+      }
+    }
+    return open;
+  }, [location.pathname]);
+  const [openIds, setOpenIds] = useState<Set<string>>(initiallyOpen);
+
+  function toggle(id: string) {
+    setOpenIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  return (
+    <aside className="hidden w-56 shrink-0 md:block">
+      <div className="vz-panel sticky top-4 overflow-hidden">
+        <div className="border-b border-cp-border bg-cp-header px-3 py-2 text-xs font-semibold uppercase tracking-wide text-white">
+          Tools
+        </div>
+        <nav className="max-h-[calc(100vh-8rem)] overflow-y-auto py-1">
+          <NavLink
+            to="/panel"
+            end
+            className={({ isActive }) =>
+              `flex items-center gap-2 px-3 py-2 text-sm ${
+                isActive ? "bg-cp-orange-soft font-semibold text-cp-orange-dark" : "text-cp-text hover:bg-cp-canvas"
+              }`
+            }
+          >
+            <Home className="h-4 w-4 text-cp-orange" />
+            Home
+          </NavLink>
+          {sections.map((section) => {
+            const open = openIds.has(section.id);
+            return (
+              <div key={section.id} className="border-t border-cp-border/70">
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-cp-muted hover:bg-cp-canvas"
+                  onClick={() => toggle(section.id)}
+                >
+                  {section.label}
+                  <ChevronDown className={`h-3.5 w-3.5 transition ${open ? "rotate-180" : ""}`} />
+                </button>
+                {open && (
+                  <div className="pb-1">
+                    {section.items.map((item) => (
+                      <NavLink
+                        key={`${section.id}-${item.to}-${item.label}`}
+                        to={item.to}
+                        end={item.end}
+                        className={({ isActive }) =>
+                          `flex items-center gap-2 px-3 py-1.5 pl-4 text-sm ${
+                            isActive
+                              ? "bg-cp-orange-soft font-medium text-cp-orange-dark"
+                              : "text-cp-text hover:bg-cp-canvas"
+                          }`
+                        }
+                      >
+                        <item.icon className="h-3.5 w-3.5 text-cp-orange" />
+                        {item.label}
+                      </NavLink>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </nav>
+      </div>
+    </aside>
+  );
+}
 
 export function ClientShell() {
   const user = useAuthStore((s) => s.user);
@@ -49,52 +327,41 @@ export function ClientShell() {
 
   return (
     <div className="min-h-screen bg-cp-canvas dark:bg-surface-dark">
-      <header className="border-b border-cp-border bg-white dark:border-ink-800 dark:bg-ink-950">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
+      <header className="border-b border-black/10 bg-cp-orange text-white">
+        <div className="flex items-center justify-between px-4 py-2.5">
           <div className="flex items-center gap-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded bg-cp-orange text-white">
-              <LayoutGrid className="h-5 w-5" />
+            <div className="flex h-8 w-8 items-center justify-center rounded bg-white/20">
+              <LayoutGrid className="h-4 w-4" />
             </div>
             <div>
-              <p className="text-sm font-semibold text-cp-text dark:text-ink-50">V-zone Panel</p>
-              <p className="text-xs text-cp-muted">Espace client · {user?.username}</p>
+              <p className="text-sm font-semibold tracking-wide">V-zone</p>
+              <p className="text-[11px] text-white/85">cPanel-style client panel</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button type="button" className="vz-btn-ghost" onClick={toggle}>
+          <div className="flex items-center gap-2 text-sm">
+            <span className="hidden sm:inline text-white/90">{user?.username}</span>
+            <button type="button" className="rounded px-2 py-1 hover:bg-white/15" onClick={toggle}>
               {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
-            <button type="button" className="vz-btn-ghost" onClick={() => void logout()}>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded px-2 py-1 hover:bg-white/15"
+              onClick={() => void logout()}
+            >
               <LogOut className="h-4 w-4" />
-              Quitter
+              Logout
             </button>
           </div>
         </div>
-        <nav className="border-t border-cp-border bg-cp-orange-soft dark:border-ink-800 dark:bg-ink-900">
-          <div className="mx-auto flex max-w-6xl gap-1 overflow-x-auto px-2">
-            {nav.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.end}
-                className={({ isActive }) =>
-                  `inline-flex shrink-0 items-center gap-1.5 px-3 py-2.5 text-sm ${
-                    isActive
-                      ? "border-b-2 border-cp-orange font-semibold text-cp-orange-dark"
-                      : "text-cp-text hover:text-cp-orange dark:text-ink-200"
-                  }`
-                }
-              >
-                <item.icon className="h-4 w-4" />
-                {item.label}
-              </NavLink>
-            ))}
-          </div>
-        </nav>
       </header>
-      <main className="mx-auto max-w-6xl p-4 md:p-6">
-        <Outlet />
-      </main>
+
+      <div className="mx-auto flex max-w-[1400px] gap-4 p-3 md:p-4">
+        <AsideMenu />
+        <main className="min-w-0 flex-1">
+          <Outlet />
+        </main>
+        <HostUsagePanel />
+      </div>
     </div>
   );
 }

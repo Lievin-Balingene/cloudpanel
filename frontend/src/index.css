@@ -56,4 +56,13 @@ html.dark body {
     @apply flex flex-col items-center gap-2 rounded border border-cp-border bg-white p-4 text-center
       shadow-tool transition hover:border-cp-orange hover:shadow-md dark:border-ink-700 dark:bg-ink-950;
   }
+
+  select.vz-input {
+    @apply bg-white;
+  }
+
+  select.vz-input option {
+    color: #2c3e50;
+    background: #fff;
+  }
 }
