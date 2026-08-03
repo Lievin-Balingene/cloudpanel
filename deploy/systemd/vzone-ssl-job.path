@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch V-zone SSL certificate job requests
+
+[Path]
+PathExistsGlob=/var/lib/vzone/ssl/jobs/*.request
+MakeDirectory=true
+Unit=vzone-ssl-job.service
+
+[Install]
+WantedBy=multi-user.target

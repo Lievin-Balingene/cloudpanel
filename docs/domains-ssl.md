@@ -34,6 +34,7 @@ Fichiers Nginx : `VZONE_NGINX_DOMAINS_DIR` (défaut `/var/lib/vzone/nginx/domain
 - **Let's Encrypt** via `certbot` (`VZONE_SSL_BACKEND=auto|certbot`)
 - Installation : `sudo bash scripts/install-certbot.sh` (appelé aussi par `update.sh`)
 - Challenge HTTP-01 sur le webroot partagé `/var/lib/vzone/acme` (location `/.well-known/acme-challenge/`)
+- Émission via **agent root** (`vzone-ssl-job.path`) — file queue `/var/lib/vzone/ssl/jobs/` (pas de sudo depuis l’API, compatible `NoNewPrivileges`)
 - Après émission : vhost Nginx **443** + redirection HTTP→HTTPS
 - `www.` n’est demandé que pour les apex `example.com` (pas pour `vpanel.exemple.co.uk`)
 - **Self-signed** en développement / tests (`selfsigned`)

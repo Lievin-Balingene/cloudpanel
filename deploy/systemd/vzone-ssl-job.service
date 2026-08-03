@@ -1,0 +1,8 @@
+[Unit]
+Description=V-zone SSL Let's Encrypt job agent
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/vzone-ssl-agent
+Nice=5

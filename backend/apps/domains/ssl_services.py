@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone as dt_timezone
 from pathlib import Path
@@ -57,6 +59,15 @@ def cert_paths_for(domain_name: str) -> tuple[Path, Path, Path]:
 def has_active_cert_files(domain_name: str) -> bool:
     _, fullchain, privkey = cert_paths_for(domain_name)
     return fullchain.is_file() and privkey.is_file()
+
+
+def ssl_jobs_dir() -> Path:
+    path = Path(
+        getattr(settings, "VZONE_SSL_JOBS_DIR", None)
+        or (Path(settings.VZONE_DATA_ROOT) / "ssl" / "jobs")
+    )
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def _parse_expiry(cert_pem: str) -> tuple[datetime, datetime, list[str]]:
@@ -117,7 +128,6 @@ def _extra_hostnames(domain: Domain) -> list[str]:
     """www. uniquement pour les apex type example.com (PRIMARY/ADDON)."""
     if domain.domain_type not in {Domain.DomainType.PRIMARY, Domain.DomainType.ADDON}:
         return []
-    # example.com → www ; vpanel.vzonecloud.co.uk → pas de www auto
     if domain.name.count(".") != 1:
         return []
     return [f"www.{domain.name}"]
@@ -133,105 +143,78 @@ def _ssl_issue_bin() -> str | None:
     return None
 
 
-def issue_with_certbot(domain: Domain, email: str) -> CertificateMaterial:
-    """Émet un certificat via le wrapper root (sudo) + certbot webroot."""
-    wrapper = _ssl_issue_bin()
-    certbot = shutil.which("certbot")
-    if not wrapper and not certbot:
-        raise VZoneAPIException(
-            detail=(
-                "certbot introuvable sur le serveur. "
-                "Exécutez: sudo bash /opt/vzone-src/scripts/install-certbot.sh"
-            ),
-            code="certbot_missing",
-            status_code=503,
+def _enqueue_ssl_job(
+    domain_name: str, email: str, extras: list[str], *, timeout: int = 180
+) -> dict:
+    """
+    Dépose un job pour l'agent root (systemd path) — compatible NoNewPrivileges.
+    """
+    jobs = ssl_jobs_dir()
+    job_id = secrets.token_hex(12)
+    request = jobs / f"{job_id}.request"
+    result_path = jobs / f"{job_id}.result"
+    payload = {"domain": domain_name, "email": email, "extras": extras}
+    tmp = jobs / f"{job_id}.request.tmp"
+    tmp.write_text(json.dumps(payload), encoding="utf-8")
+    tmp.replace(request)
+
+    try:
+        subprocess.run(
+            ["systemctl", "start", "vzone-ssl-job.service"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
         )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
 
-    webroot = acme_webroot()
-    extras = _extra_hostnames(domain)
-    hostnames = [domain.name, *extras]
-
-    def _run(names: list[str]) -> subprocess.CompletedProcess[str]:
-        if wrapper:
-            cmd = ["sudo", "-n", wrapper, domain.name, email, *names[1:]]
-        else:
-            # Secours local (tests / root) — webroot partagé ACME
-            cmd = [
-                certbot or "certbot",
-                "certonly",
-                "--non-interactive",
-                "--agree-tos",
-                "--email",
-                email,
-                "--webroot",
-                "-w",
-                str(webroot),
-                "--cert-name",
-                domain.name,
-                "--keep-until-expiring",
-                "--preferred-challenges",
-                "http",
-            ]
-            for name in names:
-                cmd.extend(["-d", name])
-        return subprocess.run(cmd, capture_output=True, text=True, check=False)
-
-    result = _run(hostnames)
-    # Si www échoue (DNS manquant), retenter sans www
-    if result.returncode != 0 and extras:
-        logger.warning(
-            "LE avec www échoué pour %s — retry sans www: %s",
-            domain.name,
-            (result.stderr or result.stdout)[-500:],
-        )
-        result = _run([domain.name])
-
-    if result.returncode != 0:
-        err = (result.stderr or result.stdout or "").strip()
-        if "password is required" in err.lower() or "a password is required" in err.lower():
-            err = (
-                "sudo non configuré pour vzone-ssl-issue. "
-                "Exécutez: sudo bash /opt/vzone-src/scripts/install-certbot.sh"
-            )
-        raise VZoneAPIException(
-            detail=f"Échec Let's Encrypt: {err[-1500:]}",
-            code="letsencrypt_failed",
-            status_code=502,
-            extra={"stdout": (result.stdout or "")[-2000:], "stderr": (result.stderr or "")[-2000:]},
-        )
-
-    _, fullchain_path, privkey_path = cert_paths_for(domain.name)
-    cert_path = cert_paths_for(domain.name)[0]
-
-    # Le wrapper écrit déjà les PEM ; sinon lire depuis live/
-    if not fullchain_path.is_file() or not privkey_path.is_file():
-        live_dir = Path("/etc/letsencrypt/live") / domain.name
-        if not (live_dir / "fullchain.pem").is_file():
-            # Parser JSON stdout du wrapper si présent
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if result_path.is_file():
             try:
-                meta = json.loads((result.stdout or "").strip().splitlines()[-1])
-                fullchain_path = Path(meta["fullchain_path"])
-                privkey_path = Path(meta["privkey_path"])
-                cert_path = Path(meta.get("cert_path", fullchain_path))
-            except (json.JSONDecodeError, KeyError, IndexError) as exc:
-                raise VZoneAPIException(
-                    detail="Certificat émis mais fichiers PEM introuvables.",
-                    code="letsencrypt_files_missing",
-                    status_code=500,
-                ) from exc
-        else:
-            target = ssl_storage_root() / domain.name
-            target.mkdir(parents=True, exist_ok=True)
-            cert_path = target / "cert.pem"
-            fullchain_path = target / "fullchain.pem"
-            privkey_path = target / "privkey.pem"
-            cert_path.write_text((live_dir / "cert.pem").read_text(encoding="utf-8"), encoding="utf-8")
-            fullchain_path.write_text(
-                (live_dir / "fullchain.pem").read_text(encoding="utf-8"), encoding="utf-8"
+                data = json.loads(result_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                data = {"ok": False, "error": "Résultat SSL illisible"}
+            try:
+                result_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return data if isinstance(data, dict) else {"ok": False, "error": "Résultat invalide"}
+        time.sleep(0.4)
+
+    raise VZoneAPIException(
+        detail=(
+            "Timeout émission SSL (agent root). "
+            "Vérifiez: systemctl status vzone-ssl-job.path vzone-ssl-job.service"
+        ),
+        code="letsencrypt_timeout",
+        status_code=504,
+    )
+
+
+def _load_issued_material(domain_name: str, hostnames: list[str]) -> CertificateMaterial:
+    cert_path, fullchain_path, privkey_path = cert_paths_for(domain_name)
+    if not fullchain_path.is_file() or not privkey_path.is_file():
+        live_dir = Path("/etc/letsencrypt/live") / domain_name
+        if not (live_dir / "fullchain.pem").is_file():
+            raise VZoneAPIException(
+                detail="Certificat émis mais fichiers PEM introuvables sous /var/lib/vzone/ssl/.",
+                code="letsencrypt_files_missing",
+                status_code=500,
             )
-            privkey_path.write_text(
-                (live_dir / "privkey.pem").read_text(encoding="utf-8"), encoding="utf-8"
-            )
+        target = ssl_storage_root() / domain_name
+        target.mkdir(parents=True, exist_ok=True)
+        cert_path = target / "cert.pem"
+        fullchain_path = target / "fullchain.pem"
+        privkey_path = target / "privkey.pem"
+        cert_path.write_text((live_dir / "cert.pem").read_text(encoding="utf-8"), encoding="utf-8")
+        fullchain_path.write_text(
+            (live_dir / "fullchain.pem").read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        privkey_path.write_text(
+            (live_dir / "privkey.pem").read_text(encoding="utf-8"), encoding="utf-8"
+        )
 
     cert_pem = cert_path.read_text(encoding="utf-8")
     key_pem = privkey_path.read_text(encoding="utf-8")
@@ -245,6 +228,78 @@ def issue_with_certbot(domain: Domain, email: str) -> CertificateMaterial:
         expires_at=expires,
         alt_names=alts or hostnames,
     )
+
+
+def issue_with_certbot(domain: Domain, email: str) -> CertificateMaterial:
+    """Émet un certificat via l'agent root (file queue) — pas de sudo."""
+    wrapper = _ssl_issue_bin()
+    certbot = shutil.which("certbot")
+    has_agent = Path("/usr/local/sbin/vzone-ssl-agent").is_file()
+
+    if not wrapper and not certbot and not has_agent:
+        raise VZoneAPIException(
+            detail=(
+                "certbot introuvable sur le serveur. "
+                "Exécutez: sudo bash /opt/vzone-src/scripts/install-certbot.sh"
+            ),
+            code="certbot_missing",
+            status_code=503,
+        )
+
+    extras = _extra_hostnames(domain)
+    hostnames = [domain.name, *extras]
+
+    # Production : file queue → agent systemd root (compatible NoNewPrivileges)
+    if has_agent or wrapper:
+        meta = _enqueue_ssl_job(domain.name, email, extras)
+        if not meta.get("ok"):
+            err = str(meta.get("error") or "échec agent SSL")
+            if extras:
+                logger.warning("LE avec www échoué pour %s — retry sans www", domain.name)
+                meta = _enqueue_ssl_job(domain.name, email, [])
+                if not meta.get("ok"):
+                    err = str(meta.get("error") or err)
+                    raise VZoneAPIException(
+                        detail=f"Échec Let's Encrypt: {err[-1500:]}",
+                        code="letsencrypt_failed",
+                        status_code=502,
+                    )
+            else:
+                raise VZoneAPIException(
+                    detail=f"Échec Let's Encrypt: {err[-1500:]}",
+                    code="letsencrypt_failed",
+                    status_code=502,
+                )
+        return _load_issued_material(domain.name, hostnames)
+
+    # Secours local (tests / DEBUG)
+    webroot = acme_webroot()
+    cmd = [
+        certbot or "certbot",
+        "certonly",
+        "--non-interactive",
+        "--agree-tos",
+        "--email",
+        email,
+        "--webroot",
+        "-w",
+        str(webroot),
+        "--cert-name",
+        domain.name,
+        "--keep-until-expiring",
+        "--preferred-challenges",
+        "http",
+        "-d",
+        domain.name,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise VZoneAPIException(
+            detail=f"Échec Let's Encrypt: {(result.stderr or result.stdout or '')[-1500:]}",
+            code="letsencrypt_failed",
+            status_code=502,
+        )
+    return _load_issued_material(domain.name, hostnames)
 
 
 def persist_files(domain: Domain, material: CertificateMaterial) -> Path:
@@ -326,7 +381,11 @@ def issue_letsencrypt(domain: Domain, *, email: str | None = None) -> SslCertifi
 
     contact = email or domain.owner.email or "admin@localhost"
     backend = getattr(settings, "VZONE_SSL_BACKEND", "auto")
-    has_certbot = bool(shutil.which("certbot") or _ssl_issue_bin())
+    has_certbot = bool(
+        shutil.which("certbot")
+        or _ssl_issue_bin()
+        or Path("/usr/local/sbin/vzone-ssl-agent").is_file()
+    )
 
     try:
         if backend == "selfsigned" or (backend == "auto" and not has_certbot):
