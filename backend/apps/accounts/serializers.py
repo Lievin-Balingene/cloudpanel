@@ -120,7 +120,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
 
 
 class LoginSerializer(serializers.Serializer):
-    email = serializers.EmailField()
+    email = serializers.CharField(help_text="E-mail ou nom d'utilisateur")
     password = serializers.CharField(write_only=True)
     otp = serializers.CharField(required=False, allow_blank=True)
 
@@ -132,37 +132,43 @@ class LoginSerializer(serializers.Serializer):
             record_login_attempt,
         )
 
-        email = attrs["email"].lower()
+        identifier = attrs["email"].strip()
         password = attrs["password"]
         request = self.context.get("request")
         ip = client_ip(request) if request else None
 
-        assert_ip_allowed(ip)
-        assert_not_locked(email=email, ip=ip)
+        user_obj = None
+        try:
+            if "@" in identifier:
+                user_obj = User.objects.get(email__iexact=identifier)
+            else:
+                user_obj = User.objects.get(username__iexact=identifier)
+        except User.DoesNotExist:
+            user_obj = None
 
-        user = authenticate(
-            request=request,
-            username=email,
-            password=password,
-        )
+        lock_key = (user_obj.email if user_obj else identifier).lower()
+        assert_ip_allowed(ip)
+        assert_not_locked(email=lock_key, ip=ip)
+
+        user = None
+        if user_obj is not None:
+            user = authenticate(
+                request=request,
+                username=user_obj.email,
+                password=password,
+            )
+            if user is None and user_obj.check_password(password):
+                user = user_obj
+
         if user is None:
-            try:
-                candidate = User.objects.get(email__iexact=email)
-            except User.DoesNotExist:
-                record_login_attempt(email=email, ip=ip, success=False, message="unknown user")
-                raise VZoneAPIException(
-                    detail="Identifiants invalides.",
-                    code="invalid_credentials",
-                    status_code=401,
-                ) from None
-            if not candidate.check_password(password):
-                record_login_attempt(email=email, ip=ip, success=False, message="bad password")
-                raise VZoneAPIException(
-                    detail="Identifiants invalides.",
-                    code="invalid_credentials",
-                    status_code=401,
-                )
-            user = candidate
+            record_login_attempt(email=lock_key, ip=ip, success=False, message="invalid")
+            raise VZoneAPIException(
+                detail="Identifiants invalides.",
+                code="invalid_credentials",
+                status_code=401,
+            )
+
+        email = user.email.lower()
 
         if not user.is_active or user.is_suspended:
             record_login_attempt(email=email, ip=ip, success=False, message="suspended")

@@ -32,26 +32,20 @@ cd "${VZONE_ROOT}/frontend"
 npm ci || npm install
 npm run build
 
-# (Ré)installe les unités systemd + nginx — utile après une install partielle
+# (Ré)installe les unités systemd — utile après une install partielle
 install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-api.service" /etc/systemd/system/
 install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-worker.service" /etc/systemd/system/
 install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-beat.service" /etc/systemd/system/
 # Droits .env : lisible par l'utilisateur système vzone (commandes manage.py)
 if [[ -f /etc/vzone/vzone.env ]]; then
-  chown root:vzone /etc/vzone/vzone.env 2>/dev/null || chown root:vzone /etc/vzone/vzone.env
+  chown root:vzone /etc/vzone/vzone.env
   chmod 640 /etc/vzone/vzone.env
 fi
-install -m 644 "${VZONE_ROOT}/deploy/nginx/vzone.conf" /etc/nginx/sites-available/vzone 2>/dev/null \
-  || install -m 644 "${VZONE_ROOT}/deploy/nginx/vzone.conf" /etc/nginx/conf.d/vzone.conf
-if [[ -d /etc/nginx/sites-enabled ]]; then
-  ln -sfn /etc/nginx/sites-available/vzone /etc/nginx/sites-enabled/vzone
-  rm -f /etc/nginx/sites-enabled/default
-fi
-nginx -t
+
+bash "${REPO_DIR}/scripts/ensure-nginx.sh" "${VZONE_ROOT}/deploy/nginx/vzone.conf"
 
 systemctl daemon-reload
 systemctl enable --now redis-server 2>/dev/null || systemctl enable --now redis 2>/dev/null || true
 systemctl enable --now vzone-api vzone-worker vzone-beat nginx
-systemctl reload nginx || systemctl restart nginx
 echo "[vzone] Mise à jour terminée — version ${VERSION}"
 echo "[vzone] Services : $(systemctl is-active vzone-api vzone-worker vzone-beat nginx | tr '\n' ' ')"

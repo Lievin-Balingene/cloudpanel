@@ -47,8 +47,8 @@ export default {
         },
       },
       fontFamily: {
-        display: ['"Segoe UI"', "Tahoma", "Geneva", "Verdana", "sans-serif"],
-        sans: ['"Segoe UI"', "Tahoma", "Geneva", "Verdana", "sans-serif"],
+        display: ['"Syne"', "Georgia", "serif"],
+        sans: ['"Manrope"', "system-ui", "sans-serif"],
         mono: ['Consolas', '"Courier New"', "monospace"],
       },
       boxShadow: {
@@ -60,9 +60,19 @@ export default {
           "0%": { opacity: "0", transform: "translateY(6px)" },
           "100%": { opacity: "1", transform: "translateY(0)" },
         },
+        "login-reveal": {
+          "0%": { opacity: "0", transform: "translateY(18px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+        "aurora-drift": {
+          "0%, 100%": { transform: "translate3d(0,0,0) scale(1)" },
+          "50%": { transform: "translate3d(2%, -1.5%, 0) scale(1.04)" },
+        },
       },
       animation: {
         "fade-up": "fade-up 0.25s ease-out both",
+        "login-reveal": "login-reveal 0.55s cubic-bezier(0.22, 1, 0.36, 1) both",
+        "aurora-drift": "aurora-drift 18s ease-in-out infinite",
       },
     },
   },

@@ -179,13 +179,7 @@ PY
   install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-api.service" /etc/systemd/system/
   install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-worker.service" /etc/systemd/system/
   install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-beat.service" /etc/systemd/system/
-  install -m 644 "${VZONE_ROOT}/deploy/nginx/vzone.conf" /etc/nginx/sites-available/vzone 2>/dev/null \
-    || install -m 644 "${VZONE_ROOT}/deploy/nginx/vzone.conf" /etc/nginx/conf.d/vzone.conf
-  if [[ -d /etc/nginx/sites-enabled ]]; then
-    ln -sfn /etc/nginx/sites-available/vzone /etc/nginx/sites-enabled/vzone
-    rm -f /etc/nginx/sites-enabled/default
-  fi
-  nginx -t
+  bash "${SCRIPT_DIR}/ensure-nginx.sh" "${VZONE_ROOT}/deploy/nginx/vzone.conf"
   systemctl daemon-reload
   systemctl enable --now redis-server 2>/dev/null || systemctl enable --now redis
   systemctl enable --now vzone-api vzone-worker vzone-beat nginx

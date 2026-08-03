@@ -31,6 +31,19 @@ def test_login_success(api: APIClient):
 
 @pytest.mark.integration
 @pytest.mark.django_db
+def test_login_with_username(api: APIClient):
+    user = UserFactory(email="client@vzone.test", username="client1", password="TestPassword123!")
+    response = api.post(
+        reverse("auth-login"),
+        {"email": "client1", "password": "TestPassword123!"},
+        format="json",
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["user"]["username"] == user.username
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
 def test_login_invalid(api: APIClient):
     UserFactory(email="client@vzone.test", username="client1", password="TestPassword123!")
     response = api.post(
