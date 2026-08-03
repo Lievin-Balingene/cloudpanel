@@ -30,7 +30,11 @@ async function parseJson<T>(response: Response): Promise<T> {
   if (!text) {
     return {} as T;
   }
-  return JSON.parse(text) as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return { raw: text } as T;
+  }
 }
 
 export async function apiRequest<T>(
@@ -38,7 +42,7 @@ export async function apiRequest<T>(
   options: RequestInit = {},
 ): Promise<T> {
   const headers = new Headers(options.headers ?? {});
-  if (!headers.has("Content-Type") && options.body) {
+  if (!headers.has("Content-Type") && options.body && !(options.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
   }
   const token = getAccessToken();
@@ -58,15 +62,19 @@ export async function apiRequest<T>(
   const body = await parseJson<ApiSuccess<T> | ApiError | T>(response);
 
   if (!response.ok) {
-    const err = body as ApiError;
+    const err = body as ApiError & { raw?: string };
     const code = err?.error?.code ?? "";
     if (response.status === 403 && code === "must_change_password") {
       if (typeof window !== "undefined" && !window.location.pathname.startsWith("/change-password")) {
         window.location.assign("/change-password");
       }
     }
+    const message =
+      err?.error?.message ||
+      (typeof err?.raw === "string" && err.raw.slice(0, 180)) ||
+      `Erreur HTTP ${response.status}`;
     throw new ApiClientError(
-      err?.error?.message ?? `Erreur HTTP ${response.status}`,
+      message,
       response.status,
       err?.success === false ? err : null,
     );

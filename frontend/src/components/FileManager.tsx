@@ -45,7 +45,8 @@ type ClipMode = "copy" | "cut" | null;
 export function FileManager({ title }: { title: string }) {
   const qc = useQueryClient();
   const token = useAuthStore((s) => s.accessToken);
-  const [cwd, setCwd] = useState("");
+  const role = useAuthStore((s) => s.user?.role);
+  const [cwd, setCwd] = useState(() => (role === "administrator" ? "admin" : ""));
   const [selected, setSelected] = useState<string[]>([]);
   const [clipboard, setClipboard] = useState<{ mode: ClipMode; paths: string[] }>({
     mode: null,
@@ -82,7 +83,13 @@ export function FileManager({ title }: { title: string }) {
       await qc.invalidateQueries({ queryKey: ["files"] });
       setSelected([]);
     } catch (err) {
-      setError(err instanceof ApiClientError ? err.message : "Opération impossible.");
+      const message =
+        err instanceof ApiClientError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Opération impossible.";
+      setError(message);
     }
   }, [qc]);
 

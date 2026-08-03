@@ -62,18 +62,49 @@ class FileEntry:
 
 
 def user_home(user: User) -> Path:
-    """Racine jailée du compte."""
+    """Racine jailée du compte (toujours writable par le processus panel)."""
     home_name = user.system_username or user.username
+    root_base = Path(settings.VZONE_HOME_ROOT)
+    try:
+        root_base.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise VZoneAPIException(
+            detail=f"Répertoire homes inaccessible ({root_base}): {exc}",
+            code="homes_unavailable",
+            status_code=500,
+        ) from exc
+
     if user.role == User.Role.ADMINISTRATOR:
-        # Les admins peuvent naviguer sous VZONE_HOME_ROOT entier
-        root = Path(settings.VZONE_HOME_ROOT)
+        # Admins : vue globale sous HOME_ROOT, avec home personnel admin/
+        root = root_base
+        personal = root_base / "admin"
     else:
-        root = Path(settings.VZONE_HOME_ROOT) / home_name
-    root.mkdir(parents=True, exist_ok=True)
-    # Structure type hébergement
-    for sub in ("public_html", "mail", "tmp", "logs"):
-        (root / sub).mkdir(exist_ok=True)
+        root = root_base / home_name
+        personal = root
+
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        personal.mkdir(parents=True, exist_ok=True)
+        for sub in ("public_html", "mail", "tmp", "logs"):
+            (personal / sub).mkdir(exist_ok=True)
+    except OSError as exc:
+        raise VZoneAPIException(
+            detail=(
+                "Impossible d'écrire dans l'espace fichiers. "
+                f"Vérifiez VZONE_HOME_ROOT et les droits ({exc})."
+            ),
+            code="homes_permission",
+            status_code=500,
+        ) from exc
     return root.resolve()
+
+
+def _fs_write_error(exc: OSError) -> VZoneAPIException:
+    return VZoneAPIException(
+        detail=f"Écriture fichier impossible: {exc}",
+        code="fs_permission",
+        status_code=500,
+    )
 
 
 def resolve_path(user: User, relative: str | None = None) -> Path:
@@ -155,7 +186,10 @@ def mkdir(user: User, relative_parent: str, name: str) -> FileEntry:
     target = parent / name
     if target.exists():
         raise VZoneAPIException(detail="Ce dossier existe déjà.", code="exists", status_code=400)
-    target.mkdir()
+    try:
+        target.mkdir()
+    except OSError as exc:
+        raise _fs_write_error(exc) from exc
     return entry_from_path(user, target)
 
 
@@ -163,10 +197,15 @@ def create_file(user: User, relative_parent: str, name: str, content: str = "") 
     if not re.match(r"^[^\\/:*?\"<>|]+$", name) or name in {".", ".."}:
         raise VZoneAPIException(detail="Nom de fichier invalide.", code="invalid_name", status_code=400)
     parent = resolve_path(user, relative_parent)
+    if not parent.is_dir():
+        raise VZoneAPIException(detail="Dossier parent invalide.", code="not_directory", status_code=400)
     target = parent / name
     if target.exists():
         raise VZoneAPIException(detail="Ce fichier existe déjà.", code="exists", status_code=400)
-    target.write_text(content, encoding="utf-8")
+    try:
+        target.write_text(content, encoding="utf-8")
+    except OSError as exc:
+        raise _fs_write_error(exc) from exc
     return entry_from_path(user, target)
 
 

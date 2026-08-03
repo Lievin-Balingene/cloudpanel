@@ -327,25 +327,25 @@ export function ClientShell() {
 
   return (
     <div className="min-h-screen bg-cp-canvas dark:bg-surface-dark">
-      <header className="border-b border-black/10 bg-cp-orange text-white">
+      <header className="sticky top-0 z-20 border-b border-black/10 bg-cp-orange text-white shadow-sm">
         <div className="flex items-center justify-between px-4 py-2.5">
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded bg-white/20">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/20 backdrop-blur">
               <LayoutGrid className="h-4 w-4" />
             </div>
             <div>
               <p className="text-sm font-semibold tracking-wide">V-zone</p>
-              <p className="text-[11px] text-white/85">cPanel-style client panel</p>
+              <p className="text-[11px] text-white/85">Panneau client</p>
             </div>
           </div>
           <div className="flex items-center gap-2 text-sm">
-            <span className="hidden sm:inline text-white/90">{user?.username}</span>
-            <button type="button" className="rounded px-2 py-1 hover:bg-white/15" onClick={toggle}>
+            <span className="hidden rounded-full bg-white/15 px-2.5 py-1 sm:inline">{user?.username}</span>
+            <button type="button" className="rounded-lg px-2 py-1.5 transition hover:bg-white/15" onClick={toggle}>
               {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
             <button
               type="button"
-              className="inline-flex items-center gap-1 rounded px-2 py-1 hover:bg-white/15"
+              className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 transition hover:bg-white/15"
               onClick={() => void logout()}
             >
               <LogOut className="h-4 w-4" />
@@ -355,9 +355,9 @@ export function ClientShell() {
         </div>
       </header>
 
-      <div className="mx-auto flex max-w-[1400px] gap-4 p-3 md:p-4">
+      <div className="mx-auto flex max-w-[1400px] gap-4 p-3 md:p-5">
         <AsideMenu />
-        <main className="min-w-0 flex-1">
+        <main className="min-w-0 flex-1 animate-fade-up">
           <Outlet />
         </main>
         <HostUsagePanel />

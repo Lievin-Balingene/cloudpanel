@@ -90,7 +90,7 @@ create_system_user() {
     useradd --system --home-dir "$VZONE_DATA" --shell /usr/sbin/nologin "$VZONE_USER"
     ok "Utilisateur système ${VZONE_USER} créé"
   fi
-  mkdir -p "$VZONE_ROOT" "$VZONE_DATA" "$VZONE_LOG" /etc/vzone
+  mkdir -p "$VZONE_ROOT" "$VZONE_DATA" "$VZONE_LOG" "${VZONE_DATA}/homes" /etc/vzone
   chown -R "$VZONE_USER":"$VZONE_USER" "$VZONE_DATA" "$VZONE_LOG"
 }
 
@@ -137,7 +137,7 @@ VZONE_CELERY_BROKER_URL=redis://127.0.0.1:6379/1
 VZONE_CHANNELS_REDIS_URL=redis://127.0.0.1:6379/2
 VZONE_DATA_ROOT=${VZONE_DATA}
 VZONE_LOG_ROOT=${VZONE_LOG}
-VZONE_HOME_ROOT=/home
+VZONE_HOME_ROOT=${VZONE_DATA}/homes
 VZONE_SECURE_SSL_REDIRECT=false
 VZONE_VERSION=${VZONE_VERSION}
 VZONE_ENABLED_MODULES=core,accounts,packages,dns,dashboard,domains,files,ftp,email,databases,python_apps,node_apps,php,git_deploy,docker_mgmt,backups,monitoring,firewall,security

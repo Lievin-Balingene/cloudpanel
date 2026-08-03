@@ -42,6 +42,10 @@ if [[ -f /etc/vzone/vzone.env ]]; then
   chmod 640 /etc/vzone/vzone.env
 fi
 
+bash "${REPO_DIR}/scripts/ensure-homes.sh"
+# Recharger env après migration éventuelle de VZONE_HOME_ROOT
+set -a; source /etc/vzone/vzone.env; set +a
+
 bash "${REPO_DIR}/scripts/ensure-nginx.sh" "${VZONE_ROOT}/deploy/nginx/vzone.conf"
 
 systemctl daemon-reload
