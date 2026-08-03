@@ -82,6 +82,11 @@ fi
 
 bash "${REPO_DIR}/scripts/ensure-nginx.sh" "${VZONE_ROOT}/deploy/nginx/vzone.conf"
 
+# Appliquer vhosts SSL + ouvrir 443 + reload
+if [[ -f "${REPO_DIR}/scripts/ensure-https.sh" ]]; then
+  bash "${REPO_DIR}/scripts/ensure-https.sh" || echo "[vzone] Avertissement: ensure-https.sh a échoué"
+fi
+
 systemctl daemon-reload
 systemctl enable --now redis-server 2>/dev/null || systemctl enable --now redis 2>/dev/null || true
 systemctl enable --now vzone-api vzone-worker vzone-beat nginx

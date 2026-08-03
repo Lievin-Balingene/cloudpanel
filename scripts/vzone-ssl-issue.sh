@@ -49,6 +49,16 @@ install -m 640 -o vzone -g www-data "${LIVE}/privkey.pem" "${OUT}/privkey.pem"
 chmod 750 "$OUT" 2>/dev/null || true
 chown vzone:www-data "$OUT"
 
+# Appliquer HTTPS (vhosts déjà écrits par Django) — reload Nginx en root
+if command -v nginx >/dev/null 2>&1; then
+  if nginx -t 2>/dev/null; then
+    systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null || true
+  else
+    echo "[vzone-ssl-issue] nginx -t a échoué — certificats copiés mais HTTPS non rechargé" >&2
+    nginx -t >&2 || true
+  fi
+fi
+
 # JSON compact pour le panel (chemins uniquement — les PEM sont lus par Django)
 python3 - <<PY
 import json

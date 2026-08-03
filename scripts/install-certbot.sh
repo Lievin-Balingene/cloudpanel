@@ -33,13 +33,26 @@ chmod 770 "$JOBS_DIR"
 
 install -m 755 "${REPO_DIR}/scripts/vzone-ssl-issue.sh" /usr/local/sbin/vzone-ssl-issue
 install -m 755 "${REPO_DIR}/scripts/vzone-ssl-agent.sh" /usr/local/sbin/vzone-ssl-agent
+install -m 755 "${REPO_DIR}/scripts/vzone-nginx-reload.sh" /usr/local/sbin/vzone-nginx-reload
 
 install -m 644 "${REPO_DIR}/deploy/systemd/vzone-ssl-job.service" /etc/systemd/system/vzone-ssl-job.service
 install -m 644 "${REPO_DIR}/deploy/systemd/vzone-ssl-job.path" /etc/systemd/system/vzone-ssl-job.path
+install -m 644 "${REPO_DIR}/deploy/systemd/vzone-nginx-reload.service" /etc/systemd/system/vzone-nginx-reload.service
+install -m 644 "${REPO_DIR}/deploy/systemd/vzone-nginx-reload.path" /etc/systemd/system/vzone-nginx-reload.path
 systemctl daemon-reload
 systemctl enable --now vzone-ssl-job.path
+systemctl enable --now vzone-nginx-reload.path
 # Retirer l'ancien sudoers si présent (plus nécessaire)
 rm -f /etc/sudoers.d/vzone-ssl 2>/dev/null || true
+
+# Firewall HTTPS
+if command -v ufw >/dev/null 2>&1; then
+  ufw allow 80/tcp || true
+  ufw allow 443/tcp || true
+elif command -v firewall-cmd >/dev/null 2>&1; then
+  firewall-cmd --permanent --add-service=https || true
+  firewall-cmd --reload || true
+fi
 
 if [[ -f "$ENV_FILE" ]]; then
   grep -q '^VZONE_SSL_BACKEND=' "$ENV_FILE" || echo "VZONE_SSL_BACKEND=certbot" >> "$ENV_FILE"
@@ -61,4 +74,6 @@ else
 fi
 
 echo "[vzone] Agent SSL root: /usr/local/sbin/vzone-ssl-agent (path unit vzone-ssl-job.path)"
+echo "[vzone] Nginx reload helper: vzone-nginx-reload.path"
 systemctl is-enabled vzone-ssl-job.path || true
+systemctl is-enabled vzone-nginx-reload.path || true

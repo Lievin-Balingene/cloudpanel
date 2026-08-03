@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -370,8 +372,8 @@ server {{
     fullchain, privkey = ssl_paths
     https = f"""
 server {{
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
+    listen 443 ssl;
+    listen [::]:443 ssl;
     server_name {server_names};
     client_max_body_size 128m;
 
@@ -408,6 +410,34 @@ def remove_domain_vhost(hostname: str) -> None:
 def reload_nginx() -> bool:
     if not _web_stack_live():
         return False
+    # L'API tourne avec NoNewPrivileges — déléguer le reload à un helper root
+    helper = Path("/usr/local/sbin/vzone-nginx-reload")
+    if helper.is_file():
+        # File drop pour l'agent path, + tentative directe (si root / polkit)
+        flag = Path(
+            getattr(settings, "VZONE_DATA_ROOT", "/var/lib/vzone")
+        ) / "nginx" / "reload.requested"
+        try:
+            flag.parent.mkdir(parents=True, exist_ok=True)
+            flag.write_text(str(int(time.time())), encoding="utf-8")
+        except OSError:
+            pass
+        try:
+            subprocess.run(
+                ["systemctl", "start", "vzone-nginx-reload.service"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=20,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            pass
+        # Fallback : exécuter le helper si on est root
+        if os.geteuid() == 0:
+            result = subprocess.run([str(helper)], capture_output=True, text=True)
+            return result.returncode == 0
+        return True
+
     test = subprocess.run(["nginx", "-t"], capture_output=True, text=True)
     if test.returncode != 0:
         logger.error("nginx -t failed: %s", test.stderr)

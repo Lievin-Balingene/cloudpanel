@@ -1,0 +1,7 @@
+[Unit]
+Description=V-zone Nginx reload helper
+After=nginx.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/vzone-nginx-reload

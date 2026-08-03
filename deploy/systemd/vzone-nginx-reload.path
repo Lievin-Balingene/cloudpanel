@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch V-zone Nginx reload requests
+
+[Path]
+PathExists=/var/lib/vzone/nginx/reload.requested
+MakeDirectory=true
+Unit=vzone-nginx-reload.service
+
+[Install]
+WantedBy=multi-user.target
