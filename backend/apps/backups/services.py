@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
 import re
 import secrets
 import shutil
+import sys
 import tarfile
 from datetime import datetime
 from pathlib import Path
@@ -20,7 +22,7 @@ from apps.accounts.models import User
 from apps.backups.models import BackupArchive, BackupEventLog, BackupSchedule
 from apps.core.exceptions import QuotaExceeded, VZoneAPIException
 from apps.core.models import AuditLog
-from apps.files.services import user_home
+from apps.files.services import ensure_cpanel_tree, personal_home
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +51,54 @@ def schedules_qs(user: User) -> QuerySet[BackupSchedule]:
 
 def provision_mode() -> str:
     mode = getattr(settings, "VZONE_BACKUP_PROVISION_MODE", "auto").lower()
-    return mode if mode in {"auto", "live", "mock"} else "auto"
+    if mode not in {"auto", "live", "mock"}:
+        mode = "auto"
+    if mode == "auto":
+        # Live dès que le stockage homes existe (production).
+        home_root = Path(getattr(settings, "VZONE_HOME_ROOT", "/home"))
+        return "live" if home_root.exists() else "mock"
+    return mode
+
+
+def _account_home(owner: User) -> Path:
+    """Home personnel du compte (jamais le HOME_ROOT global admin)."""
+    return personal_home(owner)
+
+
+def _safe_extract_prefix(tar: tarfile.TarFile, *, prefix: str, dest: Path) -> int:
+    """
+    Extrait les entrées « prefix/... » vers dest/ en retirant le préfixe.
+    Ex. prefix='home/' + membre 'home/public_html/x' → dest/public_html/x
+    """
+    dest.mkdir(parents=True, exist_ok=True)
+    dest_resolved = dest.resolve()
+    prefix = prefix.replace("\\", "/").rstrip("/") + "/"
+    members: list[tarfile.TarInfo] = []
+    for member in tar.getmembers():
+        name = member.name.replace("\\", "/")
+        if name.startswith("./"):
+            name = name[2:]
+        if name == prefix.rstrip("/"):
+            continue
+        if not name.startswith(prefix):
+            continue
+        rel = name[len(prefix) :]
+        if not rel or rel.startswith("/") or ".." in Path(rel).parts:
+            continue
+        target = (dest / rel).resolve()
+        try:
+            target.relative_to(dest_resolved)
+        except ValueError:
+            continue
+        member.name = rel
+        members.append(member)
+    if not members:
+        return 0
+    kwargs: dict = {"path": str(dest), "members": members}
+    if sys.version_info >= (3, 12):
+        kwargs["filter"] = "data"
+    tar.extractall(**kwargs)
+    return len(members)
 
 
 def config_root() -> Path:
@@ -161,7 +210,7 @@ def _archive_path(archive: BackupArchive) -> Path:
 
 def _build_live_archive(archive: BackupArchive) -> tuple[Path, int, str]:
     dest = _archive_path(archive)
-    home = user_home(archive.owner)
+    home = _account_home(archive.owner)
     with tarfile.open(dest, "w:gz") as tar:
         manifest = {
             "owner": archive.owner.username,
@@ -179,12 +228,12 @@ def _build_live_archive(archive: BackupArchive) -> tuple[Path, int, str]:
             info = tarfile.TarInfo(name="databases/README.txt")
             payload = b"Database dumps placeholder - integrate dumps in live ops.\n"
             info.size = len(payload)
-            tar.addfile(info, fileobj=__import__("io").BytesIO(payload))
+            tar.addfile(info, fileobj=io.BytesIO(payload))
         if "email" in archive.includes:
             info = tarfile.TarInfo(name="email/README.txt")
             payload = b"Email mailbox placeholder - integrate Maildir dump in live ops.\n"
             info.size = len(payload)
-            tar.addfile(info, fileobj=__import__("io").BytesIO(payload))
+            tar.addfile(info, fileobj=io.BytesIO(payload))
     data = dest.read_bytes()
     checksum = hashlib.sha256(data).hexdigest()
     return dest, len(data), checksum
@@ -278,11 +327,31 @@ def create_backup(
     return archive
 
 
+def _mark_restore_failed(archive: BackupArchive, message: str) -> None:
+    """Conserve la sauvegarde utilisable (COMPLETED) après un échec de restore."""
+    archive.status = BackupArchive.Status.COMPLETED
+    archive.last_error = message[:4000]
+    archive.save(update_fields=["status", "last_error", "updated_at"])
+    write_meta(archive)
+    _add_log(
+        archive.owner,
+        BackupEventLog.Event.FAIL,
+        archive=archive,
+        success=False,
+        message=message,
+    )
+
+
 def restore_backup(archive: BackupArchive, *, actor: User | None = None) -> BackupArchive:
-    if archive.status not in {
+    path = _archive_path(archive)
+    restorable = {
         BackupArchive.Status.COMPLETED,
         BackupArchive.Status.RESTORED,
-    }:
+    }
+    # Après un restore raté, le fichier existe encore : autoriser une nouvelle tentative.
+    if archive.status == BackupArchive.Status.FAILED and path.exists() and archive.checksum:
+        restorable = restorable | {BackupArchive.Status.FAILED}
+    if archive.status not in restorable:
         raise VZoneAPIException(
             detail="Seules les sauvegardes terminées peuvent être restaurées.",
             code="invalid_status",
@@ -292,7 +361,6 @@ def restore_backup(archive: BackupArchive, *, actor: User | None = None) -> Back
     archive.save(update_fields=["status", "updated_at"])
 
     try:
-        path = _archive_path(archive)
         if not path.exists():
             raise VZoneAPIException(
                 detail="Fichier de sauvegarde introuvable.",
@@ -302,16 +370,29 @@ def restore_backup(archive: BackupArchive, *, actor: User | None = None) -> Back
         if provision_mode() == "mock":
             message = f"mock restore {archive.name}"
         else:
+            parts: list[str] = []
             if "home" in (archive.includes or []):
-                home = user_home(archive.owner)
+                home = _account_home(archive.owner)
                 home.mkdir(parents=True, exist_ok=True)
-                if tarfile.is_tarfile(path):
-                    with tarfile.open(path, "r:gz") as tar:
-                        members = [m for m in tar.getmembers() if m.name.startswith("home/")]
-                        tar.extractall(path=home.parent, members=members, filter="data")
-                message = f"restored home from {archive.name}"
-            else:
-                message = f"restore noted for {archive.name} (no home component)"
+                if not tarfile.is_tarfile(path):
+                    raise VZoneAPIException(
+                        detail="Archive invalide (pas un fichier tar).",
+                        code="invalid_archive",
+                        status_code=400,
+                    )
+                with tarfile.open(path, "r:*") as tar:
+                    count = _safe_extract_prefix(tar, prefix="home", dest=home)
+                ensure_cpanel_tree(home)
+                parts.append(f"home ({count} entrées)")
+            if "databases" in (archive.includes or []):
+                parts.append("databases (métadonnées)")
+            if "email" in (archive.includes or []):
+                parts.append("email (métadonnées)")
+            message = (
+                f"restored {', '.join(parts)} from {archive.name}"
+                if parts
+                else f"restore noted for {archive.name}"
+            )
         archive.status = BackupArchive.Status.RESTORED
         archive.restored_at = timezone.now()
         archive.last_error = ""
@@ -326,30 +407,12 @@ def restore_backup(archive: BackupArchive, *, actor: User | None = None) -> Back
             message=message,
         )
     except VZoneAPIException as exc:
-        archive.status = BackupArchive.Status.FAILED
-        archive.last_error = str(exc.detail)
-        archive.save(update_fields=["status", "last_error", "updated_at"])
-        _add_log(
-            archive.owner,
-            BackupEventLog.Event.FAIL,
-            archive=archive,
-            success=False,
-            message=str(exc.detail),
-        )
+        _mark_restore_failed(archive, str(exc.detail))
         raise
     except Exception as exc:
-        archive.status = BackupArchive.Status.FAILED
-        archive.last_error = str(exc)
-        archive.save(update_fields=["status", "last_error", "updated_at"])
-        _add_log(
-            archive.owner,
-            BackupEventLog.Event.FAIL,
-            archive=archive,
-            success=False,
-            message=str(exc),
-        )
+        _mark_restore_failed(archive, str(exc))
         raise VZoneAPIException(
-            detail="Échec de la restauration.",
+            detail=f"Échec de la restauration : {exc}",
             code="restore_failed",
             status_code=502,
             extra={"error": str(exc)},

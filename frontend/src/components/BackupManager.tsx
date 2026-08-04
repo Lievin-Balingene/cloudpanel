@@ -1,11 +1,21 @@
 import { FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, Download, History, Plus, RotateCcw, Trash2 } from "lucide-react";
-import { apiRequest } from "@/lib/api";
+import { ApiClientError, apiRequest } from "@/lib/api";
 import { runWithProgress } from "@/stores/operations";
 import { IconAction } from "@/components/ui/IconAction";
 import { Modal } from "@/components/ui/Modal";
 import { EmptyState, PageHeader, StatusDot, Tabs } from "@/components/ui/PageChrome";
+
+function apiErrorMessage(err: Error): string {
+  if (err instanceof ApiClientError) {
+    const extra = err.payload?.error?.extra?.error;
+    if (typeof extra === "string" && extra.trim()) {
+      return `${err.message} — ${extra}`;
+    }
+  }
+  return err.message;
+}
 
 interface BackupOverview {
   archives: number;
@@ -127,7 +137,7 @@ export function BackupManager({ title }: { title: string }) {
       setCreateKind(null);
       invalidate();
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => setError(apiErrorMessage(err)),
   });
 
   const restore = useMutation({
@@ -140,14 +150,17 @@ export function BackupManager({ title }: { title: string }) {
             ms < 4000 ? "Lecture de l'archive…" : "Restauration en cours…",
         },
       ),
-    onSuccess: invalidate,
-    onError: (err: Error) => setError(err.message),
+    onSuccess: () => {
+      setError(null);
+      invalidate();
+    },
+    onError: (err: Error) => setError(apiErrorMessage(err)),
   });
 
   const remove = useMutation({
     mutationFn: (id: number) => apiRequest(`/backups/archives/${id}/`, { method: "DELETE" }),
     onSuccess: invalidate,
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => setError(apiErrorMessage(err)),
   });
 
   const download = useMutation({
@@ -157,7 +170,7 @@ export function BackupManager({ title }: { title: string }) {
       ),
     onSuccess: (data) =>
       setDownloadInfo(`${data.file_name} — ${formatBytes(data.size_bytes)} — sha256:${data.checksum.slice(0, 12)}…`),
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => setError(apiErrorMessage(err)),
   });
 
   const saveSchedule = useMutation({
@@ -177,7 +190,7 @@ export function BackupManager({ title }: { title: string }) {
       setCreateKind(null);
       invalidate();
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => setError(apiErrorMessage(err)),
   });
 
   const deleteSchedule = useMutation({

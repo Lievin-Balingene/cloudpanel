@@ -129,6 +129,33 @@ def test_backup_schedule(api: APIClient, backup_root):
 
 @pytest.mark.unit
 @pytest.mark.django_db
+def test_live_restore_extracts_into_account_home(backup_root, settings, tmp_path):
+    settings.VZONE_BACKUP_PROVISION_MODE = "live"
+    user = UserFactory(username="bklive")
+    user.system_username = "bklive"
+    user.save(update_fields=["system_username"])
+    home = backup_root / "bklive"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "public_html").mkdir()
+    (home / "public_html" / "index.html").write_text("hello-backup", encoding="utf-8")
+
+    archive = create_backup(owner=user, name="live1", backup_type="home")
+    assert archive.status == BackupArchive.Status.COMPLETED
+    assert archive.size_bytes > 0
+
+    # Simule une perte de fichiers puis restore
+    (home / "public_html" / "index.html").unlink()
+    (home / "public_html" / "gone.txt").write_text("should-remain-or-overwrite", encoding="utf-8")
+
+    restored = restore_backup(archive)
+    assert restored.status == BackupArchive.Status.RESTORED
+    assert (home / "public_html" / "index.html").read_text(encoding="utf-8") == "hello-backup"
+    # Ancien bug : extraction sous homes/home/ au lieu de homes/bklive/
+    assert not (backup_root / "home" / "public_html" / "index.html").exists()
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
 def test_helpers(backup_root):
     user = UserFactory(username="bkhelp")
     archive = create_backup(owner=user, name="help1", backup_type="home")
