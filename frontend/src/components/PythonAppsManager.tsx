@@ -1,5 +1,6 @@
 import { FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Check, Copy, Terminal } from "lucide-react";
 import { apiRequest } from "@/lib/api";
 import { runWithProgress } from "@/stores/operations";
 
@@ -19,11 +20,124 @@ interface PythonApp {
   mode: string;
   framework: string;
   relative_root: string;
+  absolute_root: string;
   entrypoint: string;
   port: number;
   status: string;
   domain_name: string;
   last_error: string;
+  venv_path: string;
+  enter_command: string;
+  deploy_command: string;
+  django_project: string;
+}
+
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+    return true;
+  }
+}
+
+function DeployPanel({
+  app,
+  onClose,
+}: {
+  app: PythonApp;
+  onClose?: () => void;
+}) {
+  const [copied, setCopied] = useState<"enter" | "deploy" | null>(null);
+
+  async function copy(kind: "enter" | "deploy") {
+    const text = kind === "enter" ? app.enter_command : app.deploy_command;
+    if (!text) return;
+    await copyText(text);
+    setCopied(kind);
+    window.setTimeout(() => setCopied(null), 2000);
+  }
+
+  return (
+    <div className="vz-panel space-y-3 border border-cp-orange/30 bg-cp-canvas/40 p-4 dark:bg-ink-900/40">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="flex items-center gap-2 text-sm font-semibold">
+            <Terminal className="h-4 w-4 text-cp-orange" />
+            Déployer {app.name} (SSH)
+          </h2>
+          <p className="mt-1 text-xs text-cp-muted">
+            Comme sur cPanel : collez la commande dans un terminal SSH, puis déployez votre code
+            Django / Python dans ce dossier.
+          </p>
+        </div>
+        {onClose && (
+          <button type="button" className="text-sm text-cp-link hover:underline" onClick={onClose}>
+            Fermer
+          </button>
+        )}
+      </div>
+
+      <div className="space-y-1">
+        <p className="text-xs font-medium text-cp-muted">Application root</p>
+        <code className="block break-all rounded bg-white px-3 py-2 font-mono text-xs dark:bg-ink-950">
+          {app.absolute_root || app.relative_root}
+        </code>
+      </div>
+
+      <div className="space-y-1">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs font-medium text-cp-muted">
+            Commande à coller (activer le venv + entrer dans l’app)
+          </p>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 text-xs text-cp-link hover:underline"
+            onClick={() => void copy("enter")}
+          >
+            {copied === "enter" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+            {copied === "enter" ? "Copié" : "Copier"}
+          </button>
+        </div>
+        <pre className="overflow-x-auto rounded bg-ink-950 px-3 py-2 font-mono text-xs text-emerald-300">
+          {app.enter_command || "(indisponible)"}
+        </pre>
+      </div>
+
+      <div className="space-y-1">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs font-medium text-cp-muted">
+            Script de déploiement {app.framework === "django" ? "Django" : app.framework}
+          </p>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 text-xs text-cp-link hover:underline"
+            onClick={() => void copy("deploy")}
+          >
+            {copied === "deploy" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+            {copied === "deploy" ? "Copié" : "Copier tout"}
+          </button>
+        </div>
+        <pre className="max-h-64 overflow-auto rounded bg-ink-950 px-3 py-2 font-mono text-xs text-slate-200 whitespace-pre-wrap">
+          {app.deploy_command || "(indisponible)"}
+        </pre>
+      </div>
+
+      {app.framework === "django" && (
+        <p className="text-xs text-cp-muted">
+          Projet attendu : <code className="font-mono">{app.django_project || "config"}</code> (
+          <code className="font-mono">DJANGO_SETTINGS_MODULE={app.django_project || "config"}.settings</code>
+          ). Après le script, cliquez <strong>Start</strong> dans le panel.
+        </p>
+      )}
+    </div>
+  );
 }
 
 export function PythonAppsManager({ title }: { title: string }) {
@@ -40,12 +154,14 @@ export function PythonAppsManager({ title }: { title: string }) {
   const [form, setForm] = useState({
     name: "",
     mode: "wsgi",
-    framework: "generic",
+    framework: "django",
     python_version: "3.12",
     domain_name: "",
   });
   const [logs, setLogs] = useState<Record<string, string> | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [createdApp, setCreatedApp] = useState<PythonApp | null>(null);
+  const [focusId, setFocusId] = useState<number | null>(null);
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["python-overview"] });
@@ -56,14 +172,20 @@ export function PythonAppsManager({ title }: { title: string }) {
     mutationFn: () =>
       runWithProgress(
         `Création app Python · ${form.name || "app"}`,
-        () => apiRequest("/python/apps/", { method: "POST", body: JSON.stringify(form) }),
+        () =>
+          apiRequest<PythonApp>("/python/apps/", {
+            method: "POST",
+            body: JSON.stringify(form),
+          }),
         {
           tickDetail: (ms) =>
-            ms < 2500 ? "Provisionnement venv…" : "Configuration du service…",
+            ms < 2500 ? "Provisionnement venv…" : "Génération de la commande de déploiement…",
         },
       ),
-    onSuccess: () => {
-      setForm({ name: "", mode: "wsgi", framework: "generic", python_version: "3.12", domain_name: "" });
+    onSuccess: (app) => {
+      setCreatedApp(app);
+      setFocusId(app.id);
+      setForm({ name: "", mode: "wsgi", framework: "django", python_version: "3.12", domain_name: "" });
       setError(null);
       invalidate();
     },
@@ -82,7 +204,11 @@ export function PythonAppsManager({ title }: { title: string }) {
   const remove = useMutation({
     mutationFn: (id: number) =>
       apiRequest(`/python/apps/${id}/?remove_files=false`, { method: "DELETE" }),
-    onSuccess: invalidate,
+    onSuccess: (_d, id) => {
+      if (createdApp?.id === id) setCreatedApp(null);
+      if (focusId === id) setFocusId(null);
+      invalidate();
+    },
   });
 
   const loadLogs = useMutation({
@@ -96,12 +222,17 @@ export function PythonAppsManager({ title }: { title: string }) {
     create.mutate();
   }
 
+  const focused =
+    (focusId != null ? apps.find((a) => a.id === focusId) : null) ||
+    (createdApp && (!apps.length || apps.some((a) => a.id === createdApp.id)) ? createdApp : null);
+
   return (
     <div className="space-y-4 animate-fade-up">
       <div className="vz-panel p-4">
         <h1 className="text-xl font-semibold">{title}</h1>
         <p className="text-sm text-cp-muted">
-          Applications Python WSGI/ASGI — venv, démarrage, requirements et logs.
+          Créez une app Django / Python : le panel génère un chemin et une commande à coller dans
+          le terminal SSH (style cPanel), puis Start pour publier.
         </p>
       </div>
 
@@ -135,6 +266,7 @@ export function PythonAppsManager({ title }: { title: string }) {
           className="vz-input"
           value={form.mode}
           onChange={(e) => setForm({ ...form, mode: e.target.value })}
+          disabled={form.framework === "django"}
         >
           <option value="wsgi">WSGI</option>
           <option value="asgi">ASGI</option>
@@ -142,10 +274,17 @@ export function PythonAppsManager({ title }: { title: string }) {
         <select
           className="vz-input"
           value={form.framework}
-          onChange={(e) => setForm({ ...form, framework: e.target.value })}
+          onChange={(e) => {
+            const framework = e.target.value;
+            setForm({
+              ...form,
+              framework,
+              mode: framework === "django" ? "wsgi" : framework === "fastapi" ? "asgi" : form.mode,
+            });
+          }}
         >
-          <option value="generic">Generic</option>
           <option value="django">Django</option>
+          <option value="generic">Generic</option>
           <option value="flask">Flask</option>
           <option value="fastapi">FastAPI</option>
         </select>
@@ -165,6 +304,16 @@ export function PythonAppsManager({ title }: { title: string }) {
           Créer app
         </button>
       </form>
+
+      {focused && (
+        <DeployPanel
+          app={focused}
+          onClose={() => {
+            setFocusId(null);
+            setCreatedApp(null);
+          }}
+        />
+      )}
 
       <div className="vz-panel overflow-x-auto">
         <table className="min-w-full text-left text-sm">
@@ -195,7 +344,14 @@ export function PythonAppsManager({ title }: { title: string }) {
                   </div>
                 </td>
                 <td className="px-3 py-2">{app.mode}</td>
-                <td className="px-3 py-2 font-mono text-xs">{app.relative_root}</td>
+                <td className="px-3 py-2 font-mono text-xs">
+                  <div>{app.relative_root}</div>
+                  {app.absolute_root && (
+                    <div className="mt-0.5 max-w-[220px] truncate text-[10px] text-cp-muted" title={app.absolute_root}>
+                      {app.absolute_root}
+                    </div>
+                  )}
+                </td>
                 <td className="px-3 py-2">{app.port}</td>
                 <td className="px-3 py-2">
                   <span
@@ -212,6 +368,16 @@ export function PythonAppsManager({ title }: { title: string }) {
                 </td>
                 <td className="px-3 py-2">
                   <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="font-medium text-cp-orange hover:underline"
+                      onClick={() => {
+                        setFocusId(app.id);
+                        setCreatedApp(app);
+                      }}
+                    >
+                      Commande SSH
+                    </button>
                     {app.status !== "running" ? (
                       <button
                         type="button"

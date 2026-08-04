@@ -6,11 +6,22 @@
 - Modes **WSGI** (gunicorn / passenger_wsgi) et **ASGI** (uvicorn)
 - Frameworks : generic, Django, Flask, FastAPI
 - Venv automatique + `requirements.txt`
+- **Commande SSH style cPanel** : `enter_command` (`source …/activate && cd …`) + script `deploy_command`
+- Fichiers `ENTER.sh` / `DEPLOY.sh` dans le root de l'app
 - Start / stop / restart
 - Installation pip des dépendances
 - Consultation des logs
 - Quotas package (`python_apps`)
 - Config JSON exportée (`VZONE_PYTHON_CONFIG_DIR`)
+
+## Déploiement Django (comme cPanel)
+
+1. Créer l'app (framework **Django**) dans Setup Python App
+2. Copier la commande affichée (ou `ENTER.sh`) dans un terminal SSH
+3. Coller le script de déploiement (pip + `django-admin startproject config .` + migrate)
+4. **Start** dans le panel (gunicorn + reverse-proxy domaine si lié)
+
+Champs API utiles : `absolute_root`, `enter_command`, `deploy_command`, `django_project`.
 
 ## Modes de provisionnement
 

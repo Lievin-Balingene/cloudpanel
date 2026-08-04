@@ -46,11 +46,21 @@ def test_create_start_stop_python_app(api: APIClient, py_root):
     assert data["relative_root"] == "apps/webapp"
     assert data["status"] == "stopped"
     assert data["port"] >= 8100
+    assert "source " in data["enter_command"]
+    assert "activate" in data["enter_command"]
+    assert "cd " in data["enter_command"]
+    assert "django-admin startproject config" in data["deploy_command"]
+    assert data["absolute_root"].endswith("apps/webapp") or "apps/webapp" in data["absolute_root"].replace("\\", "/")
+    assert data["django_project"] == "config"
     pk = data["id"]
 
     app_path = Path(py_root) / "pyuser" / "apps" / "webapp"
     assert (app_path / "passenger_wsgi.py").exists()
     assert (app_path / ".venv" / "pyvenv.cfg").exists()
+    assert (app_path / "ENTER.sh").exists()
+    assert (app_path / "DEPLOY.sh").exists()
+    assert "Django" in (app_path / "requirements.txt").read_text(encoding="utf-8")
+    assert "config.settings" in (app_path / "passenger_wsgi.py").read_text(encoding="utf-8")
 
     start = api.post(reverse("python-app-start", kwargs={"pk": pk}))
     assert start.status_code == 200
