@@ -31,6 +31,6 @@ class ServerSetupView(APIView):
             resolver2=data.get("resolver2"),
             contact_email=data.get("contact_email"),
             apply_hostname_to_mail=data.get("apply_hostname_to_mail"),
-            apply_hostname=data.get("apply_hostname", True),
+            apply_hostname=data.get("apply_hostname", False),
         )
         return Response({"success": True, "data": payload})

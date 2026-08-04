@@ -113,7 +113,8 @@ if [[ "${APPLY_MAIL}" == "1" ]] && command -v postconf >/dev/null 2>&1; then
   systemctl reload postfix 2>/dev/null || systemctl restart postfix 2>/dev/null || true
 fi
 
-# Régénérer nginx panel
+# Régénérer nginx panel (reload only — éviter restart qui coupe la requête WHM)
+export VZONE_NGINX_RELOAD_ONLY=1
 if [[ -x "${REPO_ENSURE}" ]]; then
   "${REPO_ENSURE}" || true
 elif [[ -f /opt/vzone-src/scripts/ensure-nginx.sh ]]; then

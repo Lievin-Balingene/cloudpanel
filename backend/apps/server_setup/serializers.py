@@ -13,4 +13,4 @@ class ServerSetupSerializer(serializers.Serializer):
     resolver2 = serializers.IPAddressField(required=False, allow_null=True)
     contact_email = serializers.EmailField(required=False, allow_blank=True)
     apply_hostname_to_mail = serializers.BooleanField(required=False)
-    apply_hostname = serializers.BooleanField(required=False, default=True)
+    apply_hostname = serializers.BooleanField(required=False, default=False)

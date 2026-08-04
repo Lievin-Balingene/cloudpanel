@@ -19,7 +19,14 @@ interface ServerSetupData {
   hostname_applied_at: string | null;
   last_hostname_error: string;
   updated_at: string | null;
-  hostname_apply?: { ok?: boolean; hostname?: string; error?: string } | null;
+  hostname_apply?: {
+    ok?: boolean;
+    pending?: boolean;
+    skipped?: boolean;
+    hostname?: string;
+    error?: string;
+    message?: string;
+  } | null;
 }
 
 export function ServerSetupManager({ title }: { title: string }) {
@@ -36,6 +43,7 @@ export function ServerSetupManager({ title }: { title: string }) {
     nameserver4: "",
     contact_email: "",
     apply_hostname_to_mail: true,
+    apply_hostname_now: false,
   });
   const [error, setError] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState<string | null>(null);
@@ -50,27 +58,46 @@ export function ServerSetupManager({ title }: { title: string }) {
       nameserver4: (data.nameserver4 || "").replace(/\.$/, ""),
       contact_email: data.contact_email || "",
       apply_hostname_to_mail: data.apply_hostname_to_mail,
+      apply_hostname_now: false,
     });
   }, [data]);
 
   const save = useMutation({
-    mutationFn: () =>
-      runWithProgress("Enregistrement configuration serveur", () =>
+    mutationFn: () => {
+      const hostnameChanged =
+        form.hostname.trim().toLowerCase().replace(/\.$/, "") !==
+        (data?.os_hostname || "").trim().toLowerCase().replace(/\.$/, "");
+      return runWithProgress("Enregistrement configuration serveur", () =>
         apiRequest<ServerSetupData>("/server-setup/", {
           method: "PUT",
           body: JSON.stringify({
-            ...form,
-            apply_hostname: true,
+            hostname: form.hostname,
+            nameserver1: form.nameserver1,
+            nameserver2: form.nameserver2,
+            nameserver3: form.nameserver3,
+            nameserver4: form.nameserver4,
+            contact_email: form.contact_email,
+            apply_hostname_to_mail: form.apply_hostname_to_mail,
+            // Ne pas forcer l'apply OS à chaque save NS (causait Failed to fetch via nginx restart)
+            apply_hostname: form.apply_hostname_now || hostnameChanged,
           }),
         }),
-      ),
+      );
+    },
     onSuccess: (payload) => {
       setError(null);
-      setOkMsg(
-        payload.hostname_apply?.ok
-          ? `Hostname appliqué: ${payload.hostname_apply.hostname || payload.hostname}`
-          : "Configuration enregistrée (nameservers + hostname).",
-      );
+      const ha = payload.hostname_apply;
+      if (ha?.pending) {
+        setOkMsg(
+          `Nameservers enregistrés. Hostname « ${ha.hostname || payload.hostname} » en cours d'application en arrière-plan.`,
+        );
+      } else if (ha?.skipped) {
+        setOkMsg("Configuration enregistrée (nameservers). Hostname inchangé.");
+      } else if (ha?.ok) {
+        setOkMsg(`Configuration enregistrée. Hostname: ${ha.hostname || payload.hostname}`);
+      } else {
+        setOkMsg("Configuration enregistrée (nameservers + hostname).");
+      }
       void qc.invalidateQueries({ queryKey: ["server-setup"] });
     },
     onError: (err: Error) => {
@@ -142,12 +169,20 @@ export function ServerSetupManager({ title }: { title: string }) {
               checked={form.apply_hostname_to_mail}
               onChange={(e) => setForm({ ...form, apply_hostname_to_mail: e.target.checked })}
             />
-            Appliquer aussi à Postfix (myhostname)
+            Appliquer aussi à Postfix (myhostname) si le hostname OS change
+          </label>
+          <label className="flex items-center gap-2 text-sm text-cp-text">
+            <input
+              type="checkbox"
+              checked={form.apply_hostname_now}
+              onChange={(e) => setForm({ ...form, apply_hostname_now: e.target.checked })}
+            />
+            Forcer l&apos;application du hostname OS maintenant (`hostnamectl`)
           </label>
           <p className="text-xs text-cp-muted">
-            Applique `hostnamectl`, met à jour `/etc/hosts` et `ALLOWED_HOSTS`, régénère Nginx. Le hostname
-            OS sert au mail/PTR — ce n&apos;est pas l&apos;URL du panel (accès via IP). N&apos;utilisez pas un
-            domaine client comme hostname panel.
+            Les nameservers sont enregistrés immédiatement en base. Le hostname OS n&apos;est
+            appliqué que s&apos;il change (ou si la case ci-dessus est cochée), en arrière-plan —
+            pour éviter l&apos;erreur « Failed to fetch ».
           </p>
         </section>
 
@@ -214,7 +249,7 @@ export function ServerSetupManager({ title }: { title: string }) {
         <div className="flex justify-end border-t border-cp-border pt-3">
           <button className="vz-btn-primary" type="submit" disabled={save.isPending}>
             <Save className="h-4 w-4" />
-            {save.isPending ? "Application…" : "Save Changes"}
+            {save.isPending ? "Enregistrement…" : "Save Changes"}
           </button>
         </div>
       </form>

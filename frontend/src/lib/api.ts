@@ -50,10 +50,21 @@ export async function apiRequest<T>(
     headers.set("Authorization", `Bearer ${token}`);
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers,
+    });
+  } catch (err) {
+    const raw = err instanceof Error ? err.message : String(err);
+    const hint =
+      /failed to fetch|networkerror|load failed|network request failed/i.test(raw)
+        ? "Connexion interrompue (souvent un reload nginx pendant l’opération). " +
+          "Réessayez : les données (ex. nameservers) peuvent déjà être enregistrées."
+        : raw || "Erreur réseau";
+    throw new ApiClientError(hint, 0, null);
+  }
 
   if (response.status === 401) {
     clearAuth();

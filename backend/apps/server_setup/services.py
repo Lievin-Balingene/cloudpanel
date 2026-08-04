@@ -116,7 +116,19 @@ def get_setup_payload() -> dict:
     }
 
 
-def _enqueue_hostname_job(hostname: str, *, apply_mail: bool, public_ip: str) -> dict:
+def _enqueue_hostname_job(
+    hostname: str,
+    *,
+    apply_mail: bool,
+    public_ip: str,
+    wait: bool = False,
+    wait_seconds: float = 90,
+) -> dict:
+    """
+    Lance l'agent root en arrière-plan.
+    wait=False (défaut) : ne bloque pas la requête HTTP — évite Failed to fetch
+    quand nginx reload coupe la connexion pendant ensure-nginx.
+    """
     jobs = jobs_dir()
     job_id = secrets.token_hex(12)
     request = jobs / f"{job_id}.request"
@@ -141,7 +153,16 @@ def _enqueue_hostname_job(hostname: str, *, apply_mail: bool, public_ip: str) ->
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         pass
 
-    deadline = time.time() + 90
+    if not wait:
+        return {
+            "ok": True,
+            "pending": True,
+            "job_id": job_id,
+            "hostname": hostname,
+            "message": "Hostname en cours d'application en arrière-plan.",
+        }
+
+    deadline = time.time() + wait_seconds
     while time.time() < deadline:
         if result_path.is_file():
             try:
@@ -176,10 +197,11 @@ def update_setup(
     resolver2: str | None = None,
     contact_email: str | None = None,
     apply_hostname_to_mail: bool | None = None,
-    apply_hostname: bool = True,
+    apply_hostname: bool = False,
 ) -> dict:
     setup = ServerSetup.get_solo()
     hostname_result: dict | None = None
+    previous_hostname = (setup.hostname or "").strip().lower()
 
     if nameserver1 is not None:
         setup.nameserver1 = normalize_nameserver(nameserver1, required=True)
@@ -203,26 +225,25 @@ def update_setup(
         new_hostname = normalize_hostname(hostname)
         setup.hostname = new_hostname
 
-    # Persist NS / metadata first (DB = source of truth for nameservers).
+    # Persist NS / metadata first — source of truth, réponse HTTP immédiate.
     setup.save()
 
-    if new_hostname and apply_hostname:
+    # N'appliquer l'OS hostname que si demandé ET réellement changé.
+    hostname_changed = bool(
+        new_hostname
+        and new_hostname != previous_hostname
+        and new_hostname != current_os_hostname().lower().rstrip(".")
+    )
+    if new_hostname and apply_hostname and hostname_changed:
         public_ip = (getattr(settings, "VZONE_PUBLIC_IP", "") or "").strip()
         try:
+            # Async : ne pas attendre (nginx reload tuait la requête → Failed to fetch)
             hostname_result = _enqueue_hostname_job(
                 new_hostname,
                 apply_mail=setup.apply_hostname_to_mail,
                 public_ip=public_ip,
+                wait=False,
             )
-            if not hostname_result.get("ok"):
-                setup.last_hostname_error = str(hostname_result.get("error") or "Échec agent hostname")
-                setup.save(update_fields=["last_hostname_error", "updated_at"])
-                raise VZoneAPIException(
-                    detail=setup.last_hostname_error,
-                    code="hostname_apply_failed",
-                    status_code=502,
-                    extra=hostname_result,
-                )
             setup.last_hostname_error = ""
             setup.hostname_applied_at = timezone.now()
             setup.save(update_fields=["last_hostname_error", "hostname_applied_at", "updated_at"])
@@ -232,10 +253,17 @@ def update_setup(
             setup.last_hostname_error = str(exc)
             setup.save(update_fields=["last_hostname_error", "updated_at"])
             raise VZoneAPIException(
-                detail=f"Impossible d'appliquer le hostname: {exc}",
+                detail=f"Impossible de lancer l'application du hostname: {exc}",
                 code="hostname_apply_failed",
                 status_code=502,
             ) from exc
+    elif new_hostname and apply_hostname and not hostname_changed:
+        hostname_result = {
+            "ok": True,
+            "skipped": True,
+            "hostname": new_hostname,
+            "message": "Hostname inchangé — nameservers enregistrés.",
+        }
 
     payload = get_setup_payload()
     payload["hostname_apply"] = hostname_result
