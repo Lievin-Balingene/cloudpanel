@@ -25,6 +25,7 @@ import {
   Bell,
   Shield,
   KeyRound,
+  ArrowRightLeft,
 } from "lucide-react";
 import { useAuthStore } from "@/stores/auth";
 import { useThemeStore } from "@/stores/theme";
@@ -34,6 +35,7 @@ const nav = [
   { to: "/whm", end: true, label: "Accueil WHM", icon: LayoutDashboard },
   { to: "/whm/server-setup", label: "Basic Setup", icon: Server },
   { to: "/whm/accounts", label: "Comptes", icon: Users },
+  { to: "/whm/transfer", label: "Transfer Tool", icon: ArrowRightLeft },
   { to: "/whm/packages", label: "Packages", icon: Package },
   { to: "/whm/domains", label: "Domaines", icon: AppWindow },
   { to: "/whm/files", label: "File Manager", icon: FolderOpen },

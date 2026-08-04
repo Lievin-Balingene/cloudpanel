@@ -104,6 +104,7 @@ class ModuleRegistry:
             "apps.wordpress.module",
             "apps.kubernetes.module",
             "apps.server_setup.module",
+            "apps.transfer.module",
         ]
         for path in module_paths:
             try:

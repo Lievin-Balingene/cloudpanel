@@ -89,6 +89,7 @@ INSTALLED_APPS = [
     "apps.wordpress",
     "apps.kubernetes",
     "apps.server_setup",
+    "apps.transfer",
 ]
 
 MIDDLEWARE = [
@@ -287,7 +288,7 @@ VZONE_WEB_STACK = env("VZONE_WEB_STACK", "auto")  # auto | live | mock
 # Modules activés (extensible à l'installation)
 VZONE_ENABLED_MODULES = env_list(
     "VZONE_ENABLED_MODULES",
-    "core,accounts,packages,dns,dashboard,domains,files,ftp,email,databases,python_apps,node_apps,php,git_deploy,docker_mgmt,backups,monitoring,firewall,security,wordpress,kubernetes,server_setup",
+    "core,accounts,packages,dns,dashboard,domains,files,ftp,email,databases,python_apps,node_apps,php,git_deploy,docker_mgmt,backups,monitoring,firewall,security,wordpress,kubernetes,server_setup,transfer",
 )
 
 # Email / webmail

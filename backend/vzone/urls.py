@@ -37,6 +37,7 @@ urlpatterns = [
     path("api/v1/wordpress/", include("apps.wordpress.urls")),
     path("api/v1/kubernetes/", include("apps.kubernetes.urls")),
     path("api/v1/server-setup/", include("apps.server_setup.urls")),
+    path("api/v1/transfer/", include("apps.transfer.urls")),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path(
         "api/docs/",
