@@ -67,13 +67,18 @@ if command -v pg_lsclusters >/dev/null 2>&1; then
   fi
 fi
 
-PG_ADMIN_PASS="$(openssl rand -base64 24 | tr -d '/+=' | head -c 24)"
+# Source de vérité : VZONE_DB_PASSWORD (Django) — NE JAMAIS regenerer
+# un mot de passe aléatoire à chaque update (sinon login 500).
 if [[ -f "${ENV_FILE}" ]]; then
   # shellcheck disable=SC1090
   set -a; source "${ENV_FILE}"; set +a
-  if [[ -n "${VZONE_PG_ADMIN_PASSWORD:-}" ]]; then
-    PG_ADMIN_PASS="${VZONE_PG_ADMIN_PASSWORD}"
-  fi
+fi
+
+PG_ADMIN_USER="${VZONE_DB_USER:-${VZONE_PG_ADMIN_USER:-vzone}}"
+PG_ADMIN_PASS="${VZONE_DB_PASSWORD:-${VZONE_PG_ADMIN_PASSWORD:-}}"
+if [[ -z "${PG_ADMIN_PASS}" ]]; then
+  PG_ADMIN_PASS="$(openssl rand -base64 24 | tr -d '/+=' | head -c 24)"
+  echo "[vzone] Nouveau mot de passe PostgreSQL généré (première install)"
 fi
 
 sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${PG_ADMIN_USER}'" | grep -q "1" \
@@ -81,19 +86,34 @@ sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${PG_ADMIN_USE
 
 sudo -u postgres psql -c "ALTER ROLE ${PG_ADMIN_USER} WITH LOGIN PASSWORD '${PG_ADMIN_PASS}' CREATEDB CREATEROLE;" || true
 
-if [[ -f "${ENV_FILE}" ]]; then
-  grep -q '^VZONE_PG_HOST=' "${ENV_FILE}" || echo "VZONE_PG_HOST=${PG_HOST}" >> "${ENV_FILE}"
-  grep -q '^VZONE_PG_PORT=' "${ENV_FILE}" || echo "VZONE_PG_PORT=${PG_PORT}" >> "${ENV_FILE}"
-  grep -q '^VZONE_PG_ADMIN_USER=' "${ENV_FILE}" || echo "VZONE_PG_ADMIN_USER=${PG_ADMIN_USER}" >> "${ENV_FILE}"
-  grep -q '^VZONE_PG_ADMIN_PASSWORD=' "${ENV_FILE}" || echo "VZONE_PG_ADMIN_PASSWORD=${PG_ADMIN_PASS}" >> "${ENV_FILE}"
-  grep -q '^VZONE_PG_ADMIN_DB=' "${ENV_FILE}" || echo "VZONE_PG_ADMIN_DB=${PG_ADMIN_DB}" >> "${ENV_FILE}"
+# Assure la base Django
+DB_NAME="${VZONE_DB_NAME:-vzone}"
+sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q "1" \
+  || sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME} OWNER ${PG_ADMIN_USER};"
+sudo -u postgres psql -c "ALTER DATABASE ${DB_NAME} OWNER TO ${PG_ADMIN_USER};" || true
+sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${PG_ADMIN_USER};" || true
 
-  sed -i "s|^VZONE_PG_HOST=.*|VZONE_PG_HOST=${PG_HOST}|" "${ENV_FILE}"
-  sed -i "s|^VZONE_PG_PORT=.*|VZONE_PG_PORT=${PG_PORT}|" "${ENV_FILE}"
-  sed -i "s|^VZONE_PG_ADMIN_USER=.*|VZONE_PG_ADMIN_USER=${PG_ADMIN_USER}|" "${ENV_FILE}"
-  sed -i "s|^VZONE_PG_ADMIN_DB=.*|VZONE_PG_ADMIN_DB=${PG_ADMIN_DB}|" "${ENV_FILE}"
-  sed -i "s|^VZONE_DB_PROVISION_MODE=.*|VZONE_DB_PROVISION_MODE=live|" "${ENV_FILE}" 2>/dev/null || true
-  grep -q '^VZONE_DB_PROVISION_MODE=' "${ENV_FILE}" || echo "VZONE_DB_PROVISION_MODE=live" >> "${ENV_FILE}"
+if [[ -f "${ENV_FILE}" ]]; then
+  upsert_env() {
+    local key="$1" value="$2"
+    if grep -q "^${key}=" "${ENV_FILE}"; then
+      sed -i "s|^${key}=.*|${key}=${value}|" "${ENV_FILE}"
+    else
+      echo "${key}=${value}" >> "${ENV_FILE}"
+    fi
+  }
+
+  upsert_env "VZONE_PG_HOST" "${PG_HOST}"
+  upsert_env "VZONE_PG_PORT" "${PG_PORT}"
+  upsert_env "VZONE_PG_ADMIN_USER" "${PG_ADMIN_USER}"
+  upsert_env "VZONE_PG_ADMIN_PASSWORD" "${PG_ADMIN_PASS}"
+  upsert_env "VZONE_PG_ADMIN_DB" "${PG_ADMIN_DB}"
+  upsert_env "VZONE_DB_USER" "${PG_ADMIN_USER}"
+  upsert_env "VZONE_DB_PASSWORD" "${PG_ADMIN_PASS}"
+  upsert_env "VZONE_DB_NAME" "${DB_NAME}"
+  upsert_env "VZONE_DB_HOST" "${PG_HOST}"
+  upsert_env "VZONE_DB_PORT" "${PG_PORT}"
+  upsert_env "VZONE_DB_PROVISION_MODE" "live"
 fi
 
 echo "[vzone] PostgreSQL prêt — admin provisioning: ${PG_ADMIN_USER}@${PG_HOST}:${PG_PORT}"
