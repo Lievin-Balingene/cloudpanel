@@ -118,6 +118,14 @@ if ! resolve_kubectl >/dev/null && [[ -x "${KUBECTL_TARGET}" ]]; then
 fi
 
 if [[ "${VZONE_INSTALL_K3S:-0}" == "1" ]] && ! systemctl is-active --quiet k3s 2>/dev/null; then
+  # IMPORTANT : ne pas laisser Traefik/ServiceLB prendre les ports 80/443 (réservés à nginx panel).
+  mkdir -p /etc/rancher/k3s
+  cat > /etc/rancher/k3s/config.yaml <<'EOF'
+# V-zone Panel : nginx conserve 80/443 pour le panel et les vhosts.
+disable:
+  - traefik
+  - servicelb
+EOF
   curl -sfL https://get.k3s.io | sh -
   systemctl enable --now k3s || true
 fi
