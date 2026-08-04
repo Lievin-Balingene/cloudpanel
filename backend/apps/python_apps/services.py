@@ -9,6 +9,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from django.conf import settings
@@ -514,7 +515,65 @@ def install_requirements(app: PythonApp) -> dict:
     return {"mode": "live", "requirements": str(req), "log": str(log)}
 
 
+def _module_importable(py: Path, module: str) -> bool:
+    try:
+        result = subprocess.run(
+            [str(py), "-c", f"import {module}"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def ensure_runtime_deps(app: PythonApp, app_root: Path, py: Path) -> None:
+    """Installe gunicorn/uvicorn/Django manquants avant Start (cause fréquente d'échec)."""
+    if provision_mode() == "mock" or not py.exists():
+        return
+    missing: list[str] = []
+    if app.mode == PythonApp.Mode.ASGI:
+        if not _module_importable(py, "uvicorn"):
+            missing.append("uvicorn[standard]")
+    else:
+        if not _module_importable(py, "gunicorn"):
+            missing.append("gunicorn")
+    if app.framework == PythonApp.Framework.DJANGO and not _module_importable(py, "django"):
+        missing.append("Django")
+    if not missing:
+        return
+    log = app_root / "logs" / "pip.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        result = _run([str(py), "-m", "pip", "install", *missing], cwd=app_root)
+        log.write_text(
+            f"# auto-install avant Start: {' '.join(missing)}\n{result.stdout}\n{result.stderr}\n",
+            encoding="utf-8",
+        )
+    except VZoneAPIException as exc:
+        stderr = (exc.extra or {}).get("stderr") or str(exc)
+        raise VZoneAPIException(
+            detail=f"Dépendances manquantes ({', '.join(missing)}) et installation échouée. "
+            f"Lancez « pip install » puis réessayez. {str(stderr)[:180]}",
+            code="deps_install_failed",
+            status_code=502,
+            extra=exc.extra,
+        ) from exc
+
+
+def _tail_log(path: Path, lines: int = 40) -> str:
+    if not path.exists():
+        return ""
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        return "\n".join(content[-lines:])
+    except OSError:
+        return ""
+
+
 def _build_start_command(app: PythonApp, app_root: Path, py: Path) -> list[str]:
+    (app_root / "logs").mkdir(parents=True, exist_ok=True)
     if app.mode == PythonApp.Mode.ASGI:
         target = app.entrypoint if ":" in app.entrypoint else "asgi:application"
         return [
@@ -529,23 +588,28 @@ def _build_start_command(app: PythonApp, app_root: Path, py: Path) -> list[str]:
             "--app-dir",
             str(app_root),
         ]
-    # WSGI via gunicorn if available in venv, else python -m http fallback for scaffold
+    # WSGI via gunicorn (sans --daemon : PID fiable + détection d'échec immédiate)
+    wsgi_target = (
+        app.entrypoint.replace(".py", ":application")
+        if app.entrypoint.endswith(".py")
+        else app.entrypoint
+    )
     return [
         str(py),
         "-m",
         "gunicorn",
-        app.entrypoint.replace(".py", ":application") if app.entrypoint.endswith(".py") else app.entrypoint,
+        wsgi_target,
         "--bind",
         f"127.0.0.1:{app.port}",
         "--chdir",
         str(app_root),
-        "--pid",
-        str(app_root / "logs" / "app.pid"),
+        "--workers",
+        "1",
         "--access-logfile",
         str(app_root / "logs" / "access.log"),
         "--error-logfile",
         str(app_root / "logs" / "error.log"),
-        "--daemon",
+        "--capture-output",
     ]
 
 
@@ -557,13 +621,27 @@ def start_python_app(app: PythonApp) -> PythonApp:
     venv_dir = Path(app.venv_path) if app.venv_path else cpanel_venv_path(app.owner, app.name, app.python_version)
     py = venv_python(venv_dir)
     pid_file = app_root / "logs" / "app.pid"
+    error_log = app_root / "logs" / "error.log"
+    (app_root / "logs").mkdir(parents=True, exist_ok=True)
+
     env = os.environ.copy()
+    env["VIRTUAL_ENV"] = str(venv_dir)
+    env["PATH"] = f"{venv_dir / 'bin'}{os.pathsep}{env.get('PATH', '')}"
+    env["PYTHONPATH"] = str(app_root) + (
+        os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
+    )
     for key, value in (app.env_vars or {}).items():
         env[str(key)] = str(value)
 
     if provision_mode() == "mock" or not py.exists():
+        if not py.exists() and provision_mode() != "mock":
+            raise VZoneAPIException(
+                detail=f"Virtualenv introuvable : {venv_dir}. Recréez l'application ou le venv.",
+                code="venv_missing",
+                status_code=502,
+                extra={"venv": str(venv_dir)},
+            )
         fake_pid = 10000 + (app.pk or 1)
-        pid_file.parent.mkdir(parents=True, exist_ok=True)
         pid_file.write_text(str(fake_pid), encoding="utf-8")
         app.pid = fake_pid
         app.status = PythonApp.Status.RUNNING
@@ -573,37 +651,72 @@ def start_python_app(app: PythonApp) -> PythonApp:
         write_app_config(app)
         return app
 
+    # Arrêter une instance précédente sur le même pid
+    if app.pid or pid_file.exists():
+        try:
+            stop_python_app(app)
+            app.refresh_from_db()
+        except Exception:  # noqa: BLE001
+            logger.debug("stop avant start ignoré", exc_info=True)
+
+    ensure_runtime_deps(app, app_root, py)
+
+    if app.mode == PythonApp.Mode.WSGI and not (app_root / "passenger_wsgi.py").exists():
+        raise VZoneAPIException(
+            detail=f"passenger_wsgi.py introuvable dans {app_root}. "
+            "L'Application root doit contenir passenger_wsgi.py (comme cPanel).",
+            code="no_passenger_wsgi",
+            status_code=400,
+            extra={"root": str(app_root)},
+        )
+
     cmd = _build_start_command(app, app_root, py)
     try:
-        if app.mode == PythonApp.Mode.ASGI:
-            proc = subprocess.Popen(
-                cmd,
-                cwd=str(app_root),
-                env=env,
-                stdout=open(app_root / "logs" / "access.log", "a", encoding="utf-8"),
-                stderr=open(app_root / "logs" / "error.log", "a", encoding="utf-8"),
-                start_new_session=True,
+        access_f = open(app_root / "logs" / "access.log", "a", encoding="utf-8")
+        error_f = open(error_log, "a", encoding="utf-8")
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(app_root),
+            env=env,
+            stdout=access_f,
+            stderr=error_f,
+            start_new_session=True,
+        )
+        # Laisser le temps à gunicorn/uvicorn d'échouer immédiatement
+        time.sleep(0.8)
+        if proc.poll() is not None:
+            tail = _tail_log(error_log)
+            raise RuntimeError(
+                f"Le process s'est arrêté (code {proc.returncode}). "
+                f"{tail[-400:] if tail else 'Voir logs/error.log — pip install gunicorn Django ?'}"
             )
-            pid_file.write_text(str(proc.pid), encoding="utf-8")
-            app.pid = proc.pid
-        else:
-            _run(cmd, cwd=app_root, env=env)
-            if pid_file.exists():
-                app.pid = int(pid_file.read_text(encoding="utf-8").strip() or "0") or None
+        pid_file.write_text(str(proc.pid), encoding="utf-8")
+        app.pid = proc.pid
         app.status = PythonApp.Status.RUNNING
         app.last_error = ""
         app.last_started_at = timezone.now()
     except Exception as exc:  # noqa: BLE001
+        detail = str(exc)
+        if isinstance(exc, VZoneAPIException):
+            detail = str(exc.detail)
+            extra = dict(exc.extra or {})
+        else:
+            extra = {"error": detail, "stderr": _tail_log(error_log)}
+        # Enrichir avec stderr pip/_run
+        if hasattr(exc, "extra") and isinstance(getattr(exc, "extra"), dict):
+            extra.update(exc.extra)
         app.status = PythonApp.Status.ERROR
-        app.last_error = str(exc)
+        app.last_error = detail[:2000]
         app.pid = None
+        if pid_file.exists():
+            pid_file.unlink(missing_ok=True)
         app.save()
         write_app_config(app)
         raise VZoneAPIException(
-            detail="Impossible de démarrer l'application.",
+            detail=f"Impossible de démarrer l'application : {detail[:300]}",
             code="start_failed",
             status_code=502,
-            extra={"error": str(exc)},
+            extra=extra,
         ) from exc
     app.save()
     write_app_config(app)

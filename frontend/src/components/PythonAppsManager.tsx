@@ -449,7 +449,10 @@ export function PythonAppsManager({ title }: { title: string }) {
       runWithProgress(`Python ${op} · ${name}`, () =>
         apiRequest(`/python/apps/${id}/${op}/`, { method: "POST", body: "{}" }),
       ),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      setError(null);
+      invalidate();
+    },
     onError: (err: Error) => setError(err.message),
   });
 

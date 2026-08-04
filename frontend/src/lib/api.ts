@@ -71,13 +71,15 @@ export async function apiRequest<T>(
     }
     const messageRaw =
       err?.error?.message ||
+      (typeof err?.error?.extra?.stderr === "string" ? err.error.extra.stderr : "") ||
+      (typeof err?.error?.extra?.error === "string" ? err.error.extra.error : "") ||
       (typeof err?.raw === "string" ? err.raw : "") ||
       `Erreur HTTP ${response.status}`;
     let message = messageRaw
       .replace(/<[^>]+>/g, " ")
       .replace(/\s+/g, " ")
       .trim()
-      .slice(0, 240) || `Erreur HTTP ${response.status}`;
+      .slice(0, 400) || `Erreur HTTP ${response.status}`;
     if (
       response.status === 502 &&
       /bad gateway|nginx/i.test(message)
