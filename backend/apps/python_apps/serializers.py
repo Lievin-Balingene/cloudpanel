@@ -12,6 +12,8 @@ class PythonAppSerializer(serializers.ModelSerializer):
     enter_command = serializers.SerializerMethodField()
     deploy_command = serializers.SerializerMethodField()
     django_project = serializers.SerializerMethodField()
+    passenger_wsgi = serializers.SerializerMethodField()
+    home_path = serializers.SerializerMethodField()
 
     class Meta:
         model = PythonApp
@@ -26,7 +28,9 @@ class PythonAppSerializer(serializers.ModelSerializer):
             "framework",
             "relative_root",
             "absolute_root",
+            "home_path",
             "entrypoint",
+            "passenger_wsgi",
             "port",
             "env_vars",
             "requirements_file",
@@ -51,6 +55,8 @@ class PythonAppSerializer(serializers.ModelSerializer):
             "name",
             "relative_root",
             "absolute_root",
+            "home_path",
+            "passenger_wsgi",
             "port",
             "venv_path",
             "status",
@@ -76,6 +82,9 @@ class PythonAppSerializer(serializers.ModelSerializer):
                     "enter_command": "",
                     "deploy_command": "",
                     "django_project": "",
+                    "passenger_wsgi": "",
+                    "home_path": "",
+                    "venv_path": "",
                 }
         return cache[key]
 
@@ -91,6 +100,12 @@ class PythonAppSerializer(serializers.ModelSerializer):
     def get_django_project(self, obj: PythonApp) -> str:
         return str(self._info(obj).get("django_project") or "")
 
+    def get_passenger_wsgi(self, obj: PythonApp) -> str:
+        return str(self._info(obj).get("passenger_wsgi") or "")
+
+    def get_home_path(self, obj: PythonApp) -> str:
+        return str(self._info(obj).get("home_path") or "")
+
 
 class PythonAppCreateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=48)
@@ -101,12 +116,25 @@ class PythonAppCreateSerializer(serializers.Serializer):
         choices=["generic", "django", "flask", "fastapi"],
         default="generic",
     )
+    # Application root cPanel — chemin relatif au home (projet Django)
     relative_root = serializers.CharField(required=False, allow_blank=True, default="")
     entrypoint = serializers.CharField(required=False, allow_blank=True, default="")
     domain_name = serializers.CharField(required=False, allow_blank=True, default="")
     env_vars = serializers.DictField(required=False, child=serializers.CharField(), default=dict)
     notes = serializers.CharField(required=False, allow_blank=True, default="")
     owner_id = serializers.IntegerField(required=False)
+
+    def validate(self, attrs):
+        framework = attrs.get("framework") or "generic"
+        root = (attrs.get("relative_root") or "").strip()
+        if framework == "django" and not root:
+            raise serializers.ValidationError(
+                {
+                    "relative_root": "Application root requis : chemin du projet Django "
+                    "(là où seront passenger_wsgi.py et manage.py).",
+                }
+            )
+        return attrs
 
 
 class PythonAppUpdateSerializer(serializers.Serializer):

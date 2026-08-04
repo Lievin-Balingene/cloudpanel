@@ -39,7 +39,8 @@ class PythonApp(models.Model):
     relative_root = models.CharField(
         max_length=255,
         default="",
-        help_text="Chemin relatif au home (ex: apps/myapp).",
+        help_text="Application root cPanel : chemin du projet relatif au home (ex: mydjango). "
+        "passenger_wsgi.py et manage.py doivent être dans ce même dossier.",
     )
     entrypoint = models.CharField(
         max_length=255,

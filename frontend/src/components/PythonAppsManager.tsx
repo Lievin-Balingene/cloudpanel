@@ -25,6 +25,7 @@ interface PyOverview {
   stopped: number;
   error: number;
   provision_mode: string;
+  home_path?: string;
 }
 
 interface PythonApp {
@@ -36,7 +37,9 @@ interface PythonApp {
   framework: string;
   relative_root: string;
   absolute_root: string;
+  home_path: string;
   entrypoint: string;
+  passenger_wsgi: string;
   port: number;
   status: string;
   domain_name: string;
@@ -138,7 +141,7 @@ function DeployPanel({
       <div className="space-y-1">
         <div className="flex items-center justify-between gap-2">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-cp-muted">
-            Application root
+            Application root (projet)
           </p>
           <button
             type="button"
@@ -152,6 +155,18 @@ function DeployPanel({
         <code className="block break-all rounded-md border border-cp-border/80 bg-white px-3 py-2 font-mono text-xs dark:border-ink-700 dark:bg-ink-950">
           {app.absolute_root || app.relative_root}
         </code>
+        {app.passenger_wsgi && (
+          <p className="text-[11px] text-cp-muted">
+            <span className="font-medium text-cp-text">passenger_wsgi.py</span> :{" "}
+            <code className="font-mono">{app.passenger_wsgi}</code>
+          </p>
+        )}
+        {app.venv_path && (
+          <p className="text-[11px] text-cp-muted">
+            <span className="font-medium text-cp-text">virtualenv</span> :{" "}
+            <code className="font-mono">{app.venv_path}</code>
+          </p>
+        )}
       </div>
 
       <div className="space-y-1">
@@ -379,6 +394,7 @@ export function PythonAppsManager({ title }: { title: string }) {
     framework: "django",
     python_version: "3.12",
     domain_name: "",
+    relative_root: "",
   });
   const [logs, setLogs] = useState<Record<string, string> | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -397,17 +413,31 @@ export function PythonAppsManager({ title }: { title: string }) {
         () =>
           apiRequest<PythonApp>("/python/apps/", {
             method: "POST",
-            body: JSON.stringify(form),
+            body: JSON.stringify({
+              name: form.name,
+              mode: form.mode,
+              framework: form.framework,
+              python_version: form.python_version,
+              domain_name: form.domain_name,
+              relative_root: form.relative_root.trim() || form.name.trim(),
+            }),
           }),
         {
           tickDetail: (ms) =>
-            ms < 2500 ? "Provisionnement venv…" : "Génération de la commande de déploiement…",
+            ms < 2500 ? "Création application root + passenger_wsgi…" : "Préparation virtualenv…",
         },
       ),
     onSuccess: (app) => {
       setCreatedApp(app);
       setFocusId(app.id);
-      setForm({ name: "", mode: "wsgi", framework: "django", python_version: "3.12", domain_name: "" });
+      setForm({
+        name: "",
+        mode: "wsgi",
+        framework: "django",
+        python_version: "3.12",
+        domain_name: "",
+        relative_root: "",
+      });
       setError(null);
       invalidate();
     },
@@ -453,8 +483,10 @@ export function PythonAppsManager({ title }: { title: string }) {
         <div className="border-b border-cp-border/80 bg-gradient-to-r from-cp-navy/[0.04] to-transparent px-5 py-4 dark:border-ink-800 dark:from-ink-900">
           <h1 className="text-xl font-semibold text-cp-navy dark:text-ink-50">{title}</h1>
           <p className="mt-1 max-w-2xl text-sm text-cp-muted">
-            Créez une app Django / Python : chemin + commande SSH à coller (style cPanel), puis Start
-            pour publier derrière nginx.
+            Comme cPanel Setup Python App : indiquez l&apos;Application root (dossier du projet
+            Django). <code className="font-mono text-xs">passenger_wsgi.py</code> est créé dans ce
+            même dossier que <code className="font-mono text-xs">manage.py</code> ; le venv est sous{" "}
+            <code className="font-mono text-xs">virtualenv/</code>.
           </p>
         </div>
 
@@ -485,17 +517,74 @@ export function PythonAppsManager({ title }: { title: string }) {
       <form className="vz-panel p-4 sm:p-5" onSubmit={onCreate}>
         <div className="mb-3 flex items-center gap-2">
           <Plus className="h-4 w-4 text-cp-orange" />
-          <h2 className="text-sm font-semibold text-cp-navy dark:text-ink-50">Nouvelle application</h2>
+          <h2 className="text-sm font-semibold text-cp-navy dark:text-ink-50">
+            CREATE APPLICATION
+          </h2>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-          <label className="space-y-1 xl:col-span-1">
-            <span className="text-[11px] font-medium text-cp-muted">Nom</span>
+        <p className="mb-4 text-xs text-cp-muted">
+          Home :{" "}
+          <code className="font-mono">{overview?.home_path || "~/"}</code>
+          {" — "}
+          l&apos;Application root est relatif à ce home (ex.{" "}
+          <code className="font-mono">mydjango</code>).
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <label className="space-y-1">
+            <span className="text-[11px] font-medium text-cp-muted">Application name *</span>
             <input
               className="vz-input"
               placeholder="ex: webapp"
               required
               value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              onChange={(e) => {
+                const name = e.target.value;
+                setForm((prev) => ({
+                  ...prev,
+                  name,
+                  // Comme cPanel : préremplir l'application root avec le nom si encore vide / synchro
+                  relative_root:
+                    !prev.relative_root || prev.relative_root === prev.name ? name : prev.relative_root,
+                }));
+              }}
+            />
+          </label>
+          <label className="space-y-1 sm:col-span-2">
+            <span className="text-[11px] font-medium text-cp-muted">
+              Application root * (chemin du projet Django)
+            </span>
+            <div className="flex overflow-hidden rounded-lg border border-cp-border focus-within:border-cp-link focus-within:ring-2 focus-within:ring-cp-link/20 dark:border-ink-700">
+              <span className="flex max-w-[45%] items-center truncate border-r border-cp-border bg-cp-canvas/80 px-2 font-mono text-[11px] text-cp-muted dark:border-ink-700 dark:bg-ink-900">
+                {(overview?.home_path || "~").replace(/\/$/, "")}/
+              </span>
+              <input
+                className="vz-input !rounded-none !border-0 !ring-0"
+                placeholder="mydjango"
+                required={form.framework === "django"}
+                value={form.relative_root}
+                onChange={(e) => setForm({ ...form, relative_root: e.target.value.replace(/^\/+/, "") })}
+              />
+            </div>
+            <span className="text-[11px] text-cp-muted">
+              Ici seront créés <code className="font-mono">passenger_wsgi.py</code> + votre projet (
+              <code className="font-mono">manage.py</code>). Pas de sous-dossier <code className="font-mono">apps/</code>.
+            </span>
+          </label>
+          <label className="space-y-1">
+            <span className="text-[11px] font-medium text-cp-muted">Application URL / domaine</span>
+            <input
+              className="vz-input"
+              placeholder="app.exemple.com (opt.)"
+              value={form.domain_name}
+              onChange={(e) => setForm({ ...form, domain_name: e.target.value })}
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-[11px] font-medium text-cp-muted">Python version</span>
+            <input
+              className="vz-input"
+              placeholder="3.12"
+              value={form.python_version}
+              onChange={(e) => setForm({ ...form, python_version: e.target.value })}
             />
           </label>
           <label className="space-y-1">
@@ -519,43 +608,21 @@ export function PythonAppsManager({ title }: { title: string }) {
             </select>
           </label>
           <label className="space-y-1">
-            <span className="text-[11px] font-medium text-cp-muted">Mode</span>
-            <select
-              className="vz-input"
-              value={form.mode}
-              onChange={(e) => setForm({ ...form, mode: e.target.value })}
-              disabled={form.framework === "django"}
-            >
-              <option value="wsgi">WSGI</option>
-              <option value="asgi">ASGI</option>
-            </select>
-          </label>
-          <label className="space-y-1">
-            <span className="text-[11px] font-medium text-cp-muted">Python</span>
+            <span className="text-[11px] font-medium text-cp-muted">Application startup file</span>
             <input
               className="vz-input"
-              placeholder="3.12"
-              value={form.python_version}
-              onChange={(e) => setForm({ ...form, python_version: e.target.value })}
+              readOnly
+              value={form.framework === "fastapi" || form.mode === "asgi" ? "asgi.py" : "passenger_wsgi.py"}
             />
           </label>
-          <label className="space-y-1">
-            <span className="text-[11px] font-medium text-cp-muted">Domaine (opt.)</span>
-            <input
-              className="vz-input"
-              placeholder="app.exemple.com"
-              value={form.domain_name}
-              onChange={(e) => setForm({ ...form, domain_name: e.target.value })}
-            />
-          </label>
-          <div className="flex items-end">
+          <div className="flex items-end sm:col-span-2 lg:col-span-1">
             <button className="vz-btn-primary w-full" type="submit" disabled={create.isPending}>
               {create.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Plus className="h-4 w-4" />
               )}
-              Créer l’app
+              CREATE
             </button>
           </div>
         </div>

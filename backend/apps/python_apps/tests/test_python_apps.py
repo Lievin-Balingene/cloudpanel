@@ -35,28 +35,45 @@ def test_create_start_stop_python_app(api: APIClient, py_root):
     user = UserFactory(username="pyuser", password="TestPassword123!")
     api.force_authenticate(user=user)
 
-    created = api.post(
+    # Sans application root → erreur (comme cPanel)
+    missing = api.post(
         reverse("python-app-list"),
         {"name": "webapp", "mode": "wsgi", "framework": "django"},
+        format="json",
+    )
+    assert missing.status_code == 400
+
+    created = api.post(
+        reverse("python-app-list"),
+        {
+            "name": "webapp",
+            "mode": "wsgi",
+            "framework": "django",
+            "relative_root": "mydjango",
+        },
         format="json",
     )
     assert created.status_code == 201
     data = created.json()["data"]
     assert data["name"] == "webapp"
-    assert data["relative_root"] == "apps/webapp"
+    assert data["relative_root"] == "mydjango"
     assert data["status"] == "stopped"
     assert data["port"] >= 8100
     assert "source " in data["enter_command"]
+    assert "virtualenv" in data["enter_command"].replace("\\", "/")
     assert "activate" in data["enter_command"]
     assert "cd " in data["enter_command"]
     assert "django-admin startproject config" in data["deploy_command"]
-    assert data["absolute_root"].endswith("apps/webapp") or "apps/webapp" in data["absolute_root"].replace("\\", "/")
+    assert "mydjango" in data["absolute_root"].replace("\\", "/")
     assert data["django_project"] == "config"
+    assert data["passenger_wsgi"].replace("\\", "/").endswith("mydjango/passenger_wsgi.py")
     pk = data["id"]
 
-    app_path = Path(py_root) / "pyuser" / "apps" / "webapp"
+    app_path = Path(py_root) / "pyuser" / "mydjango"
+    venv_path = Path(py_root) / "pyuser" / "virtualenv" / "webapp" / "3.12"
     assert (app_path / "passenger_wsgi.py").exists()
-    assert (app_path / ".venv" / "pyvenv.cfg").exists()
+    assert (venv_path / "pyvenv.cfg").exists()
+    assert not (app_path / ".venv").exists()
     assert (app_path / "ENTER.sh").exists()
     assert (app_path / "DEPLOY.sh").exists()
     assert "Django" in (app_path / "requirements.txt").read_text(encoding="utf-8")
@@ -89,13 +106,13 @@ def test_asgi_and_delete(api: APIClient, py_root):
     api.force_authenticate(user=user)
     created = api.post(
         reverse("python-app-list"),
-        {"name": "api", "mode": "asgi", "framework": "fastapi"},
+        {"name": "api", "mode": "asgi", "framework": "fastapi", "relative_root": "api"},
         format="json",
     )
     assert created.status_code == 201
     assert created.json()["data"]["entrypoint"] == "asgi:application"
     pk = created.json()["data"]["id"]
-    assert (Path(py_root) / "py2" / "apps" / "api" / "asgi.py").exists()
+    assert (Path(py_root) / "py2" / "api" / "asgi.py").exists()
     deleted = api.delete(reverse("python-app-detail", kwargs={"pk": pk}) + "?remove_files=true")
     assert deleted.status_code == 204
     assert PythonApp.objects.count() == 0
@@ -107,9 +124,13 @@ def test_python_quota(api: APIClient, py_root):
     user = UserFactory(username="py3")
     user.quota.python_apps = 1
     user.quota.save()
-    create_python_app(owner=user, name="one")
+    create_python_app(owner=user, name="one", relative_root="one")
     api.force_authenticate(user=user)
-    second = api.post(reverse("python-app-list"), {"name": "two"}, format="json")
+    second = api.post(
+        reverse("python-app-list"),
+        {"name": "two", "relative_root": "two"},
+        format="json",
+    )
     assert second.status_code == 403
 
 
@@ -117,10 +138,35 @@ def test_python_quota(api: APIClient, py_root):
 @pytest.mark.django_db
 def test_start_stop_helpers(py_root):
     user = UserFactory(username="py4")
-    app = create_python_app(owner=user, name="svc", mode="wsgi")
+    app = create_python_app(owner=user, name="svc", mode="wsgi", relative_root="svc")
     app = start_python_app(app)
     assert app.status == PythonApp.Status.RUNNING
     assert app.pid
     app = stop_python_app(app)
     assert app.status == PythonApp.Status.STOPPED
     assert app.pid is None
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_django_passenger_next_to_existing_project(py_root):
+    user = UserFactory(username="py5")
+    home = Path(py_root) / "py5"
+    project = home / "blog"
+    project.mkdir(parents=True)
+    (project / "manage.py").write_text("# manage", encoding="utf-8")
+    pkg = project / "mysite"
+    pkg.mkdir()
+    (pkg / "settings.py").write_text("SECRET_KEY='x'\n", encoding="utf-8")
+
+    app = create_python_app(
+        owner=user,
+        name="blog",
+        framework="django",
+        relative_root="blog",
+    )
+    passenger = project / "passenger_wsgi.py"
+    assert passenger.exists()
+    text = passenger.read_text(encoding="utf-8")
+    assert "mysite.settings" in text
+    assert "virtualenv" in app.venv_path.replace("\\", "/")

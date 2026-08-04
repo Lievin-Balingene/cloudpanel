@@ -146,6 +146,14 @@ def resolve_app_root(owner: User, relative_root: str) -> tuple[str, Path]:
         raise VZoneAPIException(detail="Chemin applicatif requis.", code="invalid_root", status_code=400)
     if ".." in Path(rel).parts:
         raise VZoneAPIException(detail="Chemin invalide.", code="invalid_root", status_code=400)
+    # Interdire de pointer le venv cPanel comme application root
+    parts = Path(rel).parts
+    if parts and parts[0] == "virtualenv":
+        raise VZoneAPIException(
+            detail="L'application root ne peut pas être sous virtualenv/ (réservé au venv).",
+            code="invalid_root",
+            status_code=400,
+        )
     home = user_home(owner)
     target = (home / rel).resolve()
     try:
@@ -157,6 +165,23 @@ def resolve_app_root(owner: User, relative_root: str) -> tuple[str, Path]:
             status_code=403,
         ) from exc
     return rel, target
+
+
+def cpanel_venv_path(owner: User, app_name: str, python_version: str) -> Path:
+    """Comme cPanel : ~/virtualenv/<app>/<python_version>/ (hors du projet Django)."""
+    version = (python_version or "3.12").strip() or "3.12"
+    return user_home(owner) / "virtualenv" / app_name / version
+
+
+def detect_django_project_package(app_root: Path) -> str:
+    """Trouve le package settings à côté de manage.py (même répertoire que passenger_wsgi)."""
+    if (app_root / "manage.py").exists():
+        for child in sorted(app_root.iterdir()):
+            if not child.is_dir() or child.name.startswith(".") or child.name in {"static", "media", "logs", "public"}:
+                continue
+            if (child / "settings.py").exists():
+                return child.name
+    return DJANGO_PROJECT_PACKAGE
 
 
 def allocate_port(owner: User) -> int:
@@ -226,6 +251,10 @@ def write_app_config(app: PythonApp) -> Path:
 
 
 def _scaffold(app_root: Path, mode: str, framework: str) -> None:
+    """
+    Prépare l'application root (comme cPanel) :
+    passenger_wsgi.py / asgi.py vivent DANS le même dossier que le projet Django (manage.py).
+    """
     app_root.mkdir(parents=True, exist_ok=True)
     (app_root / "logs").mkdir(exist_ok=True)
     req = app_root / "requirements.txt"
@@ -244,17 +273,21 @@ def _scaffold(app_root: Path, mode: str, framework: str) -> None:
             entry.write_text(ASGI_TEMPLATE, encoding="utf-8")
     else:
         entry = app_root / "passenger_wsgi.py"
-        if not entry.exists():
-            settings_mod = (
-                f"{DJANGO_PROJECT_PACKAGE}.settings"
-                if framework == PythonApp.Framework.DJANGO
-                else "project.settings"
-            )
+        pkg = detect_django_project_package(app_root) if framework == PythonApp.Framework.DJANGO else "project"
+        settings_mod = f"{pkg}.settings"
+        write_passenger = not entry.exists()
+        if framework == PythonApp.Framework.DJANGO and (app_root / "manage.py").exists():
+            # Projet déjà présent : (ré)générer passenger_wsgi aligné sur le package détecté
+            write_passenger = True
+        if write_passenger:
             entry.write_text(WSGI_TEMPLATE.format(settings_module=settings_mod), encoding="utf-8")
     readme = app_root / "README.vzone.md"
     if not readme.exists():
         readme.write_text(
-            f"# Application Python V-zone\n\nMode: {mode}\nFramework: {framework}\n",
+            "# Application Python V-zone (style cPanel)\n\n"
+            f"Mode: {mode}\nFramework: {framework}\n\n"
+            "Le fichier `passenger_wsgi.py` doit rester dans **ce** répertoire "
+            "(même dossier que `manage.py` pour Django).\n",
             encoding="utf-8",
         )
 
@@ -266,57 +299,62 @@ def absolute_app_root(app: PythonApp) -> Path:
 
 def enter_command_for(app: PythonApp) -> str:
     """
-    Une ligne à coller dans le terminal SSH (style cPanel Application Manager) :
-    source <venv>/bin/activate && cd <app_root>
+    Une ligne à coller dans le terminal SSH (cPanel Application Manager) :
+    source ~/virtualenv/<app>/<ver>/bin/activate && cd <application_root>
     """
     app_root = absolute_app_root(app)
-    venv = Path(app.venv_path) if app.venv_path else app_root / ".venv"
+    venv = Path(app.venv_path) if app.venv_path else cpanel_venv_path(app.owner, app.name, app.python_version)
     activate = venv / "bin" / "activate"
     return f"source {activate} && cd {app_root}"
 
 
 def deploy_script_for(app: PythonApp) -> str:
-    """Script multi-lignes à coller pour déployer (surtout Django), comme sur cPanel."""
+    """Script multi-lignes à coller — projet Django + passenger_wsgi dans le même dossier."""
     app_root = absolute_app_root(app)
     enter = enter_command_for(app)
+    pkg = detect_django_project_package(app_root)
     lines = [
-        "# V-zone — déployer l'app Python (collez dans un terminal SSH)",
+        "# V-zone / cPanel — déployer dans l'Application root",
+        "# passenger_wsgi.py et le projet Django sont dans LE MÊME répertoire.",
         enter,
         "pip install --upgrade pip",
         "pip install -r requirements.txt",
     ]
     if app.framework == PythonApp.Framework.DJANGO:
-        pkg = DJANGO_PROJECT_PACKAGE
         lines.extend(
             [
-                f"# Créer le projet Django une seule fois (si manage.py n'existe pas encore) :",
+                "# Créer le projet ICI (à côté de passenger_wsgi.py) si besoin :",
                 f"if [ ! -f manage.py ]; then django-admin startproject {pkg} .; fi",
-                "# Vérifiez passenger_wsgi.py → DJANGO_SETTINGS_MODULE="
-                f"{pkg}.settings",
+                f"# passenger_wsgi.py → DJANGO_SETTINGS_MODULE={pkg}.settings",
                 "python manage.py migrate",
                 "python manage.py collectstatic --noinput || true",
-                "# Puis dans le panel : Start sur l'application.",
+                "# Puis dans le panel : Start.",
             ]
         )
     elif app.framework == PythonApp.Framework.FLASK:
-        lines.append("# Placez votre app Flask et pointez entrypoint (ex: app:app), puis Start.")
+        lines.append("# Placez votre app Flask ici (même dossier), puis Start.")
     elif app.framework == PythonApp.Framework.FASTAPI:
-        lines.append("# Placez votre asgi.py (asgi:application), puis Start dans le panel.")
+        lines.append("# Placez asgi.py ici, puis Start.")
     else:
-        lines.append("# Déposez votre code, mettez à jour requirements.txt, puis Start.")
+        lines.append("# Déposez votre code ici, puis Start.")
     if app.domain_name:
-        lines.append(f"# Domaine lié : {app.domain_name} (nginx proxy quand l'app est running)")
+        lines.append(f"# Application URL / domaine : {app.domain_name}")
     lines.append(f"# Application root : {app_root}")
+    lines.append(f"# passenger_wsgi.py : {app_root / 'passenger_wsgi.py'}")
     return "\n".join(lines) + "\n"
 
 
 def deploy_info(app: PythonApp) -> dict:
     """Métadonnées affichées dans le panel (chemin + commandes à copier)."""
     app_root = absolute_app_root(app)
-    venv = Path(app.venv_path) if app.venv_path else app_root / ".venv"
+    venv = Path(app.venv_path) if app.venv_path else cpanel_venv_path(app.owner, app.name, app.python_version)
     enter = enter_command_for(app)
     script = deploy_script_for(app)
-    # Persister pour SSH / File Manager
+    pkg = (
+        detect_django_project_package(app_root)
+        if app.framework == PythonApp.Framework.DJANGO
+        else ""
+    )
     try:
         (app_root / "ENTER.sh").write_text(f"#!/usr/bin/env bash\n{enter}\n", encoding="utf-8")
         (app_root / "DEPLOY.sh").write_text(f"#!/usr/bin/env bash\nset -euo pipefail\n{script}", encoding="utf-8")
@@ -330,20 +368,20 @@ def deploy_info(app: PythonApp) -> dict:
         "passenger_wsgi": str(app_root / "passenger_wsgi.py")
         if app.mode == PythonApp.Mode.WSGI
         else "",
-        "django_project": DJANGO_PROJECT_PACKAGE
-        if app.framework == PythonApp.Framework.DJANGO
-        else "",
+        "django_project": pkg,
+        "home_path": str(user_home(app.owner)),
     }
 
 
-def create_venv(app_root: Path, version: str) -> Path:
-    venv_dir = app_root / ".venv"
+def create_venv(venv_dir: Path, version: str) -> Path:
+    """Crée le venv cPanel sous ~/virtualenv/<app>/<version>/."""
     if provision_mode() == "mock" or not should_execute():
         venv_dir.mkdir(parents=True, exist_ok=True)
         (venv_dir / "bin").mkdir(exist_ok=True)
         marker = venv_dir / "pyvenv.cfg"
         marker.write_text(f"home = mock\nversion = {version}\n", encoding="utf-8")
         return venv_dir
+    venv_dir.parent.mkdir(parents=True, exist_ok=True)
     if not (venv_dir / "pyvenv.cfg").exists():
         py = python_binary(version)
         _run([py, "-m", "venv", str(venv_dir)])
@@ -387,13 +425,23 @@ def create_python_app(
         raise VZoneAPIException(detail="Cette application existe déjà.", code="exists", status_code=400)
 
     if framework == PythonApp.Framework.DJANGO:
-        # Comme cPanel : Django tourne en WSGI (passenger_wsgi + gunicorn).
+        # Comme cPanel : Django = WSGI + passenger_wsgi.py dans l'application root.
         mode = PythonApp.Mode.WSGI
 
-    rel = relative_root.strip() or f"apps/{slug}"
+    # Application root = chemin du projet (cPanel). Défaut = nom de l'app (PAS apps/…).
+    rel = relative_root.strip().replace("\\", "/").strip("/")
+    if not rel:
+        if framework == PythonApp.Framework.DJANGO:
+            raise VZoneAPIException(
+                detail="Indiquez l'Application root (chemin du projet Django), comme sur cPanel.",
+                code="application_root_required",
+                status_code=400,
+            )
+        rel = slug
+
     rel, app_root = resolve_app_root(owner, rel)
     _scaffold(app_root, mode, framework)
-    venv_dir = create_venv(app_root, python_version)
+    venv_dir = create_venv(cpanel_venv_path(owner, slug, python_version), python_version)
 
     if not entrypoint:
         entrypoint = "asgi:application" if mode == PythonApp.Mode.ASGI else "passenger_wsgi.py"
@@ -415,7 +463,7 @@ def create_python_app(
         status=PythonApp.Status.STOPPED,
     )
     write_app_config(app)
-    deploy_info(app)  # écrit ENTER.sh / DEPLOY.sh dans le root app
+    deploy_info(app)
     _refresh_domain_routing()
     return app
 
@@ -454,7 +502,7 @@ def install_requirements(app: PythonApp) -> dict:
     req = app_root / (app.requirements_file or "requirements.txt")
     if not req.exists():
         raise VZoneAPIException(detail="requirements.txt introuvable.", code="no_requirements", status_code=400)
-    venv_dir = Path(app.venv_path) if app.venv_path else app_root / ".venv"
+    venv_dir = Path(app.venv_path) if app.venv_path else cpanel_venv_path(app.owner, app.name, app.python_version)
     py = venv_python(venv_dir)
     if provision_mode() == "mock" or not py.exists():
         log = app_root / "logs" / "pip.log"
@@ -506,7 +554,7 @@ def start_python_app(app: PythonApp) -> PythonApp:
     if not app.is_active:
         raise VZoneAPIException(detail="Application désactivée.", code="inactive", status_code=400)
     _, app_root = resolve_app_root(app.owner, app.relative_root)
-    venv_dir = Path(app.venv_path) if app.venv_path else app_root / ".venv"
+    venv_dir = Path(app.venv_path) if app.venv_path else cpanel_venv_path(app.owner, app.name, app.python_version)
     py = venv_python(venv_dir)
     pid_file = app_root / "logs" / "app.pid"
     env = os.environ.copy()
@@ -610,6 +658,15 @@ def delete_python_app(app: PythonApp, *, remove_files: bool = False) -> None:
             shutil.rmtree(app_root, ignore_errors=True)
         except VZoneAPIException:
             pass
+        venv = Path(app.venv_path) if app.venv_path else cpanel_venv_path(app.owner, app.name, app.python_version)
+        shutil.rmtree(venv, ignore_errors=True)
+        # Nettoyer virtualenv/<app>/ s'il est vide
+        try:
+            parent = venv.parent
+            if parent.is_dir() and not any(parent.iterdir()):
+                parent.rmdir()
+        except OSError:
+            pass
     app.delete()
     _refresh_domain_routing()
 
@@ -635,4 +692,5 @@ def overview_for(user: User) -> dict:
         "stopped": qs.filter(status=PythonApp.Status.STOPPED).count(),
         "error": qs.filter(status=PythonApp.Status.ERROR).count(),
         "provision_mode": provision_mode(),
+        "home_path": str(user_home(user)),
     }
