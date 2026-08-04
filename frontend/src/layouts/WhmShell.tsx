@@ -26,37 +26,64 @@ import {
   Shield,
   KeyRound,
   ArrowRightLeft,
+  UserPlus,
 } from "lucide-react";
 import { useAuthStore } from "@/stores/auth";
 import { useThemeStore } from "@/stores/theme";
 import { OperationProgressHost } from "@/components/OperationProgressHost";
 
-const nav = [
-  { to: "/whm", end: true, label: "Accueil WHM", icon: LayoutDashboard },
-  { to: "/whm/server-setup", label: "Basic Setup", icon: Server },
-  { to: "/whm/accounts", label: "Comptes", icon: Users },
-  { to: "/whm/transfer", label: "Transfer Tool", icon: ArrowRightLeft },
-  { to: "/whm/packages", label: "Packages", icon: Package },
-  { to: "/whm/domains", label: "Domaines", icon: AppWindow },
-  { to: "/whm/files", label: "File Manager", icon: FolderOpen },
-  { to: "/whm/ftp", label: "FTP", icon: Upload },
-  { to: "/whm/email", label: "Email", icon: Mail },
-  { to: "/whm/databases", label: "Bases", icon: Database },
-  { to: "/whm/python", label: "Python", icon: Code2 },
-  { to: "/whm/node", label: "Node.js", icon: Terminal },
-  { to: "/whm/php", label: "PHP", icon: FileCode2 },
-  { to: "/whm/wordpress", label: "WordPress", icon: LayoutTemplate },
-  { to: "/whm/kubernetes", label: "Kubernetes", icon: Network },
-  { to: "/whm/terminal", label: "Terminal SSH", icon: Terminal },
-  { to: "/whm/git", label: "Git", icon: GitBranch },
-  { to: "/whm/docker", label: "Docker", icon: Box },
-  { to: "/whm/backups", label: "Backups", icon: HardDrive },
-  { to: "/whm/monitoring", label: "Monitoring", icon: Bell },
-  { to: "/whm/firewall", label: "Firewall", icon: Shield },
-  { to: "/whm/security", label: "Sécurité", icon: KeyRound },
-  { to: "/whm/account-security", label: "Mon 2FA", icon: KeyRound },
-  { to: "/whm/dns", label: "Fonctions DNS", icon: Globe },
-  { to: "/whm/resources", label: "Ressources serveur", icon: Activity },
+const navSections = [
+  {
+    title: "Favorites",
+    items: [
+      { to: "/whm", end: true, label: "Home", icon: LayoutDashboard },
+      { to: "/whm/accounts/create", label: "Create a New Account", icon: UserPlus },
+      { to: "/whm/accounts", label: "List Accounts", icon: Users },
+      { to: "/whm/server-setup", label: "Basic WebHost Manager Setup", icon: Server },
+    ],
+  },
+  {
+    title: "Account Functions",
+    items: [
+      { to: "/whm/transfer", label: "Transfer Tool", icon: ArrowRightLeft },
+      { to: "/whm/packages", label: "Packages", icon: Package },
+      { to: "/whm/domains", label: "Domains", icon: AppWindow },
+      { to: "/whm/dns", label: "DNS Functions", icon: Globe },
+    ],
+  },
+  {
+    title: "Service Configuration",
+    items: [
+      { to: "/whm/email", label: "Email", icon: Mail },
+      { to: "/whm/databases", label: "Databases", icon: Database },
+      { to: "/whm/ftp", label: "FTP", icon: Upload },
+      { to: "/whm/files", label: "File Manager", icon: FolderOpen },
+    ],
+  },
+  {
+    title: "Software",
+    items: [
+      { to: "/whm/python", label: "Setup Python App", icon: Code2 },
+      { to: "/whm/node", label: "Setup Node.js App", icon: Terminal },
+      { to: "/whm/php", label: "MultiPHP Manager", icon: FileCode2 },
+      { to: "/whm/wordpress", label: "WordPress", icon: LayoutTemplate },
+      { to: "/whm/git", label: "Git Version Control", icon: GitBranch },
+    ],
+  },
+  {
+    title: "Server",
+    items: [
+      { to: "/whm/terminal", label: "Terminal", icon: Terminal },
+      { to: "/whm/docker", label: "Docker", icon: Box },
+      { to: "/whm/kubernetes", label: "Kubernetes", icon: Network },
+      { to: "/whm/backups", label: "Backup", icon: HardDrive },
+      { to: "/whm/monitoring", label: "Service Status", icon: Bell },
+      { to: "/whm/resources", label: "Server Information", icon: Activity },
+      { to: "/whm/firewall", label: "Firewall", icon: Shield },
+      { to: "/whm/security", label: "Security Center", icon: KeyRound },
+      { to: "/whm/account-security", label: "Two-Factor Auth", icon: KeyRound },
+    ],
+  },
 ];
 
 export function WhmShell() {
@@ -67,54 +94,68 @@ export function WhmShell() {
 
   return (
     <div className="flex min-h-screen bg-cp-canvas dark:bg-surface-dark">
-      <aside className="flex w-64 shrink-0 flex-col bg-cp-sidebar text-white">
-        <div className="flex items-center gap-2 border-b border-white/10 bg-cp-header px-4 py-3">
-          <Server className="h-5 w-5 text-white/80" />
-          <div>
-            <p className="text-sm font-semibold tracking-wide">V-zone WHM</p>
-            <p className="text-[11px] text-white/60">Web Host Manager</p>
+      <aside className="flex w-[260px] shrink-0 flex-col bg-cp-sidebar text-white shadow-[4px_0_24px_rgba(0,0,0,0.18)]">
+        <div className="flex items-center gap-3 border-b border-white/10 bg-cp-header px-4 py-3.5">
+          <div className="flex h-9 w-9 items-center justify-center rounded-md bg-cp-orange text-sm font-bold text-white shadow">
+            VZ
+          </div>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold tracking-wide">V-zone WHM</p>
+            <p className="text-[10px] uppercase tracking-wider text-white/50">Web Host Manager</p>
           </div>
         </div>
-        <div className="border-b border-white/10 px-4 py-2 text-[11px] uppercase tracking-wider text-white/50">
-          Navigation serveur
-        </div>
-        <nav className="flex-1 overflow-y-auto">
-          {nav.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              className={({ isActive }) =>
-                `whm-nav-item flex items-center gap-2 ${isActive ? "whm-nav-item-active" : ""}`
-              }
-            >
-              <item.icon className="h-4 w-4 opacity-90" />
-              {item.label}
-            </NavLink>
+        <nav className="flex-1 overflow-y-auto pb-4">
+          {navSections.map((section) => (
+            <div key={section.title}>
+              <p className="whm-section-title">{section.title}</p>
+              {section.items.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.end}
+                  className={({ isActive }) =>
+                    `whm-nav-item ${isActive ? "whm-nav-item-active" : ""}`
+                  }
+                >
+                  <item.icon className="h-4 w-4 shrink-0 opacity-90" />
+                  <span className="truncate">{item.label}</span>
+                </NavLink>
+              ))}
+            </div>
           ))}
         </nav>
-        <div className="border-t border-white/10 p-3 text-xs text-white/70">
+        <div className="border-t border-white/10 bg-cp-header/80 p-3 text-xs text-white/70">
           <p className="truncate font-medium text-white">{user?.username}</p>
-          <p className="capitalize">{user?.role}</p>
+          <p className="capitalize text-white/50">{user?.role}</p>
         </div>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-cp-border bg-cp-header px-4 py-2 text-white">
-          <p className="text-sm">
-            Serveur · <span className="font-semibold text-white">V-zone Panel</span>
-          </p>
-          <div className="flex items-center gap-2">
-            <button type="button" className="rounded px-2 py-1 hover:bg-white/10" onClick={toggle}>
+        <header className="flex items-center justify-between border-b border-black/20 bg-cp-header px-4 py-2.5 text-white shadow">
+          <div className="flex items-center gap-3">
+            <span className="rounded bg-cp-orange px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide">
+              WHM
+            </span>
+            <p className="text-sm text-white/90">
+              Hostname tools · <span className="font-semibold text-white">V-zone Panel</span>
+            </p>
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              className="rounded-md px-2.5 py-1.5 text-white/80 hover:bg-white/10 hover:text-white"
+              onClick={toggle}
+              title="Theme"
+            >
               {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
             <button
               type="button"
-              className="inline-flex items-center gap-1 rounded px-2 py-1 text-sm hover:bg-white/10"
+              className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-white/90 hover:bg-white/10"
               onClick={() => void logout()}
             >
               <LogOut className="h-4 w-4" />
-              Quitter
+              Logout
             </button>
           </div>
         </header>

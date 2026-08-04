@@ -5,15 +5,15 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Palette WHM/cPanel sobre : navy + bleu, orange réservé (quasi retiré)
         cp: {
-          orange: "#1a5fb4",
-          "orange-dark": "#154a8f",
-          "orange-soft": "#e8f0fa",
+          // Accent cPanel/WHM classique
+          orange: "#ff6c2c",
+          "orange-dark": "#e55a1c",
+          "orange-soft": "#fff3ec",
           navy: "#152536",
           "navy-soft": "#1e3348",
-          sidebar: "#1b2d3f",
-          header: "#152536",
+          sidebar: "#1f2a36",
+          header: "#161d26",
           border: "#d5dde5",
           canvas: "#eef2f6",
           panel: "#ffffff",
@@ -24,6 +24,13 @@ export default {
           "link-soft": "#e8f0fa",
           success: "#2e7d32",
           danger: "#c62828",
+        },
+        whm: {
+          accent: "#ff6c2c",
+          "accent-dark": "#e55a1c",
+          sidebar: "#1f2a36",
+          "sidebar-deep": "#161d26",
+          rail: "#ff6c2c",
         },
         ink: {
           50: "#f4f7fb",

@@ -9,6 +9,8 @@ import { WhmPackagesPage } from "./pages/whm/WhmPackagesPage";
 import { WhmDnsPage } from "./pages/whm/WhmDnsPage";
 import { WhmResourcesPage } from "./pages/whm/WhmResourcesPage";
 import { WhmAccountsPage } from "./pages/whm/WhmAccountsPage";
+import { WhmCreateAccountPage } from "./pages/whm/WhmCreateAccountPage";
+import { WhmAccountCreatedPage } from "./pages/whm/WhmAccountCreatedPage";
 import { WhmDomainsPage } from "./pages/whm/WhmDomainsPage";
 import { WhmFilesPage } from "./pages/whm/WhmFilesPage";
 import { WhmFtpPage } from "./pages/whm/WhmFtpPage";
@@ -103,6 +105,8 @@ export default function App() {
         }
       >
         <Route index element={<WhmHomePage />} />
+        <Route path="accounts/create" element={<WhmCreateAccountPage />} />
+        <Route path="accounts/created" element={<WhmAccountCreatedPage />} />
         <Route path="accounts" element={<WhmAccountsPage />} />
         <Route path="transfer" element={<WhmTransferPage />} />
         <Route path="packages" element={<WhmPackagesPage />} />

@@ -1,5 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ExternalLink, Search, UserPlus } from "lucide-react";
 import { apiRequest } from "@/lib/api";
 import type { HostingPackage, User } from "@/types";
 
@@ -11,15 +13,6 @@ type EditForm = {
   role: string;
   package_id: string;
   is_active: boolean;
-};
-
-const emptyCreate = {
-  email: "",
-  username: "",
-  password: "",
-  domain: "",
-  role: "client",
-  package_id: "",
 };
 
 export function WhmAccountsPage() {
@@ -36,7 +29,7 @@ export function WhmAccountsPage() {
     queryFn: () => apiRequest<HostingPackage[]>("/packages/?type=client"),
   });
 
-  const [form, setForm] = useState(emptyCreate);
+  const [q, setQ] = useState("");
   const [editing, setEditing] = useState<User | null>(null);
   const [editForm, setEditForm] = useState<EditForm | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -60,33 +53,7 @@ export function WhmAccountsPage() {
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["users"] });
     void qc.invalidateQueries({ queryKey: ["dashboard-overview"] });
-    void qc.invalidateQueries({ queryKey: ["domains"] });
   };
-
-  const createUser = useMutation({
-    mutationFn: async () => {
-      const payload: Record<string, unknown> = {
-        email: form.email,
-        username: form.username,
-        password: form.password,
-        role: form.role,
-        domain: form.domain.trim().toLowerCase(),
-      };
-      if (form.package_id) {
-        payload.package_id = Number(form.package_id);
-      }
-      return apiRequest<User>("/auth/users/", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-    },
-    onSuccess: () => {
-      setError(null);
-      invalidate();
-      setForm(emptyCreate);
-    },
-    onError: (err: Error) => setError(err.message || "Création impossible."),
-  });
 
   const updateUser = useMutation({
     mutationFn: async () => {
@@ -99,9 +66,7 @@ export function WhmAccountsPage() {
         is_active: editForm.is_active,
         is_suspended: !editForm.is_active,
       };
-      if (editForm.password.trim()) {
-        payload.password = editForm.password.trim();
-      }
+      if (editForm.password.trim()) payload.password = editForm.password.trim();
       await apiRequest(`/auth/users/${editing.id}/`, {
         method: "PATCH",
         body: JSON.stringify(payload),
@@ -147,11 +112,15 @@ export function WhmAccountsPage() {
     onError: (err: Error) => setError(err.message || "Suppression impossible."),
   });
 
-  function onSubmit(e: FormEvent) {
-    e.preventDefault();
-    setError(null);
-    createUser.mutate();
-  }
+  const filtered = users.filter((u) => {
+    const s = q.trim().toLowerCase();
+    if (!s) return true;
+    return (
+      u.username.toLowerCase().includes(s) ||
+      u.email.toLowerCase().includes(s) ||
+      (u.primary_domain || "").toLowerCase().includes(s)
+    );
+  });
 
   function onSaveEdit(e: FormEvent) {
     e.preventDefault();
@@ -161,106 +130,50 @@ export function WhmAccountsPage() {
 
   return (
     <div className="space-y-4 animate-fade-up">
-      <div className="vz-panel p-4">
-        <h1 className="text-xl font-semibold text-cp-text">Create a New Account</h1>
-        <p className="text-sm text-cp-muted">
-          Comme cPanel : username + domaine principal → home,{" "}
-          <code className="font-mono text-xs">public_html</code>, zone DNS et vhost nginx.
-        </p>
+      <div className="whm-page-head">
+        <div className="whm-page-head-bar flex flex-wrap items-center justify-between gap-2">
+          <h1 className="text-sm font-semibold uppercase tracking-wide">List Accounts</h1>
+          <Link to="/whm/accounts/create" className="whm-btn-create !py-1.5 text-xs">
+            <UserPlus className="h-3.5 w-3.5" />
+            Create a New Account
+          </Link>
+        </div>
+        <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+          <div className="relative min-w-[220px] flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-cp-muted" />
+            <input
+              className="vz-input pl-9"
+              placeholder="Search by user, domain, email…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
+          </div>
+          <p className="text-xs text-cp-muted">
+            {filtered.length} account{filtered.length === 1 ? "" : "s"}
+          </p>
+        </div>
       </div>
 
-      <form className="vz-panel grid gap-3 p-4 md:grid-cols-2 lg:grid-cols-3" onSubmit={onSubmit}>
-        <label className="space-y-1">
-          <span className="text-[11px] font-medium text-cp-muted">Username *</span>
-          <input
-            className="vz-input"
-            placeholder="ex: johndoe"
-            required
-            value={form.username}
-            onChange={(e) => setForm({ ...form, username: e.target.value })}
-          />
-        </label>
-        <label className="space-y-1 lg:col-span-2">
-          <span className="text-[11px] font-medium text-cp-muted">Domain *</span>
-          <input
-            className="vz-input"
-            placeholder="exemple.com"
-            required
-            value={form.domain}
-            onChange={(e) => setForm({ ...form, domain: e.target.value })}
-          />
-          <span className="text-[11px] text-cp-muted">
-            Domaine principal → <code className="font-mono">~/public_html</code> + DNS A + nginx
-          </span>
-        </label>
-        <label className="space-y-1 lg:col-span-2">
-          <span className="text-[11px] font-medium text-cp-muted">Email *</span>
-          <input
-            className="vz-input"
-            type="email"
-            placeholder="email"
-            required
-            value={form.email}
-            onChange={(e) => setForm({ ...form, email: e.target.value })}
-          />
-        </label>
-        <label className="space-y-1">
-          <span className="text-[11px] font-medium text-cp-muted">Password *</span>
-          <input
-            className="vz-input"
-            type="password"
-            placeholder="mot de passe"
-            required
-            minLength={10}
-            value={form.password}
-            onChange={(e) => setForm({ ...form, password: e.target.value })}
-          />
-        </label>
-        <label className="space-y-1">
-          <span className="text-[11px] font-medium text-cp-muted">Package</span>
-          <select
-            className="vz-input"
-            value={form.package_id}
-            onChange={(e) => setForm({ ...form, package_id: e.target.value })}
-          >
-            <option value="">Package…</option>
-            {packages.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="flex items-end">
-          <button className="vz-btn-primary w-full" type="submit" disabled={createUser.isPending}>
-            Créer le compte
-          </button>
-        </div>
-      </form>
-
       {editing && editForm && (
-        <form className="vz-panel space-y-3 border-cp-link/30 p-4" onSubmit={onSaveEdit}>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="font-semibold text-cp-navy">
-              Modifier <span className="font-mono">{editing.username}</span>
-              {editing.primary_domain && (
-                <span className="ml-2 text-sm font-normal text-cp-muted">
-                  ({editing.primary_domain})
-                </span>
-              )}
+        <form
+          className="overflow-hidden rounded-lg border border-cp-link/30 bg-white shadow-panel dark:border-ink-700 dark:bg-ink-950"
+          onSubmit={onSaveEdit}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-cp-border bg-cp-header px-4 py-2 text-white dark:border-ink-800">
+            <h2 className="text-sm font-semibold">
+              Modify Account · <span className="font-mono">{editing.username}</span>
             </h2>
-            <button type="button" className="vz-btn-ghost" onClick={() => setEditing(null)}>
-              Annuler
+            <button type="button" className="text-sm text-white/80 hover:text-white" onClick={() => setEditing(null)}>
+              Cancel
             </button>
           </div>
-          <div className="grid gap-2 md:grid-cols-3">
+          <div className="grid gap-3 p-4 md:grid-cols-3">
             <input
               className="vz-input md:col-span-2"
               type="email"
               required
               value={editForm.email}
               onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
-              placeholder="email"
             />
             <select
               className="vz-input"
@@ -268,17 +181,17 @@ export function WhmAccountsPage() {
               onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}
             >
               <option value="client">Client</option>
-              <option value="reseller">Revendeur</option>
+              <option value="reseller">Reseller</option>
             </select>
             <input
               className="vz-input"
-              placeholder="Prénom"
+              placeholder="First name"
               value={editForm.first_name}
               onChange={(e) => setEditForm({ ...editForm, first_name: e.target.value })}
             />
             <input
               className="vz-input"
-              placeholder="Nom"
+              placeholder="Last name"
               value={editForm.last_name}
               onChange={(e) => setEditForm({ ...editForm, last_name: e.target.value })}
             />
@@ -286,7 +199,7 @@ export function WhmAccountsPage() {
               className="vz-input"
               type="password"
               minLength={10}
-              placeholder="Nouveau mot de passe (optionnel)"
+              placeholder="New password (optional)"
               value={editForm.password}
               onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
             />
@@ -295,23 +208,23 @@ export function WhmAccountsPage() {
               value={editForm.package_id}
               onChange={(e) => setEditForm({ ...editForm, package_id: e.target.value })}
             >
-              <option value="">Package (inchangé)…</option>
+              <option value="">Package (unchanged)…</option>
               {packages.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
                 </option>
               ))}
             </select>
-            <label className="flex items-center gap-2 text-sm text-cp-text">
+            <label className="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
                 checked={editForm.is_active}
                 onChange={(e) => setEditForm({ ...editForm, is_active: e.target.checked })}
               />
-              Compte actif
+              Active
             </label>
-            <button className="vz-btn-primary" type="submit" disabled={updateUser.isPending}>
-              Enregistrer
+            <button className="whm-btn-create" type="submit" disabled={updateUser.isPending}>
+              Save
             </button>
           </div>
         </form>
@@ -323,58 +236,74 @@ export function WhmAccountsPage() {
         </p>
       )}
 
-      <div className="vz-panel overflow-x-auto">
+      <div className="overflow-hidden rounded-lg border border-cp-border bg-white shadow-panel dark:border-ink-800 dark:bg-ink-950">
         <table className="min-w-full text-left text-sm">
-          <thead className="bg-cp-canvas text-xs uppercase text-cp-muted dark:bg-ink-900">
+          <thead className="bg-cp-canvas text-[11px] uppercase tracking-wide text-cp-muted dark:bg-ink-900">
             <tr>
-              <th className="px-3 py-2">Compte</th>
-              <th className="px-3 py-2">Domaine</th>
-              <th className="px-3 py-2">E-mail</th>
-              <th className="px-3 py-2">Rôle</th>
-              <th className="px-3 py-2">État</th>
-              <th className="px-3 py-2">Disque</th>
-              <th className="px-3 py-2">Actions</th>
+              <th className="px-3 py-2.5">Domain</th>
+              <th className="px-3 py-2.5">User</th>
+              <th className="px-3 py-2.5">Email</th>
+              <th className="px-3 py-2.5">Role</th>
+              <th className="px-3 py-2.5">Status</th>
+              <th className="px-3 py-2.5">Disk</th>
+              <th className="px-3 py-2.5">Actions</th>
             </tr>
           </thead>
           <tbody>
             {isLoading && (
               <tr>
-                <td className="px-3 py-4" colSpan={7}>
-                  Chargement…
+                <td className="px-3 py-6 text-cp-muted" colSpan={7}>
+                  Loading…
                 </td>
               </tr>
             )}
-            {users.map((u) => (
-              <tr key={u.id} className="border-t border-cp-border dark:border-ink-800">
-                <td className="px-3 py-2 font-medium">{u.username}</td>
-                <td className="px-3 py-2 font-mono text-xs text-cp-navy dark:text-ink-200">
-                  {u.primary_domain || "—"}
-                </td>
-                <td className="px-3 py-2">{u.email}</td>
-                <td className="px-3 py-2 capitalize">{u.role}</td>
-                <td className="px-3 py-2">
-                  {u.is_suspended ? "suspendu" : u.is_active ? "actif" : "inactif"}
-                </td>
-                <td className="px-3 py-2">
-                  {u.quota?.unlimited_disk ? "∞" : `${u.quota?.disk_mb ?? "—"} Mo`}
-                </td>
-                <td className="px-3 py-2">
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      className="text-cp-link hover:underline"
-                      onClick={() => setEditing(u)}
+            {filtered.map((u) => (
+              <tr key={u.id} className="border-t border-cp-border/80 hover:bg-cp-orange-soft/40 dark:border-ink-800 dark:hover:bg-ink-900/50">
+                <td className="px-3 py-2.5">
+                  {u.primary_domain ? (
+                    <a
+                      href={`http://${u.primary_domain}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 font-mono text-xs text-cp-link hover:underline"
                     >
-                      Modifier
+                      {u.primary_domain}
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  ) : (
+                    <span className="text-cp-muted">—</span>
+                  )}
+                </td>
+                <td className="px-3 py-2.5 font-medium">{u.username}</td>
+                <td className="px-3 py-2.5 text-cp-muted">{u.email}</td>
+                <td className="px-3 py-2.5 capitalize">{u.role}</td>
+                <td className="px-3 py-2.5">
+                  <span
+                    className={
+                      u.is_suspended
+                        ? "text-cp-danger"
+                        : u.is_active
+                          ? "text-cp-success"
+                          : "text-cp-muted"
+                    }
+                  >
+                    {u.is_suspended ? "suspended" : u.is_active ? "active" : "inactive"}
+                  </span>
+                </td>
+                <td className="px-3 py-2.5">
+                  {u.quota?.unlimited_disk ? "∞" : `${u.quota?.disk_mb ?? "—"} MB`}
+                </td>
+                <td className="px-3 py-2.5">
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    <button type="button" className="text-cp-link hover:underline" onClick={() => setEditing(u)}>
+                      Modify
                     </button>
                     <button
                       type="button"
                       className="text-cp-muted hover:underline"
-                      onClick={() =>
-                        suspendUser.mutate({ id: u.id, suspended: !u.is_suspended })
-                      }
+                      onClick={() => suspendUser.mutate({ id: u.id, suspended: !u.is_suspended })}
                     >
-                      {u.is_suspended ? "Réactiver" : "Suspendre"}
+                      {u.is_suspended ? "Unsuspend" : "Suspend"}
                     </button>
                     <button
                       type="button"
@@ -382,23 +311,26 @@ export function WhmAccountsPage() {
                       onClick={() => {
                         if (
                           window.confirm(
-                            `Supprimer le compte « ${u.username} » et son home ? Cette action est irréversible.`,
+                            `Delete account « ${u.username} » and its home directory? This cannot be undone.`,
                           )
                         ) {
                           deleteUser.mutate(u.id);
                         }
                       }}
                     >
-                      Supprimer
+                      Terminate
                     </button>
                   </div>
                 </td>
               </tr>
             ))}
-            {!isLoading && users.length === 0 && (
+            {!isLoading && filtered.length === 0 && (
               <tr>
-                <td className="px-3 py-4 text-cp-muted" colSpan={7}>
-                  Aucun compte.
+                <td className="px-3 py-8 text-center text-cp-muted" colSpan={7}>
+                  No accounts.{" "}
+                  <Link to="/whm/accounts/create" className="text-cp-link hover:underline">
+                    Create a New Account
+                  </Link>
                 </td>
               </tr>
             )}

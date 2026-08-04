@@ -53,16 +53,53 @@ html.dark body {
   }
 
   .whm-nav-item {
-    @apply block border-b border-white/10 px-4 py-2.5 text-sm text-white/90 transition hover:bg-white/10;
+    @apply relative flex items-center gap-2.5 border-b border-white/[0.06] px-4 py-2.5 text-[13px]
+      text-white/85 transition hover:bg-white/10 hover:text-white;
   }
 
   .whm-nav-item-active {
-    @apply bg-cp-link text-white hover:bg-cp-link;
+    @apply bg-white/10 font-semibold text-white;
+  }
+
+  .whm-nav-item-active::before {
+    content: "";
+    @apply absolute bottom-0 left-0 top-0 w-[3px] bg-cp-orange;
+  }
+
+  .whm-section-title {
+    @apply px-4 pb-1.5 pt-4 text-[10px] font-bold uppercase tracking-[0.14em] text-white/40;
+  }
+
+  .whm-page-head {
+    @apply mb-4 overflow-hidden rounded-lg border border-cp-border bg-white shadow-panel
+      dark:border-ink-800 dark:bg-ink-950;
+  }
+
+  .whm-page-head-bar {
+    @apply border-b border-cp-border bg-gradient-to-r from-cp-header to-cp-navy-soft px-4 py-2.5 text-white
+      dark:border-ink-800;
+  }
+
+  .whm-form-row {
+    @apply grid gap-1 border-b border-cp-border/70 px-4 py-3 sm:grid-cols-[220px_1fr] sm:items-center
+      dark:border-ink-800;
+  }
+
+  .whm-form-label {
+    @apply text-sm font-medium text-cp-text dark:text-ink-100;
+  }
+
+  .whm-form-hint {
+    @apply text-xs text-cp-muted;
+  }
+
+  .whm-btn-create {
+    @apply vz-btn bg-cp-orange text-white shadow-sm hover:bg-cp-orange-dark;
   }
 
   .cp-tool {
     @apply flex flex-col items-center gap-2 rounded-[10px] border border-cp-border bg-white p-4 text-center
-      shadow-tool transition duration-200 hover:-translate-y-0.5 hover:border-cp-link hover:shadow-md
+      shadow-tool transition duration-200 hover:-translate-y-0.5 hover:border-cp-orange hover:shadow-md
       dark:border-ink-700 dark:bg-ink-950;
   }
 
