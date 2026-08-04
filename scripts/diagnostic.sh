@@ -14,6 +14,10 @@ psql --version 2>/dev/null || true
 redis-cli --version 2>/dev/null || true
 echo "--- Services ---"
 systemctl is-active vzone-api vzone-worker vzone-beat nginx postgresql redis-server redis 2>/dev/null || true
+if command -v pg_lsclusters >/dev/null 2>&1; then
+  echo "--- PostgreSQL clusters ---"
+  pg_lsclusters 2>/dev/null || true
+fi
 echo "--- Disque / Mémoire ---"
 df -h /
 free -h 2>/dev/null || true

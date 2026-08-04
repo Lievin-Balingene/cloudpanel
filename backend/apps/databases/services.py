@@ -233,8 +233,8 @@ def create_database(
 
     if engine == DatabaseEngine.POSTGRESQL:
         charset = "UTF8"
-        collation = "en_US.UTF-8"
-        sql = f'CREATE DATABASE "{db_name}" ENCODING \'{charset}\';'
+        collation = "default"
+        sql = f'CREATE DATABASE "{db_name}" WITH ENCODING \'{charset}\' TEMPLATE template0;'
     else:
         sql = (
             f"CREATE DATABASE `{db_name}` "
@@ -258,7 +258,12 @@ def create_database(
 @transaction.atomic
 def delete_database(db: Database) -> None:
     if db.engine == DatabaseEngine.POSTGRESQL:
-        sql = f'DROP DATABASE IF EXISTS "{db.name}";'
+        sql = (
+            f'REVOKE CONNECT ON DATABASE "{db.name}" FROM PUBLIC; '
+            f"SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+            f"WHERE datname = '{_escape_sql_literal(db.name)}' AND pid <> pg_backend_pid(); "
+            f'DROP DATABASE IF EXISTS "{db.name}";'
+        )
     else:
         sql = f"DROP DATABASE IF EXISTS `{db.name}`;"
     apply_sql(db.engine, sql, label=f"drop_db_{db.engine}_{db.name}")
@@ -373,18 +378,32 @@ def grant_privilege(
             sql = (
                 f'GRANT CONNECT ON DATABASE "{database.name}" TO "{user.username}";\n'
                 f'GRANT USAGE ON SCHEMA public TO "{user.username}";\n'
-                f'GRANT SELECT ON ALL TABLES IN SCHEMA public TO "{user.username}";'
+                f'GRANT SELECT ON ALL TABLES IN SCHEMA public TO "{user.username}";\n'
+                f'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "{user.username}";\n'
+                f'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "{user.username}";\n'
+                f'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO "{user.username}";'
             )
         elif privileges == "WRITE":
             sql = (
                 f'GRANT CONNECT, CREATE ON DATABASE "{database.name}" TO "{user.username}";\n'
                 f'GRANT USAGE, CREATE ON SCHEMA public TO "{user.username}";\n'
-                f'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO "{user.username}";'
+                f'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO "{user.username}";\n'
+                f'GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO "{user.username}";\n'
+                f'ALTER DEFAULT PRIVILEGES IN SCHEMA public '
+                f'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "{user.username}";\n'
+                f'ALTER DEFAULT PRIVILEGES IN SCHEMA public '
+                f'GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO "{user.username}";'
             )
         else:
             sql = (
                 f'GRANT ALL PRIVILEGES ON DATABASE "{database.name}" TO "{user.username}";\n'
-                f'GRANT ALL ON SCHEMA public TO "{user.username}";'
+                f'GRANT ALL ON SCHEMA public TO "{user.username}";\n'
+                f'GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO "{user.username}";\n'
+                f'GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO "{user.username}";\n'
+                f'ALTER DEFAULT PRIVILEGES IN SCHEMA public '
+                f'GRANT ALL PRIVILEGES ON TABLES TO "{user.username}";\n'
+                f'ALTER DEFAULT PRIVILEGES IN SCHEMA public '
+                f'GRANT ALL PRIVILEGES ON SEQUENCES TO "{user.username}";'
             )
     else:
         priv = mysql_privs(privileges)
@@ -410,7 +429,9 @@ def revoke_privilege(priv: DatabasePrivilege) -> None:
     user = priv.user
     if db.engine == DatabaseEngine.POSTGRESQL:
         sql = (
-            f'REVOKE ALL PRIVILEGES ON DATABASE "{db.name}" FROM "{user.username}"; '
+            f'REVOKE ALL PRIVILEGES ON DATABASE "{db.name}" FROM "{user.username}";\n'
+            f'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM "{user.username}";\n'
+            f'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM "{user.username}";\n'
             f'REVOKE ALL ON SCHEMA public FROM "{user.username}";'
         )
     else:

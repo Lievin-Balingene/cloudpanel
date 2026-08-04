@@ -70,6 +70,11 @@ if [[ -f "${REPO_DIR}/scripts/install-phpmyadmin.sh" ]]; then
   bash "${REPO_DIR}/scripts/install-phpmyadmin.sh" || echo "[vzone] Avertissement: install-phpmyadmin.sh a échoué"
 fi
 
+# PostgreSQL clusters + provisioning live
+if [[ -f "${REPO_DIR}/scripts/install-postgresql.sh" ]]; then
+  bash "${REPO_DIR}/scripts/install-postgresql.sh" || echo "[vzone] Avertissement: install-postgresql.sh a échoué"
+fi
+
 # Roundcube Webmail
 if [[ -f "${REPO_DIR}/scripts/install-roundcube.sh" ]]; then
   bash "${REPO_DIR}/scripts/install-roundcube.sh" || echo "[vzone] Avertissement: install-roundcube.sh a échoué"
@@ -85,6 +90,9 @@ if [[ -f "${REPO_DIR}/scripts/install-wp-cli.sh" ]]; then
   bash "${REPO_DIR}/scripts/install-wp-cli.sh" || echo "[vzone] Avertissement: install-wp-cli.sh a échoué"
 fi
 
+install -m 755 "${REPO_DIR}/scripts/vzone-postgresql-ensure.sh" /usr/local/sbin/vzone-postgresql-ensure
+install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-postgresql.service" /etc/systemd/system/vzone-postgresql.service
+
 bash "${REPO_DIR}/scripts/ensure-nginx.sh" "${VZONE_ROOT}/deploy/nginx/vzone.conf"
 
 # Appliquer vhosts SSL + ouvrir 443 + reload
@@ -99,6 +107,7 @@ fi
 
 systemctl daemon-reload
 systemctl enable --now redis-server 2>/dev/null || systemctl enable --now redis 2>/dev/null || true
+systemctl enable --now vzone-postgresql.service 2>/dev/null || true
 systemctl enable --now vzone-api vzone-worker vzone-beat nginx
 echo "[vzone] Mise à jour terminée — version ${VERSION}"
 echo "[vzone] Services : $(systemctl is-active vzone-api vzone-worker vzone-beat nginx | tr '\n' ' ')"

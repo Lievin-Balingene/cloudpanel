@@ -1,0 +1,11 @@
+[Unit]
+Description=V-zone PostgreSQL cluster ensure
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/vzone-postgresql-ensure
+
+[Install]
+WantedBy=multi-user.target

@@ -196,6 +196,10 @@ PY
   if [[ -f "${SCRIPT_DIR}/install-phpmyadmin.sh" ]]; then
     bash "${SCRIPT_DIR}/install-phpmyadmin.sh" || log "Avertissement: phpMyAdmin non installé"
   fi
+  # PostgreSQL clusters + provisioning live
+  if [[ -f "${SCRIPT_DIR}/install-postgresql.sh" ]]; then
+    bash "${SCRIPT_DIR}/install-postgresql.sh" || log "Avertissement: PostgreSQL non configuré"
+  fi
   # Roundcube Webmail
   if [[ -f "${SCRIPT_DIR}/install-roundcube.sh" ]]; then
     bash "${SCRIPT_DIR}/install-roundcube.sh" || log "Avertissement: Roundcube non installé"
@@ -208,6 +212,10 @@ PY
   if [[ -f "${SCRIPT_DIR}/install-wp-cli.sh" ]]; then
     bash "${SCRIPT_DIR}/install-wp-cli.sh" || log "Avertissement: wp-cli non installé"
   fi
+  install -m 755 "${SCRIPT_DIR}/vzone-postgresql-ensure.sh" /usr/local/sbin/vzone-postgresql-ensure
+  install -m 644 "${REPO_DIR}/deploy/systemd/vzone-postgresql.service" /etc/systemd/system/vzone-postgresql.service
+  systemctl daemon-reload
+  systemctl enable --now vzone-postgresql.service || true
   bash "${SCRIPT_DIR}/ensure-nginx.sh" "${VZONE_ROOT}/deploy/nginx/vzone.conf" || true
 
   HOST_IP="$(hostname -I | awk '{print $1}')"
