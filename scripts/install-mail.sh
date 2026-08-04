@@ -71,11 +71,19 @@ fi
 mkdir -p /etc/dovecot/conf.d
 install -m 644 "${REPO_DIR}/deploy/dovecot/dovecot.conf" /etc/dovecot/dovecot.conf
 if [[ -f "${MAPS_DIR}/dovecot-users" ]]; then
-  install -m 640 -o root -g vmail "${MAPS_DIR}/dovecot-users" /etc/dovecot/vzone-users
+  if getent group dovecot >/dev/null 2>&1; then
+    install -m 640 -o root -g dovecot "${MAPS_DIR}/dovecot-users" /etc/dovecot/vzone-users
+  else
+    install -m 644 -o root -g root "${MAPS_DIR}/dovecot-users" /etc/dovecot/vzone-users
+  fi
 else
   touch /etc/dovecot/vzone-users
-  chown root:vmail /etc/dovecot/vzone-users
-  chmod 640 /etc/dovecot/vzone-users
+  if getent group dovecot >/dev/null 2>&1; then
+    chown root:dovecot /etc/dovecot/vzone-users
+    chmod 640 /etc/dovecot/vzone-users
+  else
+    chmod 644 /etc/dovecot/vzone-users
+  fi
 fi
 
 # --- OpenDKIM ---

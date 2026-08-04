@@ -179,8 +179,8 @@ def publish_dovecot_users(source: Path) -> Path | None:
     """
     Publie dovecot-users vers /etc/dovecot/vzone-users.
 
-    Évite Temporary authentication failure quand /var/lib/vzone est 0700
-    (auth-worker ne peut pas traverser jusqu'aux maps).
+    Permissions : root:dovecot 0640 — sous Debian/Ubuntu auth-worker tourne
+    comme user « dovecot » (pas vmail) ; 640 root:vmail → open() fail → UNAVAILABLE.
     """
     if not source.is_file():
         return None
@@ -197,10 +197,18 @@ def publish_dovecot_users(source: Path) -> Path | None:
             import pwd
 
             uid = pwd.getpwnam("root").pw_uid
-            gid = grp.getgrnam("vmail").gr_gid
+            # Groupe « dovecot » (auth-worker Debian) ; fallback vmail
+            try:
+                gid = grp.getgrnam("dovecot").gr_gid
+            except KeyError:
+                gid = grp.getgrnam("vmail").gr_gid
             os.chown(dest, uid, gid)
         except (ImportError, KeyError, PermissionError, OSError):
-            pass
+            # Dernier recours : lisible par tous (hashs, pas secrets en clair)
+            try:
+                os.chmod(dest, 0o644)
+            except OSError:
+                pass
         return dest
     except OSError as exc:
         logger.warning("Publication /etc/dovecot/vzone-users échouée: %s", exc)

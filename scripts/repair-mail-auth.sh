@@ -12,7 +12,7 @@ MAPS_DIR="${VZONE_MAIL_MAPS_DIR:-${DATA_ROOT}/mail/maps}"
 RC_ROOT="${VZONE_ROUNDCUBE_ROOT:-/opt/vzone/roundcube}"
 DOVECOT_USERS_PUB="/etc/dovecot/vzone-users"
 
-echo "=== repair-mail-auth (0.25.3) ==="
+echo "=== repair-mail-auth (0.25.4) ==="
 
 if [[ -f "$ENV_FILE" ]]; then
   set -a; source "$ENV_FILE"; set +a
@@ -147,10 +147,23 @@ print(f"rehash ok={n_ok} skip={n_skip}")
 PY
 
 if [[ -f "${MAPS_DIR}/dovecot-users" ]]; then
-  install -m 640 -o root -g vmail "${MAPS_DIR}/dovecot-users" "$DOVECOT_USERS_PUB"
+  # auth-worker Debian/Ubuntu = user « dovecot » (pas vmail)
+  if getent group dovecot >/dev/null 2>&1; then
+    install -m 640 -o root -g dovecot "${MAPS_DIR}/dovecot-users" "$DOVECOT_USERS_PUB"
+  else
+    install -m 644 -o root -g root "${MAPS_DIR}/dovecot-users" "$DOVECOT_USERS_PUB"
+  fi
 fi
 chgrp vmail "${MAPS_DIR}/dovecot-users" 2>/dev/null || true
-chmod 640 "${MAPS_DIR}/dovecot-users" "$DOVECOT_USERS_PUB" 2>/dev/null || true
+chmod 640 "${MAPS_DIR}/dovecot-users" 2>/dev/null || true
+# Smoke : le user dovecot doit pouvoir lire le passdb
+if id dovecot >/dev/null 2>&1; then
+  if ! sudo -u dovecot test -r "$DOVECOT_USERS_PUB"; then
+    echo "WARN: dovecot ne lit pas $DOVECOT_USERS_PUB — chmod 644"
+    chmod 644 "$DOVECOT_USERS_PUB"
+  fi
+  echo "  lisible par user dovecot: $(sudo -u dovecot test -r "$DOVECOT_USERS_PUB" && echo OUI || echo NON)"
+fi
 find /var/mail/vhosts -type d -exec chown vmail:vmail {} \; 2>/dev/null || true
 find /var/mail/vhosts -type d -exec chmod 770 {} \; 2>/dev/null || true
 
