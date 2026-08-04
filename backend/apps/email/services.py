@@ -674,7 +674,7 @@ def create_webmail_sso(box: Mailbox) -> dict:
         pass
     token = secrets.token_hex(32)
     imap_host = (
-        getattr(settings, "VZONE_ROUNDCUBE_IMAP_HOST", None) or "127.0.0.1:143"
+        getattr(settings, "VZONE_ROUNDCUBE_IMAP_HOST", None) or "ssl://127.0.0.1:993"
     ).strip()
     payload = {
         "user": box.address,
