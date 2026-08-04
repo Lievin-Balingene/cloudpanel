@@ -58,7 +58,7 @@ chown -R www-data:www-data "${RC_ROOT}/temp" "${RC_ROOT}/logs"
 chmod 770 "${RC_ROOT}/temp" "${RC_ROOT}/logs"
 
 echo
-echo "[4] SSO"
+echo "[4] SSO + nginx snippet (QUERY_STRING)"
 SSO_DIR="${VZONE_ROUNDCUBE_SSO_DIR:-/var/lib/vzone/roundcube/sso}"
 mkdir -p "$SSO_DIR"
 chown vzone:www-data "$SSO_DIR" 2>/dev/null || chown www-data:www-data "$SSO_DIR"
@@ -66,7 +66,19 @@ chmod 2770 "$SSO_DIR"
 if [[ -f "${REPO_DIR}/deploy/roundcube/vzone-sso.php" ]]; then
   install -m 644 "${REPO_DIR}/deploy/roundcube/vzone-sso.php" "${RC_ROOT}/vzone-sso.php"
   sed -i "s|__SSO_DIR__|${SSO_DIR}|g" "${RC_ROOT}/vzone-sso.php"
-  echo "SSO PHP mis à jour (write_close)"
+  echo "SSO PHP mis à jour (write_close + token fallback)"
+fi
+if [[ -f "${REPO_DIR}/deploy/nginx/roundcube.inc" ]]; then
+  PHP_SOCK="$(ls /run/php/php*-fpm.sock 2>/dev/null | head -n1 || echo /run/php/php-fpm.sock)"
+  install -m 644 "${REPO_DIR}/deploy/nginx/roundcube.inc" /etc/nginx/snippets/vzone-roundcube.inc
+  RC_ESC="$(printf '%s' "$RC_ROOT" | sed 's|[&/]|\\&|g')"
+  PHP_ESC="$(printf '%s' "$PHP_SOCK" | sed 's|[&/]|\\&|g')"
+  sed -i "s|__RC_ROOT__|${RC_ESC}|g" /etc/nginx/snippets/vzone-roundcube.inc
+  sed -i "s|__PHP_SOCK__|${PHP_ESC}|g" /etc/nginx/snippets/vzone-roundcube.inc
+  echo "nginx roundcube.inc mis à jour"
+  if nginx -t 2>/dev/null; then
+    systemctl reload nginx || true
+  fi
 fi
 
 echo

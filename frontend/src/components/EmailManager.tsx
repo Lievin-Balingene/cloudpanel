@@ -179,7 +179,14 @@ export function EmailManager({ title }: { title: string }) {
       }),
     onSuccess: (data) => {
       setError(null);
-      window.open(data.url, "_blank", "noopener,noreferrer");
+      const raw = data.url || "";
+      const url = raw.startsWith("http")
+        ? raw
+        : `${window.location.origin}${raw.startsWith("/") ? "" : "/"}${raw}`;
+      const popup = window.open(url, "_blank", "noopener,noreferrer");
+      if (!popup) {
+        window.location.assign(url);
+      }
     },
     onError: (err: Error) => setError(err.message),
   });

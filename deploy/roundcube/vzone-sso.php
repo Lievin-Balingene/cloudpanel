@@ -5,12 +5,38 @@
  */
 declare(strict_types=1);
 
+/**
+ * Récupère le token même si $_GET est vide (QUERY_STRING nginx/alias).
+ */
+function vzone_sso_token(): string
+{
+    $raw = (string)($_GET['t'] ?? '');
+    if ($raw === '' && !empty($_SERVER['QUERY_STRING'])) {
+        parse_str((string)$_SERVER['QUERY_STRING'], $qs);
+        $raw = (string)($qs['t'] ?? '');
+    }
+    if ($raw === '' && !empty($_SERVER['REQUEST_URI'])) {
+        if (preg_match('/[?&]t=([a-fA-F0-9]+)/', (string)$_SERVER['REQUEST_URI'], $m)) {
+            $raw = $m[1];
+        }
+    }
+    return preg_replace('/[^a-f0-9]/i', '', $raw) ?? '';
+}
+
 $ssoDir = '__SSO_DIR__';
-$token = preg_replace('/[^a-f0-9]/', '', (string)($_GET['t'] ?? ''));
+$token = vzone_sso_token();
 if ($token === '' || strlen($token) < 32) {
     header('Content-Type: text/plain; charset=utf-8');
     http_response_code(400);
-    exit("Token invalide.\n");
+    $qs = (string)($_SERVER['QUERY_STRING'] ?? '');
+    $uri = (string)($_SERVER['REQUEST_URI'] ?? '');
+    exit(
+        "Token invalide ou manquant.\n" .
+        "Rouvrez le webmail depuis le bouton du panel (ne rechargez pas cette page).\n" .
+        "Si ça continue: sudo bash /opt/vzone-src/scripts/repair-roundcube.sh\n" .
+        "et sudo bash /opt/vzone-src/scripts/ensure-nginx.sh\n" .
+        "debug: qs={$qs} uri={$uri}\n"
+    );
 }
 
 $path = rtrim($ssoDir, '/') . '/' . $token . '.json';
@@ -18,9 +44,9 @@ if (!is_file($path) || !is_readable($path)) {
     header('Content-Type: text/plain; charset=utf-8');
     http_response_code(403);
     exit(
-        "Session expirée ou token illisible (droits SSO).\n" .
-        "Rouvrez le webmail depuis le panel.\n" .
-        "Réparez: sudo bash /opt/vzone-src/scripts/repair-mail-auth.sh\n"
+        "Session expirée ou token déjà utilisé.\n" .
+        "Rouvrez le webmail depuis le panel (nouveau token, 90s).\n" .
+        "SSO dir: {$ssoDir}\n"
     );
 }
 
@@ -67,7 +93,6 @@ try {
     // ignore
 }
 
-// Plain IMAP local uniquement (pas de ssl:// sur :143)
 $hosts = ['127.0.0.1:143', null];
 
 $ok = false;
@@ -86,8 +111,6 @@ foreach ($hosts as $host) {
 }
 
 if ($ok) {
-    // write() = handler PHP (id, data) — ne PAS appeler sans args.
-    // write_close() persiste la session puis libère le verrou.
     try {
         if (method_exists($rcmail->session, 'write_close')) {
             $rcmail->session->write_close();
@@ -122,7 +145,6 @@ if (is_readable($logFile)) {
 
 http_response_code(403);
 echo "Connexion Roundcube impossible pour {$user}.\n\n";
-echo "Cause typique : Dovecot UNAVAILABLE (passdb).\n";
 echo "Réparez : sudo bash /opt/vzone-src/scripts/repair-mail-auth.sh\n\n";
 if ($errors) {
     echo "Essais IMAP :\n- " . implode("\n- ", $errors) . "\n\n";
