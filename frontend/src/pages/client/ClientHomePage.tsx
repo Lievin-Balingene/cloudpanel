@@ -137,7 +137,7 @@ export function ClientHomePage() {
   }, [q]);
 
   return (
-    <div className="space-y-3 animate-fade-up">
+    <div className="space-y-4 animate-fade-up">
       <div className="vz-panel p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -164,19 +164,19 @@ export function ClientHomePage() {
 
       {filtered.map((section) => (
         <section key={section.title} className="vz-panel overflow-hidden">
-          <div className="border-b border-cp-border bg-[#f7f9fb] px-3 py-2 dark:border-ink-800 dark:bg-ink-900">
-            <h2 className="text-[11px] font-semibold tracking-wide text-cp-muted">
+          <div className="border-b border-cp-border bg-[#f0f4f8] px-3 py-2.5 dark:border-ink-700 dark:bg-ink-900">
+            <h2 className="text-[11px] font-semibold uppercase tracking-wide text-cp-muted">
               {section.title}
             </h2>
           </div>
-          <div className="grid gap-1.5 p-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <div className="grid gap-2 p-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {section.tools.map((tool) => {
               const body = (
                 <div
-                  className={`flex items-center gap-2.5 rounded border border-transparent px-2.5 py-2 transition ${
+                  className={`flex items-center gap-2.5 rounded-lg border px-2.5 py-2.5 transition ${
                     tool.disabled
-                      ? "cursor-not-allowed opacity-45"
-                      : "hover:border-cp-border hover:bg-cp-canvas"
+                      ? "cursor-not-allowed border-transparent opacity-45"
+                      : "border-cp-border/60 bg-[#f7f9fc] hover:border-cp-orange/40 hover:bg-white hover:shadow-sm dark:border-ink-700 dark:bg-ink-900/80 dark:hover:bg-ink-900"
                   }`}
                 >
                   <tool.icon className="h-4 w-4 shrink-0 text-cp-orange" />

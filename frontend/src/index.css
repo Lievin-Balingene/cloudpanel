@@ -10,26 +10,30 @@
 
 body {
   min-height: 100vh;
-  background: #e8eef4;
+  background: #d8e0ea;
   color: #2c3e50;
   font-family: "Manrope", system-ui, sans-serif;
 }
 
 .dark body,
 html.dark body {
-  background: #121a24;
+  background: #0e1520;
   color: #e8eef6;
 }
 
 @layer components {
   .vz-panel {
-    @apply rounded-[10px] border border-cp-border/90 bg-white shadow-panel
-      dark:border-ink-800 dark:bg-ink-950;
+    @apply rounded-[10px] border border-cp-border bg-white shadow-panel
+      dark:border-ink-700 dark:bg-ink-950 dark:shadow-[0_4px_18px_rgba(0,0,0,0.35)];
     transition: box-shadow 0.2s var(--vz-ease), border-color 0.2s var(--vz-ease);
   }
 
   .vz-panel:hover {
-    box-shadow: 0 4px 14px rgba(26, 43, 60, 0.08);
+    box-shadow: 0 4px 8px rgba(26, 43, 60, 0.1), 0 12px 28px rgba(26, 43, 60, 0.12);
+  }
+
+  .dark .vz-panel:hover {
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
   }
 
   .vz-input {
@@ -99,8 +103,21 @@ html.dark body {
 
   .cp-tool {
     @apply flex flex-col items-center gap-2 rounded-[10px] border border-cp-border bg-white p-4 text-center
-      shadow-tool transition duration-200 hover:-translate-y-0.5 hover:border-cp-orange hover:shadow-md
-      dark:border-ink-700 dark:bg-ink-950;
+      shadow-tool transition duration-200 hover:-translate-y-0.5 hover:border-cp-orange hover:shadow-panel
+      dark:border-ink-700 dark:bg-ink-950 dark:shadow-[0_4px_16px_rgba(0,0,0,0.3)];
+  }
+
+  /* Zone contenu client : fond plus marqué pour détacher les cartes blanches */
+  .vz-client-canvas {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.35) 0%, transparent 120px),
+      #d8e0ea;
+  }
+
+  .dark .vz-client-canvas {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, transparent 120px),
+      #0e1520;
   }
 
   select.vz-input {

@@ -119,7 +119,7 @@ function UsageBar({
         <span className="font-medium text-cp-text">{label}</span>
         <span className="text-cp-muted">{usedLabel}</span>
       </div>
-      <div className="h-2 overflow-hidden rounded bg-cp-canvas">
+      <div className="h-2 overflow-hidden rounded bg-[#e2e8f0] dark:bg-ink-800">
         <div
           className={`h-full rounded ${pct >= 90 ? "bg-cp-danger" : pct >= 70 ? "bg-amber-500" : "bg-cp-orange"}`}
           style={{ width: `${pct}%` }}
@@ -362,8 +362,8 @@ export function ClientShell() {
   const toggle = useThemeStore((s) => s.toggle);
 
   return (
-    <div className="min-h-screen bg-cp-canvas dark:bg-surface-dark">
-      <header className="sticky top-0 z-20 border-b border-black/10 bg-cp-header text-white shadow-sm">
+    <div className="vz-client-canvas min-h-screen dark:bg-surface-dark">
+      <header className="sticky top-0 z-20 border-b border-black/20 bg-cp-header text-white shadow-md">
         <div className="flex items-center justify-between px-4 py-2.5">
           <div className="flex items-center gap-2.5">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/20 backdrop-blur">
@@ -391,9 +391,9 @@ export function ClientShell() {
         </div>
       </header>
 
-      <div className="mx-auto flex max-w-[1400px] gap-4 p-3 md:p-5">
+      <div className="mx-auto flex max-w-[1400px] gap-5 p-4 md:gap-6 md:p-6">
         <AsideMenu />
-        <main className="min-w-0 flex-1 animate-fade-up">
+        <main className="min-w-0 flex-1 space-y-4 animate-fade-up">
           <Outlet />
         </main>
         <HostUsagePanel />

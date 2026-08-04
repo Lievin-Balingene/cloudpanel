@@ -14,8 +14,8 @@ export default {
           "navy-soft": "#1e3348",
           sidebar: "#1f2a36",
           header: "#161d26",
-          border: "#d5dde5",
-          canvas: "#eef2f6",
+          border: "#c5d0dc",
+          canvas: "#d8e0ea",
           panel: "#ffffff",
           text: "#2c3e50",
           muted: "#6b7c8f",
@@ -51,8 +51,8 @@ export default {
           deep: "#154a8f",
         },
         surface: {
-          light: "#eef2f6",
-          dark: "#121a24",
+          light: "#d8e0ea",
+          dark: "#0e1520",
         },
       },
       fontFamily: {
@@ -61,8 +61,8 @@ export default {
         mono: ['Consolas', '"Courier New"', "monospace"],
       },
       boxShadow: {
-        panel: "0 1px 3px rgba(26, 43, 60, 0.12)",
-        tool: "0 1px 2px rgba(0,0,0,0.08)",
+        panel: "0 2px 4px rgba(26, 43, 60, 0.08), 0 8px 20px rgba(26, 43, 60, 0.1)",
+        tool: "0 2px 6px rgba(26, 43, 60, 0.1)",
         login: "0 24px 64px rgba(15, 28, 42, 0.28)",
       },
       keyframes: {
