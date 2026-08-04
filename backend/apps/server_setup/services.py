@@ -228,6 +228,15 @@ def update_setup(
     # Persist NS / metadata first — source of truth, réponse HTTP immédiate.
     setup.save()
 
+    # Republier glue NS + zones si nameservers ont changé
+    if any(x is not None for x in (nameserver1, nameserver2, nameserver3, nameserver4)):
+        try:
+            from apps.dns.authoritative import schedule_zone_sync
+
+            schedule_zone_sync()
+        except Exception:  # noqa: BLE001
+            pass
+
     # N'appliquer l'OS hostname que si demandé ET réellement changé.
     hostname_changed = bool(
         new_hostname

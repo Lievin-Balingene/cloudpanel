@@ -17,6 +17,8 @@ if command -v ufw >/dev/null 2>&1; then
   ufw allow OpenSSH || ufw allow 22/tcp || true
   ufw allow 80/tcp || true
   ufw allow 443/tcp || true
+  ufw allow 53/tcp || true
+  ufw allow 53/udp || true
   ufw status verbose || true
   ufw --force enable || true
   ufw reload || true
@@ -30,8 +32,9 @@ if command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewa
   firewall-cmd --permanent --add-service=http || true
   firewall-cmd --permanent --add-service=https || true
   firewall-cmd --permanent --add-service=ssh || true
+  firewall-cmd --permanent --add-service=dns || true
   firewall-cmd --reload || true
-  echo "  firewalld: http/https OK"
+  echo "  firewalld: http/https/dns OK"
 fi
 
 echo "[4] k3s : désactiver Traefik/ServiceLB + supprimer services LB sur 80/443"

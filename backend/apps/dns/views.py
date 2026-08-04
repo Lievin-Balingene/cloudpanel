@@ -50,6 +50,9 @@ class DnsZoneListCreateView(APIView):
             secondary_ns=serializer.validated_data.get("secondary_ns") or None,
             admin_email=serializer.validated_data.get("admin_email") or None,
         )
+        from apps.dns.authoritative import schedule_zone_sync
+
+        schedule_zone_sync(zone)
         return Response(
             {"success": True, "data": DnsZoneSerializer(zone).data},
             status=status.HTTP_201_CREATED,
@@ -71,11 +74,18 @@ class DnsZoneDetailView(APIView):
         serializer = DnsZoneSerializer(zone, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        from apps.dns.authoritative import schedule_zone_sync
+
+        schedule_zone_sync(zone)
         return Response({"success": True, "data": serializer.data})
 
     def delete(self, request: Request, pk: int) -> Response:
         zone = self._get(request, pk)
+        zone_name = zone.name
         zone.delete()
+        from apps.dns.authoritative import schedule_zone_sync
+
+        schedule_zone_sync(zone_name=zone_name)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -93,6 +103,9 @@ class DnsRecordListCreateView(APIView):
         serializer.is_valid(raise_exception=True)
         record = serializer.save(zone=zone)
         zone.bump_serial()
+        from apps.dns.authoritative import schedule_zone_sync
+
+        schedule_zone_sync(zone)
         return Response(
             {"success": True, "data": DnsRecordSerializer(record).data},
             status=status.HTTP_201_CREATED,
@@ -112,6 +125,9 @@ class DnsRecordDetailView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         record.zone.bump_serial()
+        from apps.dns.authoritative import schedule_zone_sync
+
+        schedule_zone_sync(record.zone)
         return Response({"success": True, "data": serializer.data})
 
     def delete(self, request: Request, zone_id: int, pk: int) -> Response:
@@ -119,6 +135,9 @@ class DnsRecordDetailView(APIView):
         zone = record.zone
         record.delete()
         zone.bump_serial()
+        from apps.dns.authoritative import schedule_zone_sync
+
+        schedule_zone_sync(zone)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -132,4 +151,7 @@ class DnssecToggleView(APIView):
         zone.dnssec_algorithm = "RSASHA256" if enable else ""
         zone.save(update_fields=["dnssec_enabled", "dnssec_algorithm", "updated_at"])
         zone.bump_serial()
+        from apps.dns.authoritative import schedule_zone_sync
+
+        schedule_zone_sync(zone)
         return Response({"success": True, "data": DnsZoneSerializer(zone).data})

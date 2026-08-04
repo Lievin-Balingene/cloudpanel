@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch V-zone DNS reload flag
+
+[Path]
+PathExists=/var/lib/vzone/named/reload.requested
+Unit=vzone-named-reload.service
+
+[Install]
+WantedBy=multi-user.target

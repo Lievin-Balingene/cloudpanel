@@ -283,6 +283,18 @@ VZONE_NGINX_DOMAINS_DIR = env(
     "VZONE_NGINX_DOMAINS_DIR",
     str(VZONE_DATA_ROOT / "nginx" / "domains"),
 )
+VZONE_DNS_ZONES_DIR = env(
+    "VZONE_DNS_ZONES_DIR",
+    str(Path("/var/lib/vzone/named/zones")),
+)
+VZONE_DNS_ZONES_CONF = env(
+    "VZONE_DNS_ZONES_CONF",
+    str(Path("/var/lib/vzone/named/zones.conf")),
+)
+VZONE_DNS_RELOAD_FLAG = env(
+    "VZONE_DNS_RELOAD_FLAG",
+    str(Path("/var/lib/vzone/named/reload.requested")),
+)
 VZONE_WEB_STACK = env("VZONE_WEB_STACK", "auto")  # auto | live | mock
 
 # Modules activés (extensible à l'installation)

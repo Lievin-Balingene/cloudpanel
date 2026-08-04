@@ -105,6 +105,11 @@ if [[ -f "${REPO_DIR}/scripts/install-certbot.sh" ]]; then
   bash "${REPO_DIR}/scripts/install-certbot.sh" || echo "[vzone] Avertissement: install-certbot.sh a échoué"
 fi
 
+# DNS autoritaire (BIND9) — zones panel → Internet
+if [[ -f "${REPO_DIR}/scripts/ensure-dns.sh" ]]; then
+  bash "${REPO_DIR}/scripts/ensure-dns.sh" || echo "[vzone] Avertissement: ensure-dns.sh a échoué"
+fi
+
 # Agent hostname WHM (Basic Setup)
 if [[ -f "${REPO_DIR}/scripts/install-hostname-agent.sh" ]]; then
   bash "${REPO_DIR}/scripts/install-hostname-agent.sh" || echo "[vzone] Avertissement: install-hostname-agent.sh a échoué"

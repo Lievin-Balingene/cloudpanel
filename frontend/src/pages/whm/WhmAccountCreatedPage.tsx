@@ -106,8 +106,12 @@ export function WhmAccountCreatedPage() {
         <div className="space-y-2 bg-cp-canvas/50 px-4 py-4 text-sm text-cp-muted dark:bg-ink-900/30">
           <p>
             Document root :{" "}
-            <code className="font-mono text-cp-text">~/public_html</code> — pointez le DNS du
-            domaine vers l&apos;IP du serveur pour afficher le site.
+            <code className="font-mono text-cp-text">~/public_html</code>
+          </p>
+          <p>
+            Au registrar : configurez les nameservers ci-dessus (délégation). Le serveur BIND
+            V-zone publie les enregistrements A (@ / www) vers l&apos;IP du serveur. Propager
+            peut prendre quelques minutes à 24–48&nbsp;h.
           </p>
           {httpUrl && (
             <a

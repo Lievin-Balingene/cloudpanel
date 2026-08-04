@@ -250,11 +250,23 @@ def create_domain(
                 defaults={"content": ipv6_address, "ttl": zone.ttl_default, "is_active": True},
             )
         zone.bump_serial()
+        try:
+            from apps.dns.authoritative import schedule_zone_sync
+
+            schedule_zone_sync(zone)
+        except Exception:  # noqa: BLE001
+            logger.exception("Planification sync DNS")
     elif domain_type == Domain.DomainType.SUBDOMAIN and parent and parent.dns_zone_id:
         zone = parent.dns_zone
         label = hostname[: -(len(parent.name) + 1)] or "@"
         _ensure_a_record(zone, label, ipv4_address or parent.ipv4_address)
         zone.bump_serial()
+        try:
+            from apps.dns.authoritative import schedule_zone_sync
+
+            schedule_zone_sync(zone)
+        except Exception:  # noqa: BLE001
+            logger.exception("Planification sync DNS")
 
     domain = Domain.objects.create(
         name=hostname,
@@ -281,7 +293,14 @@ def delete_domain(domain: Domain, *, remove_dns_zone: bool = False) -> None:
     domain.delete()
     if remove_dns_zone and zone and not Domain.objects.filter(dns_zone=zone).exists():
         if zone.name == domain_name:
+            zname = zone.name
             zone.delete()
+            try:
+                from apps.dns.authoritative import schedule_zone_sync
+
+                schedule_zone_sync(zone_name=zname)
+            except Exception:  # noqa: BLE001
+                logger.exception("Planification sync DNS (delete)")
     transaction.on_commit(lambda: _sync_vhost_safe(remove_name=domain_name))
 
     # Nettoyage FS addon/subdomain (pas le public_html principal)

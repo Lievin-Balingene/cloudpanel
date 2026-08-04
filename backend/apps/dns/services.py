@@ -67,6 +67,12 @@ def create_zone_with_defaults(
             DnsRecord(zone=zone, record_type="NS", name="@", content=content, ttl=86400)
         )
     DnsRecord.objects.bulk_create(records)
+    try:
+        from apps.dns.authoritative import schedule_zone_sync
+
+        schedule_zone_sync(zone)
+    except Exception:  # noqa: BLE001
+        pass
     return zone
 
 

@@ -1,0 +1,8 @@
+[Unit]
+Description=V-zone BIND reload (zones DNS)
+After=network.target named.service bind9.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/vzone-named-reload
+Nice=5
