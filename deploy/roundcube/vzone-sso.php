@@ -5,17 +5,17 @@
  */
 declare(strict_types=1);
 
-header('Content-Type: text/plain; charset=utf-8');
-
 $ssoDir = '__SSO_DIR__';
 $token = preg_replace('/[^a-f0-9]/', '', (string)($_GET['t'] ?? ''));
 if ($token === '' || strlen($token) < 32) {
+    header('Content-Type: text/plain; charset=utf-8');
     http_response_code(400);
     exit("Token invalide.\n");
 }
 
 $path = rtrim($ssoDir, '/') . '/' . $token . '.json';
 if (!is_file($path) || !is_readable($path)) {
+    header('Content-Type: text/plain; charset=utf-8');
     http_response_code(403);
     exit(
         "Session expirée ou token illisible (droits SSO).\n" .
@@ -28,10 +28,12 @@ $raw = file_get_contents($path);
 @unlink($path);
 $data = json_decode((string)$raw, true);
 if (!is_array($data) || empty($data['user']) || !array_key_exists('password', $data)) {
+    header('Content-Type: text/plain; charset=utf-8');
     http_response_code(403);
     exit("Token corrompu.\n");
 }
 if (!empty($data['exp']) && time() > (int)$data['exp']) {
+    header('Content-Type: text/plain; charset=utf-8');
     http_response_code(403);
     exit("Token expiré. Rouvrez le webmail depuis le panel.\n");
 }
@@ -40,6 +42,7 @@ $user = trim((string)$data['user']);
 $pass = (string)$data['password'];
 
 if ($user === '' || $pass === '') {
+    header('Content-Type: text/plain; charset=utf-8');
     http_response_code(403);
     exit("Identifiants vides dans le token. Réinitialisez le mot de passe de la boîte.\n");
 }
@@ -83,9 +86,18 @@ foreach ($hosts as $host) {
 }
 
 if ($ok) {
-    if (method_exists($rcmail->session, 'write')) {
-        $rcmail->session->write();
+    // write() = handler PHP (id, data) — ne PAS appeler sans args.
+    // write_close() persiste la session puis libère le verrou.
+    try {
+        if (method_exists($rcmail->session, 'write_close')) {
+            $rcmail->session->write_close();
+        } else {
+            session_write_close();
+        }
+    } catch (Throwable $e) {
+        @session_write_close();
     }
+
     $target = './?_task=mail&_mbox=INBOX';
     try {
         if (method_exists($rcmail, 'url')) {
@@ -98,6 +110,7 @@ if ($ok) {
     exit;
 }
 
+header('Content-Type: text/plain; charset=utf-8');
 $logTail = '';
 $logFile = INSTALL_PATH . 'logs/errors.log';
 if (is_readable($logFile)) {
@@ -110,8 +123,7 @@ if (is_readable($logFile)) {
 http_response_code(403);
 echo "Connexion Roundcube impossible pour {$user}.\n\n";
 echo "Cause typique : Dovecot UNAVAILABLE (passdb).\n";
-echo "Réparez : sudo bash /opt/vzone-src/scripts/repair-mail-auth.sh\n";
-echo "Puis collez la sortie [doveadm auth test] + journalctl -u dovecot -n 40\n\n";
+echo "Réparez : sudo bash /opt/vzone-src/scripts/repair-mail-auth.sh\n\n";
 if ($errors) {
     echo "Essais IMAP :\n- " . implode("\n- ", $errors) . "\n\n";
 }

@@ -66,6 +66,7 @@ chmod 2770 "$SSO_DIR"
 if [[ -f "${REPO_DIR}/deploy/roundcube/vzone-sso.php" ]]; then
   install -m 644 "${REPO_DIR}/deploy/roundcube/vzone-sso.php" "${RC_ROOT}/vzone-sso.php"
   sed -i "s|__SSO_DIR__|${SSO_DIR}|g" "${RC_ROOT}/vzone-sso.php"
+  echo "SSO PHP mis à jour (write_close)"
 fi
 
 echo
