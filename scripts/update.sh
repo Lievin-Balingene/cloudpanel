@@ -13,24 +13,44 @@ VERSION="$(tr -d '[:space:]' < "${REPO_DIR}/VERSION")"
 echo "[vzone] Mise à jour vers ${VERSION}"
 systemctl stop vzone-api vzone-worker vzone-beat 2>/dev/null || true
 
+# Ne jamais supprimer frontend/dist via --delete : il n'est pas dans le dépôt git.
+# Sinon un échec migrate/pip laisse le panel en 404 (index.html absent).
 rsync -a --delete \
-  --exclude '.git' --exclude 'frontend/node_modules' --exclude 'backend/.venv' \
-  --exclude '.env' --exclude '.data' --exclude '.logs' \
+  --exclude '.git' \
+  --exclude 'frontend/node_modules' \
+  --exclude 'frontend/dist' \
+  --exclude 'backend/.venv' \
+  --exclude '.env' \
+  --exclude '.data' \
+  --exclude '.logs' \
   "${REPO_DIR}/" "${VZONE_ROOT}/"
 
+BACKEND_OK=1
 # shellcheck disable=SC1091
 source "${VZONE_ROOT}/backend/.venv/bin/activate"
 set -a; source /etc/vzone/vzone.env; set +a
 export DJANGO_SETTINGS_MODULE=vzone.settings.production
-pip install -r "${VZONE_ROOT}/backend/requirements/prod.txt"
+pip install -r "${VZONE_ROOT}/backend/requirements/prod.txt" || BACKEND_OK=0
 cd "${VZONE_ROOT}/backend"
-python manage.py migrate --noinput
-python manage.py collectstatic --noinput
+python manage.py migrate --noinput || BACKEND_OK=0
+python manage.py collectstatic --noinput || true
 deactivate
 
+# Frontend : toujours reconstruire (évite 404 nginx sur toutes les pages)
 cd "${VZONE_ROOT}/frontend"
 npm ci || npm install
 npm run build
+if [[ ! -f "${VZONE_ROOT}/frontend/dist/index.html" ]]; then
+  echo "[vzone] ERREUR: build frontend échoué — ${VZONE_ROOT}/frontend/dist/index.html manquant" >&2
+  echo "[vzone] Réparez avec: sudo bash ${REPO_DIR}/scripts/repair-frontend.sh" >&2
+  exit 1
+fi
+chmod -R a+rX "${VZONE_ROOT}/frontend/dist" || true
+
+if [[ "${BACKEND_OK}" -ne 1 ]]; then
+  echo "[vzone] ERREUR: étapes backend (pip/migrate) ont échoué — corrigez puis relancez update.sh" >&2
+  exit 1
+fi
 
 # (Ré)installe les unités systemd — utile après une install partielle
 install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-api.service" /etc/systemd/system/

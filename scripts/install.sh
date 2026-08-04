@@ -118,7 +118,8 @@ deploy_application() {
   SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
   REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
   rsync -a --delete \
-    --exclude '.git' --exclude 'frontend/node_modules' --exclude 'backend/.venv' \
+    --exclude '.git' --exclude 'frontend/node_modules' --exclude 'frontend/dist' \
+    --exclude 'backend/.venv' \
     --exclude '.data' --exclude '.logs' \
     "${REPO_DIR}/" "${VZONE_ROOT}/"
 

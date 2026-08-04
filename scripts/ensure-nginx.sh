@@ -191,7 +191,7 @@ if [[ ! -f "${VZONE_ROOT}/frontend/dist/index.html" ]]; then
   if [[ -n "$SRC_FE" ]]; then
     echo "[vzone] dist manquant — build frontend depuis ${SRC_FE}"
     mkdir -p "${VZONE_ROOT}/frontend"
-    rsync -a --delete --exclude node_modules "${SRC_FE}/" "${VZONE_ROOT}/frontend/"
+    rsync -a --delete --exclude node_modules --exclude dist "${SRC_FE}/" "${VZONE_ROOT}/frontend/"
     cd "${VZONE_ROOT}/frontend"
     npm ci || npm install
     npm run build

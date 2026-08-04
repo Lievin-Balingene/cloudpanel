@@ -51,6 +51,7 @@ if [[ ! -f "${VZONE_ROOT}/frontend/dist/index.html" ]]; then
   if [[ -d "${REPO_DIR}/frontend" ]]; then
     rsync -a --delete \
       --exclude node_modules \
+      --exclude dist \
       "${REPO_DIR}/frontend/" "${VZONE_ROOT}/frontend/"
   fi
   cd "${VZONE_ROOT}/frontend"
