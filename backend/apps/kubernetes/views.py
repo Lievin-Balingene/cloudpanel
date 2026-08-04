@@ -21,7 +21,7 @@ class KubernetesResourcesView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request: Request) -> Response:
-        return Response({"success": True, "data": list_resources()})
+        return Response({"success": True, "data": list_resources(soft=True)})
 
 
 class KubernetesApplyView(APIView):

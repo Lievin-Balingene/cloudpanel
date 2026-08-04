@@ -122,6 +122,23 @@ if [[ "${VZONE_INSTALL_K3S:-0}" == "1" ]] && ! systemctl is-active --quiet k3s 2
   systemctl enable --now k3s || true
 fi
 
+# Rendre le kubeconfig k3s lisible par l'utilisateur panel (vzone)
+if [[ -f /etc/rancher/k3s/k3s.yaml ]]; then
+  install -d -m 750 -o root -g vzone /etc/vzone 2>/dev/null || install -d -m 755 /etc/vzone
+  # Remplace 127.0.0.1 par localhost si besoin ; copie pour le user vzone
+  sed 's#https://127.0.0.1:#https://127.0.0.1:#g' /etc/rancher/k3s/k3s.yaml > /etc/vzone/kubeconfig
+  chown root:vzone /etc/vzone/kubeconfig
+  chmod 640 /etc/vzone/kubeconfig
+  if [[ -f "${ENV_FILE}" ]]; then
+    if grep -q '^KUBECONFIG=' "${ENV_FILE}"; then
+      sed -i 's|^KUBECONFIG=.*|KUBECONFIG=/etc/vzone/kubeconfig|' "${ENV_FILE}"
+    else
+      echo "KUBECONFIG=/etc/vzone/kubeconfig" >> "${ENV_FILE}"
+    fi
+  fi
+  echo "[vzone] kubeconfig panel: /etc/vzone/kubeconfig"
+fi
+
 KUBECTL_PATH="$(resolve_kubectl || true)"
 if [[ -z "${KUBECTL_PATH}" ]]; then
   echo "[vzone] ÉCHEC: kubectl introuvable après installation." >&2
@@ -142,6 +159,7 @@ echo "[vzone] kubectl OK: ${KUBECTL_PATH}"
 
 # Recharger l'API pour prendre VZONE_KUBECTL_BIN (EnvironmentFile systemd)
 if systemctl list-unit-files vzone-api.service >/dev/null 2>&1; then
+  systemctl daemon-reload 2>/dev/null || true
   systemctl restart vzone-api.service 2>/dev/null || true
   echo "[vzone] vzone-api redémarré pour charger VZONE_KUBECTL_BIN"
 fi

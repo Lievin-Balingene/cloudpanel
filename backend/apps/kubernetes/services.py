@@ -29,10 +29,15 @@ def provision_mode() -> str:
 def _subprocess_env() -> dict[str, str]:
     env = os.environ.copy()
     env["PATH"] = f"{_SYSTEM_PATH}:{env.get('PATH', '')}"
-    # kubeconfig k3s (si présent) pour les appels live
-    k3s_cfg = "/etc/rancher/k3s/k3s.yaml"
-    if not env.get("KUBECONFIG") and Path(k3s_cfg).is_file():
-        env["KUBECONFIG"] = k3s_cfg
+    if not env.get("KUBECONFIG"):
+        for cfg in (
+            "/etc/vzone/kubeconfig",
+            "/var/lib/vzone/kubeconfig",
+            "/etc/rancher/k3s/k3s.yaml",
+        ):
+            if Path(cfg).is_file() and os.access(cfg, os.R_OK):
+                env["KUBECONFIG"] = cfg
+                break
     return env
 
 
@@ -59,7 +64,7 @@ def _which(name: str, *, search_path: str | None = None) -> str | None:
 
 def kubectl_bin() -> str:
     """Résout le binaire kubectl (PATH systemd souvent minimal pour vzone-api)."""
-    configured = (getattr(settings, "VZONE_KUBECTL_BIN", "") or "").strip()
+    configured = (getattr(settings, "VZONE_KUBECTL_BIN", "") or "").strip().strip("\r").strip('"').strip("'")
     path = _subprocess_env()["PATH"]
     ordered: list[str] = []
     if configured:
@@ -87,11 +92,42 @@ def kubectl_bin() -> str:
     return configured or "kubectl"
 
 
+def _empty_resources() -> dict:
+    return {"namespaces": [], "pods": [], "workloads": []}
+
+
+def _mock_resources() -> dict:
+    return {
+        "namespaces": [{"name": "default"}, {"name": "kube-system"}],
+        "pods": [],
+        "workloads": [],
+    }
+
+
+def _probe_kubectl_client(bin_path: str) -> bool:
+    """Vérifie que le binaire répond (indépendamment d'un cluster)."""
+    try:
+        result = subprocess.run(
+            [bin_path, "version", "--client", "--output=json"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env=_subprocess_env(),
+            check=False,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def kubectl_available() -> bool:
     path = kubectl_bin()
-    if _is_executable(path):
-        return True
-    return _which(Path(path).name, search_path=_subprocess_env()["PATH"]) is not None
+    if not _is_executable(path):
+        found = _which(Path(path).name, search_path=_subprocess_env()["PATH"])
+        if not found:
+            return False
+        path = found
+    return _probe_kubectl_client(path)
 
 
 def should_execute() -> bool:
@@ -122,21 +158,18 @@ def _run(cmd: list[str], *, timeout: int = 60) -> subprocess.CompletedProcess:
         ) from exc
 
 
-def _mock_resources() -> dict:
-    return {
-        "namespaces": [{"name": "default"}, {"name": "kube-system"}],
-        "pods": [],
-        "workloads": [],
-    }
-
-
-def list_resources() -> dict:
+def list_resources(*, soft: bool = False) -> dict:
     if not should_execute():
         return _mock_resources()
     kubectl = kubectl_bin()
-    ns = _run([kubectl, "get", "ns", "-o", "json"], timeout=30)
-    pods = _run([kubectl, "get", "pods", "-A", "-o", "json"], timeout=45)
-    wk = _run([kubectl, "get", "deploy,sts,ds", "-A", "-o", "json"], timeout=45)
+    try:
+        ns = _run([kubectl, "get", "ns", "-o", "json"], timeout=30)
+        pods = _run([kubectl, "get", "pods", "-A", "-o", "json"], timeout=45)
+        wk = _run([kubectl, "get", "deploy,sts,ds", "-A", "-o", "json"], timeout=45)
+    except VZoneAPIException:
+        if soft:
+            return _empty_resources()
+        raise
     nsj = json.loads(ns.stdout or "{}")
     podj = json.loads(pods.stdout or "{}")
     wkj = json.loads(wk.stdout or "{}")
@@ -170,18 +203,53 @@ def list_resources() -> dict:
 
 
 def overview_for() -> dict:
-    resources = list_resources()
-    ok = 0
-    bad = 0
-    for p in resources["pods"]:
-        if p["status"] == "Running":
-            ok += 1
-        else:
-            bad += 1
+    available = kubectl_available()
+    bin_path = kubectl_bin()
+    cluster_error: str | None = None
+    cluster_ok = False
+
+    if provision_mode() == "mock":
+        resources = _mock_resources()
+        cluster_error = "Mode mock (pas d'appels cluster)."
+    elif not available:
+        resources = _empty_resources()
+        cluster_error = "kubectl introuvable ou non exécutable."
+    else:
+        try:
+            resources = list_resources(soft=False)
+            cluster_ok = True
+        except VZoneAPIException as exc:
+            resources = _empty_resources()
+            detail = str(exc.detail)
+            low = detail.lower()
+            markers = (
+                "kubeconfig",
+                "connection refused",
+                "was refused",
+                "localhost:8080",
+                "could not connect",
+                "dial tcp",
+                "no such host",
+                "unable to connect",
+                "forbidden",
+            )
+            if any(m in low for m in markers):
+                cluster_error = (
+                    "kubectl est installé, mais aucun cluster n'est joignable. "
+                    "Installez un cluster local : "
+                    "VZONE_INSTALL_K3S=1 sudo -E bash /opt/vzone-src/scripts/install-kubernetes.sh"
+                )
+            else:
+                cluster_error = detail
+
+    ok = sum(1 for p in resources["pods"] if p["status"] == "Running")
+    bad = len(resources["pods"]) - ok
     return {
         "provision_mode": provision_mode(),
-        "kubectl_available": kubectl_available(),
-        "kubectl_bin": kubectl_bin(),
+        "kubectl_available": available,
+        "kubectl_bin": bin_path,
+        "cluster_ok": cluster_ok,
+        "cluster_error": cluster_error,
         "namespaces": len(resources["namespaces"]),
         "pods": len(resources["pods"]),
         "workloads": len(resources["workloads"]),
