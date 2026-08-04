@@ -102,9 +102,18 @@ def provision_account_home(user: User) -> Path:
     return home
 
 
-def cpanel_welcome_html(hostname: str, *, account: str = "") -> str:
-    """Page d'accueil style cPanel dans public_html."""
+def cpanel_welcome_html(hostname: str, *, account: str = "", document_root: str = "") -> str:
+    """Page d'accueil style cPanel dans public_html / dossier sous-domaine."""
     acct = account or hostname
+    doc = document_root.strip() or "public_html"
+    # Afficher un chemin relatif lisible si possible
+    display = doc
+    for marker in ("/homes/", "/home/"):
+        if marker in doc.replace("\\", "/"):
+            parts = doc.replace("\\", "/").split(marker, 1)[-1].split("/", 1)
+            if len(parts) == 2:
+                display = "~/" + parts[1]
+            break
     return (
         "<!DOCTYPE html>\n"
         '<html lang="fr"><head><meta charset="utf-8">'
@@ -117,14 +126,14 @@ def cpanel_welcome_html(hostname: str, *, account: str = "") -> str:
         "border-radius:12px;box-shadow:0 8px 30px rgba(26,43,60,.08)}"
         "h1{margin:0 0 .5rem;font-size:1.6rem;color:#1a2b3c}"
         "p{margin:.5rem 0;color:#6b7c8f;line-height:1.5}"
-        "code{font-size:.85rem;background:#f0f4f8;padding:.15rem .4rem;border-radius:4px}"
+        "code{font-size:.85rem;background:#f0f4f8;padding:.15rem .4rem;border-radius:4px;word-break:break-all}"
         ".ok{display:inline-block;margin-top:1rem;padding:.35rem .75rem;border-radius:999px;"
         "background:#e8f7ef;color:#0f7a45;font-size:.8rem;font-weight:600}"
         "</style></head><body><div class=\"box\">"
         f"<h1>{hostname}</h1>"
-        f"<p>Compte <code>{acct}</code> — document root "
-        "<code>public_html</code> (comme cPanel).</p>"
-        "<p>Déposez vos fichiers ici (HTML, PHP, ou liez une app Python/Node depuis le panel).</p>"
+        f"<p>Compte <code>{acct}</code> — document root <code>{display}</code>.</p>"
+        "<p>Remplacez <code>index.html</code> (ou ajoutez <code>index.php</code>) dans ce dossier "
+        "via le File Manager / FTP : ce sera le site servi pour ce hostname.</p>"
         '<span class="ok">Site prêt</span>'
         "</div></body></html>\n"
     )

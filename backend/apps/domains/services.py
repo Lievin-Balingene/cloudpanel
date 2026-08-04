@@ -79,7 +79,8 @@ def default_document_root(
     """
     Chemins style cPanel :
     - primary → ~/public_html
-    - addon / subdomain → ~/domains/<hostname>/public_html
+    - subdomain → ~/public_html/<label>  (ex: blog.exemple.com → ~/public_html/blog)
+    - addon → ~/domains/<hostname>/public_html
     - parked / alias → docroot du parent (sinon ~/public_html)
     """
     home = personal_home(owner)
@@ -89,7 +90,17 @@ def default_document_root(
         return str(home / "public_html")
     if domain_type == Domain.DomainType.PRIMARY:
         return str(home / "public_html")
-    # addon / subdomain : dossier dédié (hostname réel, pas underscored)
+    if domain_type == Domain.DomainType.SUBDOMAIN and parent:
+        label = hostname.strip().lower().rstrip(".")
+        parent_name = parent.name.strip().lower().rstrip(".")
+        suffix = f".{parent_name}"
+        if label.endswith(suffix):
+            label = label[: -len(suffix)]
+        # Sécurité chemin : un seul segment relatif sous public_html
+        safe = "".join(c for c in label if c.isalnum() or c in "-_.")
+        safe = safe.strip(".") or "sub"
+        return str(home / "public_html" / safe)
+    # addon : dossier dédié (hostname réel)
     return str(home / "domains" / hostname.lower() / "public_html")
 
 
@@ -103,13 +114,16 @@ def provision_document_root(docroot: str, *, hostname: str, domain_type: str) ->
     if root.name == "public_html" and root.parent.name != "admin":
         site_base = root.parent
         secure_directory(site_base / "logs", 0o755)
+    elif domain_type == Domain.DomainType.SUBDOMAIN:
+        # logs à côté du dossier sous-domaine : ~/public_html/<label>/../logs non — dans le dossier
+        secure_directory(root / "logs", 0o755)
 
     index = root / "index.html"
     if not index.exists():
         from apps.accounts.services import cpanel_welcome_html
 
         index.write_text(
-            cpanel_welcome_html(hostname),
+            cpanel_welcome_html(hostname, document_root=str(root)),
             encoding="utf-8",
         )
         secure_file(index, 0o644)
@@ -400,8 +414,19 @@ def delete_domain(domain: Domain, *, remove_dns_zone: bool = False) -> None:
     transaction.on_commit(lambda: _sync_vhost_safe(remove_name=domain_name))
 
     # Nettoyage FS addon/subdomain (pas le public_html principal)
-    if (
-        domain_type in {Domain.DomainType.ADDON, Domain.DomainType.SUBDOMAIN}
+    if domain_type == Domain.DomainType.SUBDOMAIN and docroot:
+        import shutil
+
+        root = Path(docroot)
+        # ~/public_html/<label> — supprimer uniquement le dossier du sous-domaine
+        if root.parent.name == "public_html" and root.name not in {"public_html", "", "."}:
+            try:
+                if root.exists() and root.is_dir():
+                    shutil.rmtree(root, ignore_errors=True)
+            except OSError as exc:
+                logger.warning("Nettoyage docroot sous-domaine %s: %s", root, exc)
+    elif (
+        domain_type == Domain.DomainType.ADDON
         and docroot
         and "domains" in Path(docroot).parts
     ):

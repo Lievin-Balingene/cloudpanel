@@ -57,12 +57,16 @@ export function DomainsManager({ title }: { title: string }) {
   const createSub = useMutation({
     mutationFn: () => {
       if (!selected) throw new Error("Sélectionnez un domaine");
-      return apiRequest("/domains/subdomains/", {
+      return apiRequest<Domain>("/domains/subdomains/", {
         method: "POST",
-        body: JSON.stringify({ label: subLabel, parent_id: selected.id }),
+        body: JSON.stringify({ label: subLabel.trim(), parent_id: selected.id }),
       });
     },
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["domains"] }),
+    onSuccess: (created) => {
+      setSubLabel("");
+      void qc.invalidateQueries({ queryKey: ["domains"] });
+      if (created?.id) setSelectedId(created.id);
+    },
   });
 
   const createRedirect = useMutation({
@@ -208,10 +212,21 @@ export function DomainsManager({ title }: { title: string }) {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="text-lg font-semibold">{selected.name}</p>
-                  <p className="text-xs text-cp-muted">
-                    Type {selected.domain_type} · Zone DNS {selected.dns_zone_name ?? "—"} · Docroot{" "}
-                    {selected.document_root || "—"}
+                  <p className="mt-1 text-xs text-cp-muted">
+                    Type <span className="capitalize">{selected.domain_type}</span>
+                    {" · "}
+                    Zone DNS {selected.dns_zone_name ?? "—"}
                   </p>
+                  <p className="mt-2 rounded-md border border-cp-border bg-cp-canvas/60 px-3 py-2 font-mono text-xs text-cp-text dark:border-ink-700 dark:bg-ink-900">
+                    Document root : {selected.document_root || "—"}
+                  </p>
+                  {selected.domain_type === "subdomain" ? (
+                    <p className="mt-1 text-xs text-cp-muted">
+                      Placez un <code className="font-mono">index.html</code> ou{" "}
+                      <code className="font-mono">index.php</code> dans ce dossier (File Manager) :
+                      ce sera le site affiché pour {selected.name}.
+                    </p>
+                  ) : null}
                   {selected.ssl && (
                     <p className="mt-2 text-sm">
                       SSL : <strong>{selected.ssl.status}</strong> ({selected.ssl.provider})
@@ -246,22 +261,36 @@ export function DomainsManager({ title }: { title: string }) {
 
             {["primary", "addon"].includes(selected.domain_type) && (
               <form
-                className="vz-panel flex flex-wrap gap-2 p-4"
+                className="vz-panel space-y-2 p-4"
                 onSubmit={(e) => {
                   e.preventDefault();
                   createSub.mutate();
                 }}
               >
-                <input
-                  className="vz-input max-w-[160px]"
-                  value={subLabel}
-                  onChange={(e) => setSubLabel(e.target.value)}
-                  placeholder="sous-domaine"
-                />
-                <span className="self-center text-sm text-cp-muted">.{selected.name}</span>
-                <button className="vz-btn-ghost" type="submit">
-                  Créer sous-domaine
-                </button>
+                <p className="text-sm font-medium text-cp-text">Créer un sous-domaine</p>
+                <p className="text-xs text-cp-muted">
+                  Crée automatiquement{" "}
+                  <code className="font-mono">~/public_html/&lt;label&gt;/</code> avec un{" "}
+                  <code className="font-mono">index.html</code>, et pointe le sous-domaine dessus.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    className="vz-input max-w-[160px]"
+                    value={subLabel}
+                    onChange={(e) => setSubLabel(e.target.value)}
+                    placeholder="blog"
+                    required
+                  />
+                  <span className="self-center text-sm text-cp-muted">.{selected.name}</span>
+                  <button className="vz-btn-primary" type="submit" disabled={createSub.isPending}>
+                    {createSub.isPending ? "Création…" : "Créer sous-domaine"}
+                  </button>
+                </div>
+                {createSub.isError ? (
+                  <p className="text-xs text-cp-danger">
+                    {(createSub.error as Error)?.message || "Échec création sous-domaine"}
+                  </p>
+                ) : null}
               </form>
             )}
 

@@ -117,6 +117,10 @@ def test_subdomain_dns_without_parent_fk(tmp_path, settings):
     assert parent.dns_zone_id
     assert parent.dns_zone.records.filter(record_type="A", name="app").exists()
     assert sub.dns_zone_id == parent.dns_zone_id
+    assert "public_html" in sub.document_root.replace("\\", "/")
+    assert sub.document_root.replace("\\", "/").endswith("/public_html/app")
+    assert Path(sub.document_root).is_dir()
+    assert (Path(sub.document_root) / "index.html").is_file()
 
 
 
