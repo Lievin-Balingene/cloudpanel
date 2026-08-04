@@ -1,12 +1,15 @@
 """Opérations filesystem sécurisées (jail dans le home utilisateur)."""
 from __future__ import annotations
 
+import json
 import mimetypes
 import os
 import re
+import secrets
 import shutil
 import stat
 import tarfile
+import time
 import zipfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -19,7 +22,12 @@ from apps.accounts.models import User
 from apps.core.exceptions import VZoneAPIException
 
 MAX_EDITOR_BYTES = 2 * 1024 * 1024  # 2 Mo
-MAX_UPLOAD_BYTES = 128 * 1024 * 1024  # 128 Mo
+# Limite haute ; les gros fichiers passent par l'upload chunké (évite timeout nginx/proxy).
+MAX_UPLOAD_BYTES = int(getattr(settings, "VZONE_MAX_UPLOAD_BYTES", 5 * 1024 * 1024 * 1024))
+DEFAULT_CHUNK_BYTES = 4 * 1024 * 1024  # 4 Mo
+MIN_CHUNK_BYTES = 1024
+MAX_CHUNK_BYTES = 16 * 1024 * 1024
+UPLOAD_SESSION_TTL_SECONDS = 24 * 3600
 TEXT_EXTENSIONS = {
     ".txt",
     ".md",
@@ -454,26 +462,255 @@ def search_files(user: User, query: str, relative: str | None = None, limit: int
     return results
 
 
-def save_upload(user: User, relative_dir: str, uploaded_name: str, stream: BinaryIO, size: int | None) -> FileEntry:
-    if size is not None and size > MAX_UPLOAD_BYTES:
-        raise VZoneAPIException(detail="Fichier trop volumineux.", code="file_too_large", status_code=400)
+def _safe_filename(uploaded_name: str) -> str:
     safe_name = Path(uploaded_name).name
     if not safe_name or safe_name in {".", ".."}:
         raise VZoneAPIException(detail="Nom de fichier invalide.", code="invalid_name", status_code=400)
+    return safe_name
+
+
+def _uploads_root(user: User) -> Path:
+    root = user_home(user) / "tmp" / ".vzone-uploads"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _session_dir(user: User, upload_id: str) -> Path:
+    if not re.fullmatch(r"[a-f0-9]{24,64}", upload_id):
+        raise VZoneAPIException(detail="Session upload invalide.", code="invalid_upload", status_code=400)
+    path = (_uploads_root(user) / upload_id).resolve()
+    root = _uploads_root(user).resolve()
+    if path.parent != root:
+        raise VZoneAPIException(detail="Session upload invalide.", code="invalid_upload", status_code=400)
+    return path
+
+
+def _read_session_meta(session: Path) -> dict:
+    meta_path = session / "meta.json"
+    if not meta_path.is_file():
+        raise VZoneAPIException(detail="Session upload introuvable.", code="upload_not_found", status_code=404)
+    try:
+        data = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise VZoneAPIException(
+            detail="Métadonnées upload illisibles.",
+            code="upload_corrupt",
+            status_code=500,
+        ) from exc
+    if not isinstance(data, dict):
+        raise VZoneAPIException(detail="Session upload corrompue.", code="upload_corrupt", status_code=500)
+    created = float(data.get("created_at") or 0)
+    if created and (time.time() - created) > UPLOAD_SESSION_TTL_SECONDS:
+        shutil.rmtree(session, ignore_errors=True)
+        raise VZoneAPIException(detail="Session upload expirée.", code="upload_expired", status_code=410)
+    return data
+
+
+def _write_session_meta(session: Path, meta: dict) -> None:
+    tmp = session / "meta.json.tmp"
+    tmp.write_text(json.dumps(meta), encoding="utf-8")
+    tmp.replace(session / "meta.json")
+
+
+def save_upload(user: User, relative_dir: str, uploaded_name: str, stream: BinaryIO, size: int | None) -> FileEntry:
+    if size is not None and size > MAX_UPLOAD_BYTES:
+        raise VZoneAPIException(detail="Fichier trop volumineux.", code="file_too_large", status_code=400)
+    safe_name = _safe_filename(uploaded_name)
     dest_dir = resolve_path(user, relative_dir)
     if not dest_dir.is_dir():
         raise VZoneAPIException(detail="Dossier destination invalide.", code="not_directory", status_code=400)
     target = dest_dir / safe_name
     written = 0
-    with target.open("wb") as out:
-        while True:
-            chunk = stream.read(1024 * 1024)
-            if not chunk:
-                break
-            written += len(chunk)
-            if written > MAX_UPLOAD_BYTES:
-                out.close()
-                target.unlink(missing_ok=True)
-                raise VZoneAPIException(detail="Fichier trop volumineux.", code="file_too_large", status_code=400)
-            out.write(chunk)
+    try:
+        with target.open("wb") as out:
+            while True:
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > MAX_UPLOAD_BYTES:
+                    raise VZoneAPIException(
+                        detail="Fichier trop volumineux.",
+                        code="file_too_large",
+                        status_code=400,
+                    )
+                out.write(chunk)
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
     return entry_from_path(user, target)
+
+
+def init_chunked_upload(
+    user: User,
+    relative_dir: str,
+    uploaded_name: str,
+    size: int,
+    chunk_size: int | None = None,
+) -> dict:
+    if size < 0 or size > MAX_UPLOAD_BYTES:
+        raise VZoneAPIException(detail="Fichier trop volumineux.", code="file_too_large", status_code=400)
+    safe_name = _safe_filename(uploaded_name)
+    dest_dir = resolve_path(user, relative_dir)
+    if not dest_dir.is_dir():
+        raise VZoneAPIException(detail="Dossier destination invalide.", code="not_directory", status_code=400)
+
+    resolved_chunk = int(chunk_size or DEFAULT_CHUNK_BYTES)
+    resolved_chunk = max(MIN_CHUNK_BYTES, min(MAX_CHUNK_BYTES, resolved_chunk))
+    total_chunks = max(1, (size + resolved_chunk - 1) // resolved_chunk) if size else 1
+
+    upload_id = secrets.token_hex(16)
+    session = _session_dir(user, upload_id)
+    session.mkdir(parents=True, exist_ok=False)
+    (session / "chunks").mkdir(parents=True, exist_ok=True)
+
+    meta = {
+        "upload_id": upload_id,
+        "name": safe_name,
+        "path": relative_dir or "",
+        "size": size,
+        "chunk_size": resolved_chunk,
+        "total_chunks": total_chunks,
+        "received": [],
+        "created_at": time.time(),
+    }
+    _write_session_meta(session, meta)
+    return {
+        "upload_id": upload_id,
+        "chunk_size": resolved_chunk,
+        "total_chunks": total_chunks,
+        "max_upload_bytes": MAX_UPLOAD_BYTES,
+    }
+
+
+def save_upload_chunk(
+    user: User,
+    upload_id: str,
+    index: int,
+    stream: BinaryIO,
+    size: int | None,
+) -> dict:
+    session = _session_dir(user, upload_id)
+    meta = _read_session_meta(session)
+    total_chunks = int(meta["total_chunks"])
+    chunk_size = int(meta["chunk_size"])
+    if index < 0 or index >= total_chunks:
+        raise VZoneAPIException(detail="Index de chunk invalide.", code="invalid_chunk", status_code=400)
+
+    expected = chunk_size
+    if index == total_chunks - 1:
+        expected = int(meta["size"]) - index * chunk_size
+        if int(meta["size"]) == 0:
+            expected = 0
+
+    chunk_path = session / "chunks" / f"{index:08d}.part"
+    written = 0
+    try:
+        with chunk_path.open("wb") as out:
+            while True:
+                data = stream.read(1024 * 1024)
+                if not data:
+                    break
+                written += len(data)
+                if written > chunk_size + 1024:
+                    raise VZoneAPIException(
+                        detail="Chunk trop volumineux.",
+                        code="chunk_too_large",
+                        status_code=400,
+                    )
+                out.write(data)
+    except Exception:
+        chunk_path.unlink(missing_ok=True)
+        raise
+
+    if size is not None and size != written:
+        chunk_path.unlink(missing_ok=True)
+        raise VZoneAPIException(
+            detail=f"Taille chunk incorrecte ({written} ≠ {size}).",
+            code="chunk_size_mismatch",
+            status_code=400,
+        )
+    if expected and written != expected and int(meta["size"]) > 0:
+        # Tolère un dernier chunk plus petit si size était estimé ; refuse s'il dépasse.
+        if written > expected:
+            chunk_path.unlink(missing_ok=True)
+            raise VZoneAPIException(
+                detail="Chunk trop volumineux pour cet index.",
+                code="chunk_too_large",
+                status_code=400,
+            )
+
+    received = set(int(i) for i in meta.get("received") or [])
+    received.add(index)
+    meta["received"] = sorted(received)
+    _write_session_meta(session, meta)
+    return {
+        "upload_id": upload_id,
+        "index": index,
+        "received": len(received),
+        "total_chunks": total_chunks,
+    }
+
+
+def complete_chunked_upload(user: User, upload_id: str) -> FileEntry:
+    session = _session_dir(user, upload_id)
+    meta = _read_session_meta(session)
+    total_chunks = int(meta["total_chunks"])
+    received = set(int(i) for i in meta.get("received") or [])
+    missing = [i for i in range(total_chunks) if i not in received]
+    if missing:
+        raise VZoneAPIException(
+            detail=f"Chunks manquants: {missing[:12]}{'…' if len(missing) > 12 else ''}",
+            code="chunks_incomplete",
+            status_code=400,
+        )
+
+    dest_dir = resolve_path(user, meta.get("path") or "")
+    if not dest_dir.is_dir():
+        raise VZoneAPIException(detail="Dossier destination invalide.", code="not_directory", status_code=400)
+    target = dest_dir / str(meta["name"])
+    expected_size = int(meta["size"])
+    written = 0
+    try:
+        with target.open("wb") as out:
+            for index in range(total_chunks):
+                part = session / "chunks" / f"{index:08d}.part"
+                if not part.is_file():
+                    raise VZoneAPIException(
+                        detail=f"Chunk {index} introuvable.",
+                        code="chunk_missing",
+                        status_code=400,
+                    )
+                with part.open("rb") as src:
+                    while True:
+                        data = src.read(1024 * 1024)
+                        if not data:
+                            break
+                        written += len(data)
+                        if written > MAX_UPLOAD_BYTES:
+                            raise VZoneAPIException(
+                                detail="Fichier trop volumineux.",
+                                code="file_too_large",
+                                status_code=400,
+                            )
+                        out.write(data)
+        if expected_size and written != expected_size:
+            target.unlink(missing_ok=True)
+            raise VZoneAPIException(
+                detail=f"Taille finale incorrecte ({written} ≠ {expected_size}).",
+                code="size_mismatch",
+                status_code=400,
+            )
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+    finally:
+        shutil.rmtree(session, ignore_errors=True)
+
+    return entry_from_path(user, target)
+
+
+def abort_chunked_upload(user: User, upload_id: str) -> None:
+    session = _session_dir(user, upload_id)
+    if session.exists():
+        shutil.rmtree(session, ignore_errors=True)

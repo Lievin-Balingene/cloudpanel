@@ -59,47 +59,219 @@ type UploadItem = {
   error?: string;
 };
 
-function uploadWithProgress(
-  file: File,
-  cwd: string,
+const SIMPLE_UPLOAD_MAX = 1024 * 1024; // 1 Mo — au-delà / en secours : upload chunké binaire
+const CHUNK_BYTES = 2 * 1024 * 1024; // 2 Mo (plus robuste derrière nginx/proxy)
+const CHUNK_RETRIES = 5;
+
+function parseUploadError(xhr: XMLHttpRequest, fallback: string): string {
+  try {
+    const payload = JSON.parse(xhr.responseText);
+    if (payload?.error?.message) return String(payload.error.message);
+  } catch {
+    /* ignore */
+  }
+  if (xhr.status === 0) {
+    return "Connexion interrompue pendant l'upload (réseau, proxy ou limite serveur). Réessayez.";
+  }
+  if (xhr.status === 401) return "Session expirée. Reconnectez-vous puis réessayez l'upload.";
+  if (xhr.status === 413) return "Fichier trop volumineux pour le serveur (limite nginx/API).";
+  if (xhr.status === 502 || xhr.status === 504) {
+    return "Le serveur a coupé la connexion pendant l'upload. Réessayez.";
+  }
+  return `${fallback} (HTTP ${xhr.status})`;
+}
+
+function xhrSend(
+  method: string,
+  url: string,
   token: string | null,
-  onProgress: (percent: number) => void,
-): Promise<void> {
+  body: FormData | string | Blob,
+  options?: {
+    onProgress?: (loaded: number, total: number) => void;
+    timeoutMs?: number;
+    contentType?: string | null;
+  },
+): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/api/v1/files/upload/");
+    xhr.open(method, url);
+    xhr.timeout = options?.timeoutMs ?? 10 * 60 * 1000;
     if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    if (options?.contentType) {
+      xhr.setRequestHeader("Content-Type", options.contentType);
+    }
 
     xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable && event.total > 0) {
-        onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)));
+      if (options?.onProgress && event.lengthComputable && event.total > 0) {
+        options.onProgress(event.loaded, event.total);
       }
     };
 
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
-        onProgress(100);
-        resolve();
+        try {
+          resolve(xhr.responseText ? JSON.parse(xhr.responseText) : {});
+        } catch {
+          resolve({});
+        }
         return;
       }
-      let message = `Upload échoué (${xhr.status})`;
-      try {
-        const payload = JSON.parse(xhr.responseText);
-        if (payload?.error?.message) message = payload.error.message;
-      } catch {
-        /* ignore */
-      }
-      reject(new ApiClientError(message, xhr.status));
+      reject(new ApiClientError(parseUploadError(xhr, "Upload échoué"), xhr.status));
     };
 
-    xhr.onerror = () => reject(new ApiClientError("Erreur réseau pendant l'upload.", 0));
+    xhr.onerror = () =>
+      reject(
+        new ApiClientError(
+          "Connexion interrompue pendant l'upload (réseau, proxy ou limite serveur). Réessayez.",
+          0,
+        ),
+      );
+    xhr.ontimeout = () =>
+      reject(new ApiClientError("Délai dépassé pendant l'upload. Réessayez.", 0));
     xhr.onabort = () => reject(new ApiClientError("Upload annulé.", 0));
 
-    const body = new FormData();
-    body.append("path", cwd);
-    body.append("file", file);
     xhr.send(body);
   });
+}
+
+async function uploadSimple(
+  file: File,
+  cwd: string,
+  token: string | null,
+  onProgress: (percent: number) => void,
+): Promise<void> {
+  const body = new FormData();
+  body.append("path", cwd);
+  body.append("file", file);
+  await xhrSend("POST", "/api/v1/files/upload/", token, body, {
+    timeoutMs: 15 * 60 * 1000,
+    onProgress: (loaded, total) => {
+      onProgress(Math.min(99, Math.round((loaded / total) * 100)));
+    },
+  });
+  onProgress(100);
+}
+
+async function uploadChunkWithRetry(
+  uploadId: string,
+  index: number,
+  blob: Blob,
+  token: string | null,
+  onChunkProgress: (ratio: number) => void,
+): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < CHUNK_RETRIES; attempt++) {
+    try {
+      const url =
+        `/api/v1/files/upload/chunk/?upload_id=${encodeURIComponent(uploadId)}` +
+        `&index=${encodeURIComponent(String(index))}`;
+      await xhrSend("POST", url, token, blob, {
+        contentType: "application/octet-stream",
+        timeoutMs: 10 * 60 * 1000,
+        onProgress: (loaded, total) => onChunkProgress(total > 0 ? loaded / total : 0),
+      });
+      return;
+    } catch (err) {
+      lastError = err;
+      // Ne pas retenter indéfiniment sur erreurs métier (4xx sauf timeout/réseau)
+      if (err instanceof ApiClientError && err.status >= 400 && err.status < 500 && err.status !== 408) {
+        throw err;
+      }
+      await new Promise((r) => setTimeout(r, 500 * (attempt + 1) ** 2));
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new ApiClientError("Échec envoi du chunk après plusieurs tentatives.", 0);
+}
+
+async function uploadChunked(
+  file: File,
+  cwd: string,
+  token: string | null,
+  onProgress: (percent: number) => void,
+): Promise<void> {
+  const initRaw = await xhrSend(
+    "POST",
+    "/api/v1/files/upload/init/",
+    token,
+    JSON.stringify({
+      path: cwd,
+      name: file.name,
+      size: file.size,
+      chunk_size: CHUNK_BYTES,
+    }),
+    { contentType: "application/json", timeoutMs: 60_000 },
+  );
+  const init = (initRaw as { data?: { upload_id: string; chunk_size: number; total_chunks: number } })
+    ?.data;
+  if (!init?.upload_id) {
+    throw new ApiClientError("Réponse init upload invalide.", 0);
+  }
+
+  const chunkSize = init.chunk_size || CHUNK_BYTES;
+  const totalChunks = init.total_chunks || Math.max(1, Math.ceil(file.size / chunkSize) || 1);
+
+  try {
+    for (let index = 0; index < totalChunks; index++) {
+      const start = index * chunkSize;
+      const end = Math.min(file.size, start + chunkSize);
+      const blob = file.slice(start, end);
+      await uploadChunkWithRetry(init.upload_id, index, blob, token, (ratio) => {
+        const doneBytes = start + ratio * (end - start);
+        const pct = file.size > 0 ? Math.min(99, Math.round((doneBytes / file.size) * 100)) : 99;
+        onProgress(pct);
+      });
+      onProgress(
+        file.size > 0 ? Math.min(99, Math.round(((index + 1) / totalChunks) * 100)) : 99,
+      );
+    }
+
+    await xhrSend(
+      "POST",
+      "/api/v1/files/upload/complete/",
+      token,
+      JSON.stringify({ upload_id: init.upload_id }),
+      { contentType: "application/json", timeoutMs: 15 * 60 * 1000 },
+    );
+    onProgress(100);
+  } catch (err) {
+    try {
+      await xhrSend(
+        "POST",
+        "/api/v1/files/upload/abort/",
+        token,
+        JSON.stringify({ upload_id: init.upload_id }),
+        { contentType: "application/json", timeoutMs: 30_000 },
+      );
+    } catch {
+      /* ignore abort errors */
+    }
+    throw err;
+  }
+}
+
+async function uploadWithProgress(
+  file: File,
+  cwd: string,
+  token: string | null,
+  onProgress: (percent: number) => void,
+): Promise<void> {
+  // Archives / gros fichiers : toujours chunké (évite coupure nginx sur un seul POST).
+  const forceChunked =
+    file.size > SIMPLE_UPLOAD_MAX || /\.(zip|tar|gz|tgz|rar|7z|iso|img|sql|bak)$/i.test(file.name);
+
+  if (!forceChunked) {
+    try {
+      await uploadSimple(file, cwd, token, onProgress);
+      return;
+    } catch (err) {
+      if (!(err instanceof ApiClientError) || (err.status !== 0 && err.status !== 413 && err.status !== 502)) {
+        throw err;
+      }
+    }
+  }
+  await uploadChunked(file, cwd, token, onProgress);
 }
 
 function ConfirmDialog({

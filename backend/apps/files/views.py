@@ -1,15 +1,18 @@
 """API File Manager."""
 from __future__ import annotations
 
+import io
 from dataclasses import asdict
 
 from django.http import FileResponse
 from rest_framework import status
-from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+from rest_framework.authentication import SessionAuthentication
+from rest_framework.parsers import BaseParser, FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from apps.files import services
 from apps.files.serializers import (
@@ -23,8 +26,29 @@ from apps.files.serializers import (
     RenameSerializer,
     SearchSerializer,
     TransferSerializer,
+    UploadAbortSerializer,
+    UploadCompleteSerializer,
+    UploadInitSerializer,
     WriteFileSerializer,
 )
+
+
+class OctetStreamParser(BaseParser):
+    """Corps binaire brut (chunks upload) — évite multipart fragile derrière nginx."""
+
+    media_type = "application/octet-stream"
+
+    def parse(self, stream, media_type=None, parser_context=None):
+        return stream.read()
+
+
+class CsrfExemptSessionAuthentication(SessionAuthentication):
+    def enforce_csrf(self, request):
+        return
+
+
+# JWT + session sans CSRF : évite 403 CSRF qui coupe parfois la connexion XHR.
+_UPLOAD_AUTH_WITH_SESSION = [JWTAuthentication, CsrfExemptSessionAuthentication]
 
 
 class FileListView(APIView):
@@ -201,7 +225,9 @@ class FileSearchView(APIView):
 
 class FileUploadView(APIView):
     permission_classes = [IsAuthenticated]
+    authentication_classes = _UPLOAD_AUTH_WITH_SESSION
     parser_classes = [MultiPartParser, FormParser]
+    throttle_classes = []
 
     def post(self, request: Request) -> Response:
         upload = request.FILES.get("file")
@@ -222,6 +248,95 @@ class FileUploadView(APIView):
             getattr(upload, "size", None),
         )
         return Response({"success": True, "data": asdict(entry)}, status=status.HTTP_201_CREATED)
+
+
+class FileUploadInitView(APIView):
+    permission_classes = [IsAuthenticated]
+    authentication_classes = _UPLOAD_AUTH_WITH_SESSION
+    throttle_classes = []
+
+    def post(self, request: Request) -> Response:
+        serializer = UploadInitSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = services.init_chunked_upload(
+            request.user,
+            serializer.validated_data.get("path") or "",
+            serializer.validated_data["name"],
+            serializer.validated_data["size"],
+            serializer.validated_data.get("chunk_size"),
+        )
+        return Response({"success": True, "data": data}, status=status.HTTP_201_CREATED)
+
+
+class FileUploadChunkView(APIView):
+    permission_classes = [IsAuthenticated]
+    authentication_classes = _UPLOAD_AUTH_WITH_SESSION
+    parser_classes = [OctetStreamParser, MultiPartParser, FormParser]
+    throttle_classes = []
+
+    def post(self, request: Request) -> Response:
+        upload_id = str(
+            request.query_params.get("upload_id")
+            or (request.data.get("upload_id") if isinstance(request.data, dict) else "")
+            or ""
+        )
+        raw_index = request.query_params.get("index")
+        if raw_index is None and isinstance(request.data, dict):
+            raw_index = request.data.get("index")
+        try:
+            index = int(raw_index)
+        except (TypeError, ValueError):
+            return Response(
+                {
+                    "success": False,
+                    "error": {"code": "invalid_chunk", "message": "Index de chunk invalide."},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if isinstance(request.data, (bytes, bytearray, memoryview)):
+            payload = bytes(request.data)
+            stream: io.BufferedIOBase | io.BytesIO = io.BytesIO(payload)
+            size = len(payload)
+        else:
+            upload = request.FILES.get("file")
+            if upload is None:
+                return Response(
+                    {
+                        "success": False,
+                        "error": {"code": "missing_file", "message": "Chunk requis (corps binaire ou champ file)."},
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            stream = upload.file
+            size = getattr(upload, "size", None)
+
+        data = services.save_upload_chunk(request.user, upload_id, index, stream, size)
+        return Response({"success": True, "data": data})
+
+
+class FileUploadCompleteView(APIView):
+    permission_classes = [IsAuthenticated]
+    authentication_classes = _UPLOAD_AUTH_WITH_SESSION
+    throttle_classes = []
+
+    def post(self, request: Request) -> Response:
+        serializer = UploadCompleteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        entry = services.complete_chunked_upload(request.user, serializer.validated_data["upload_id"])
+        return Response({"success": True, "data": asdict(entry)}, status=status.HTTP_201_CREATED)
+
+
+class FileUploadAbortView(APIView):
+    permission_classes = [IsAuthenticated]
+    authentication_classes = _UPLOAD_AUTH_WITH_SESSION
+    throttle_classes = []
+
+    def post(self, request: Request) -> Response:
+        serializer = UploadAbortSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        services.abort_chunked_upload(request.user, serializer.validated_data["upload_id"])
+        return Response({"success": True, "data": {"aborted": True}})
 
 
 class FileDownloadView(APIView):

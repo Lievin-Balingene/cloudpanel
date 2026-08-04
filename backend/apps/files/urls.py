@@ -17,6 +17,10 @@ from apps.files.views import (
     FileReadView,
     FileRenameView,
     FileSearchView,
+    FileUploadAbortView,
+    FileUploadChunkView,
+    FileUploadCompleteView,
+    FileUploadInitView,
     FileUploadView,
     FileWriteView,
 )
@@ -36,6 +40,10 @@ urlpatterns = [
     path("decompress/", FileDecompressView.as_view(), name="files-decompress"),
     path("search/", FileSearchView.as_view(), name="files-search"),
     path("upload/", FileUploadView.as_view(), name="files-upload"),
+    path("upload/init/", FileUploadInitView.as_view(), name="files-upload-init"),
+    path("upload/chunk/", FileUploadChunkView.as_view(), name="files-upload-chunk"),
+    path("upload/complete/", FileUploadCompleteView.as_view(), name="files-upload-complete"),
+    path("upload/abort/", FileUploadAbortView.as_view(), name="files-upload-abort"),
     path("download/", FileDownloadView.as_view(), name="files-download"),
     path("preview/", FilePreviewView.as_view(), name="files-preview"),
 ]

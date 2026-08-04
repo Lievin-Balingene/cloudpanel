@@ -57,3 +57,18 @@ class SearchSerializer(serializers.Serializer):
     query = serializers.CharField()
     path = serializers.CharField(required=False, allow_blank=True, default="")
     limit = serializers.IntegerField(required=False, min_value=1, max_value=500, default=200)
+
+
+class UploadInitSerializer(serializers.Serializer):
+    path = serializers.CharField(required=False, allow_blank=True, default="")
+    name = serializers.CharField(max_length=255)
+    size = serializers.IntegerField(min_value=0)
+    chunk_size = serializers.IntegerField(required=False, min_value=1024, max_value=16 * 1024 * 1024)
+
+
+class UploadCompleteSerializer(serializers.Serializer):
+    upload_id = serializers.CharField(max_length=64)
+
+
+class UploadAbortSerializer(serializers.Serializer):
+    upload_id = serializers.CharField(max_length=64)

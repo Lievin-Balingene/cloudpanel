@@ -63,6 +63,89 @@ def test_list_mkdir_upload_download(api: APIClient, user_home):
 
 @pytest.mark.integration
 @pytest.mark.django_db
+def test_chunked_upload(api: APIClient, user_home):
+    user = UserFactory(username="fmchunk", password="TestPassword123!")
+    api.force_authenticate(user=user)
+    payload = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ" * 200  # ~5.2 Ko
+    chunk_size = 1024
+
+    init = api.post(
+        reverse("files-upload-init"),
+        {"path": "public_html", "name": "big.bin", "size": len(payload), "chunk_size": chunk_size},
+        format="json",
+    )
+    assert init.status_code == 201
+    upload_id = init.json()["data"]["upload_id"]
+    total = init.json()["data"]["total_chunks"]
+    chunk_size = init.json()["data"]["chunk_size"]
+
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    for index in range(total):
+        start = index * chunk_size
+        part = payload[start : start + chunk_size]
+        resp = api.post(
+            reverse("files-upload-chunk"),
+            {
+                "upload_id": upload_id,
+                "index": str(index),
+                "file": SimpleUploadedFile(f"part{index}", part, content_type="application/octet-stream"),
+            },
+            format="multipart",
+        )
+        assert resp.status_code == 200, resp.content
+
+    complete = api.post(
+        reverse("files-upload-complete"),
+        {"upload_id": upload_id},
+        format="json",
+    )
+    assert complete.status_code == 201
+    assert complete.json()["data"]["name"] == "big.bin"
+    home = services.user_home(user)
+    assert (home / "public_html" / "big.bin").read_bytes() == payload
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+def test_chunked_upload_raw_binary(api: APIClient, user_home):
+    user = UserFactory(username="fmraw", password="TestPassword123!")
+    api.force_authenticate(user=user)
+    payload = b"raw-binary-chunk-payload-" * 80
+    chunk_size = 1024
+
+    init = api.post(
+        reverse("files-upload-init"),
+        {"path": "tmp", "name": "raw.bin", "size": len(payload), "chunk_size": chunk_size},
+        format="json",
+    )
+    assert init.status_code == 201
+    upload_id = init.json()["data"]["upload_id"]
+    total = init.json()["data"]["total_chunks"]
+    chunk_size = init.json()["data"]["chunk_size"]
+
+    for index in range(total):
+        start = index * chunk_size
+        part = payload[start : start + chunk_size]
+        resp = api.post(
+            f"{reverse('files-upload-chunk')}?upload_id={upload_id}&index={index}",
+            data=part,
+            content_type="application/octet-stream",
+        )
+        assert resp.status_code == 200, resp.content
+
+    complete = api.post(
+        reverse("files-upload-complete"),
+        {"upload_id": upload_id},
+        format="json",
+    )
+    assert complete.status_code == 201
+    home = services.user_home(user)
+    assert (home / "tmp" / "raw.bin").read_bytes() == payload
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
 def test_copy_move_compress_decompress(api: APIClient, user_home):
     user = UserFactory(username="fmops", password="TestPassword123!")
     api.force_authenticate(user=user)
