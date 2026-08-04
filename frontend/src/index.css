@@ -105,10 +105,26 @@ html.dark body {
   }
 }
 
+.vzone-xterm-host {
+  position: relative;
+}
+
 .vzone-xterm-host .xterm {
   height: 100%;
+  width: 100%;
+  padding: 0;
 }
 
 .vzone-xterm-host .xterm-viewport {
-  border-radius: 6px;
+  border-radius: 0;
+}
+
+.vzone-xterm-host .xterm-screen {
+  width: 100% !important;
+}
+
+.vzone-xterm-host textarea {
+  /* garde le textarea xterm focusable pour la saisie clavier réelle */
+  left: 0 !important;
+  top: 0 !important;
 }
