@@ -10,6 +10,7 @@ Group=vzone
 WorkingDirectory=/opt/vzone/backend
 EnvironmentFile=/etc/vzone/vzone.env
 Environment=DJANGO_SETTINGS_MODULE=vzone.settings.production
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
 ExecStart=/opt/vzone/backend/.venv/bin/daphne -b 127.0.0.1 -p 8000 vzone.asgi:application
 Restart=on-failure
 RestartSec=5

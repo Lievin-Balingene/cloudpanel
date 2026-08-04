@@ -13,11 +13,12 @@ from django.conf import settings
 from apps.core.exceptions import VZoneAPIException
 
 _KUBECTL_FALLBACKS = (
-    "/usr/bin/kubectl",
     "/usr/local/bin/kubectl",
+    "/usr/bin/kubectl",
     "/snap/bin/kubectl",
+    "/opt/bin/kubectl",
 )
-_SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+_SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
 
 
 def provision_mode() -> str:
@@ -28,7 +29,19 @@ def provision_mode() -> str:
 def _subprocess_env() -> dict[str, str]:
     env = os.environ.copy()
     env["PATH"] = f"{_SYSTEM_PATH}:{env.get('PATH', '')}"
+    # kubeconfig k3s (si présent) pour les appels live
+    k3s_cfg = "/etc/rancher/k3s/k3s.yaml"
+    if not env.get("KUBECONFIG") and Path(k3s_cfg).is_file():
+        env["KUBECONFIG"] = k3s_cfg
     return env
+
+
+def _is_executable(path: str | Path) -> bool:
+    try:
+        p = Path(path)
+        return p.is_file() and os.access(p, os.X_OK)
+    except OSError:
+        return False
 
 
 def _which(name: str, *, search_path: str | None = None) -> str | None:
@@ -37,34 +50,48 @@ def _which(name: str, *, search_path: str | None = None) -> str | None:
             if not directory:
                 continue
             candidate = Path(directory) / name
-            if candidate.is_file() and os.access(candidate, os.X_OK):
-                return str(candidate)
+            if _is_executable(candidate):
+                return str(candidate.resolve())
         return None
-    return shutil.which(name)
+    found = shutil.which(name, path=search_path or _subprocess_env()["PATH"])
+    return str(Path(found).resolve()) if found else None
 
 
 def kubectl_bin() -> str:
     """Résout le binaire kubectl (PATH systemd souvent minimal pour vzone-api)."""
     configured = (getattr(settings, "VZONE_KUBECTL_BIN", "") or "").strip()
-    if configured and Path(configured).is_file():
-        return configured
     path = _subprocess_env()["PATH"]
-    for candidate in (configured, "kubectl", *_KUBECTL_FALLBACKS):
-        if not candidate:
+    ordered: list[str] = []
+    if configured:
+        ordered.append(configured)
+    ordered.extend(_KUBECTL_FALLBACKS)
+    ordered.append("kubectl")
+
+    seen: set[str] = set()
+    for candidate in ordered:
+        if not candidate or candidate in seen:
             continue
-        if Path(candidate).is_file():
-            return candidate
-        found = _which(candidate, search_path=path) if "/" not in candidate else None
+        seen.add(candidate)
+        if candidate.startswith("/") or (len(candidate) > 1 and candidate[1] == ":"):
+            if _is_executable(candidate):
+                return str(Path(candidate).resolve())
+            continue
+        found = _which(candidate, search_path=path)
         if found:
             return found
+
+    # Dernier recours : chemins connus même si settings pointe vers "kubectl" relatif
+    for fallback in _KUBECTL_FALLBACKS:
+        if _is_executable(fallback):
+            return str(Path(fallback).resolve())
     return configured or "kubectl"
 
 
 def kubectl_available() -> bool:
     path = kubectl_bin()
-    if Path(path).is_file():
+    if _is_executable(path):
         return True
-    return _which(path, search_path=_subprocess_env()["PATH"]) is not None
+    return _which(Path(path).name, search_path=_subprocess_env()["PATH"]) is not None
 
 
 def should_execute() -> bool:

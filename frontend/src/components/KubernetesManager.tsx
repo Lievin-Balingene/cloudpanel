@@ -6,6 +6,7 @@ import { runWithProgress } from "@/stores/operations";
 interface K8sOverview {
   provision_mode: string;
   kubectl_available: boolean;
+  kubectl_bin?: string;
   namespaces: number;
   pods: number;
   workloads: number;
@@ -97,9 +98,22 @@ export function KubernetesManager({ title }: { title: string }) {
       </div>
 
       {!overview?.kubectl_available && (
-        <p className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          kubectl introuvable sur le serveur. Exécutez `sudo bash /opt/vzone-src/scripts/install-kubernetes.sh`.
-        </p>
+        <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 space-y-1">
+          <p className="font-medium">kubectl introuvable sur le serveur.</p>
+          <p>
+            Sur le serveur (SSH), exécutez :
+          </p>
+          <pre className="overflow-x-auto rounded bg-white/80 px-2 py-1 text-xs text-ink-900">
+            sudo bash /opt/vzone-src/scripts/install-kubernetes.sh
+          </pre>
+          <p className="text-xs text-amber-800">
+            Puis rechargez cette page. Sans cluster, seuls les outils client sont installés ;
+            pour un cluster local : <code className="text-xs">VZONE_INSTALL_K3S=1 sudo -E bash …/install-kubernetes.sh</code>
+          </p>
+        </div>
+      )}
+      {overview?.kubectl_available && overview.kubectl_bin && (
+        <p className="text-xs text-cp-muted">kubectl : {overview.kubectl_bin} · mode {overview.provision_mode}</p>
       )}
       {error && <p className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-cp-danger">{error}</p>}
 
