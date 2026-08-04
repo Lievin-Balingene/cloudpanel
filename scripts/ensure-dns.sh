@@ -73,6 +73,14 @@ elif command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet fire
   firewall-cmd --reload || true
 fi
 
+# iptables : accepter 53 avant chaînes KUBE (sinon timeout public comme Google DNS)
+HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+for proto in iptables ip6tables; do
+  command -v "$proto" >/dev/null 2>&1 || continue
+  $proto -I INPUT 1 -p udp --dport 53 -j ACCEPT 2>/dev/null || true
+  $proto -I INPUT 1 -p tcp --dport 53 -j ACCEPT 2>/dev/null || true
+done
+
 # Exporter les zones depuis Django si dispo
 if [[ -x "${VZONE_ROOT}/backend/.venv/bin/python" && -f /etc/vzone/vzone.env ]]; then
   set -a

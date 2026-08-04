@@ -136,6 +136,17 @@ def _extra_hostnames(domain: Domain) -> list[str]:
 def _clean_le_error(err: str) -> str:
     text = (err or "").strip()
     low = text.lower()
+    if "dns problem" in low or "looking up a for" in low or "nxdomain looking up" in low:
+        return (
+            "Échec Let's Encrypt: le domaine ne résout pas encore en DNS public "
+            "(timeout / SERVFAIL sur l'enregistrement A). "
+            "Les nameservers (ex. ns100…) doivent répondre sur le port 53 de ce serveur. "
+            "Sur le serveur: sudo bash /opt/vzone-src/scripts/ensure-dns.sh && "
+            "sudo bash /opt/vzone-src/scripts/repair-external-access.sh — "
+            "puis ouvrir TCP+UDP 53 dans le pare-feu Contabo. "
+            "Vérifiez: dig @IP_SERVEUR votredomaine.com A +short — "
+            "attendez la propagation et réessayez le certificat."
+        )
     if "405" in text and ("not allowed" in low or "<html" in low):
         return (
             "Échec Let's Encrypt (HTTP 405). "
@@ -151,6 +162,88 @@ def _clean_le_error(err: str) -> str:
                 return f"Échec Let's Encrypt: {s[:400]}"
         return "Échec Let's Encrypt: réponse HTTP invalide du challenge ACME (voir logs certbot)."
     return f"Échec Let's Encrypt: {text[-1200:]}"
+
+
+def _resolve_a_records(hostname: str) -> list[str]:
+    """Résolution A locale (socket) — ne prouve pas le DNS public autoritaire."""
+    import socket
+
+    try:
+        infos = socket.getaddrinfo(hostname, None, socket.AF_INET, socket.SOCK_STREAM)
+    except OSError:
+        return []
+    ips: list[str] = []
+    for info in infos:
+        ip = info[4][0]
+        if ip not in ips:
+            ips.append(ip)
+    return ips
+
+
+def _assert_public_dns_ready(domain: Domain) -> None:
+    """
+    Préflight avant certbot: l'IP publique du serveur doit répondre pour la zone.
+    Utilise dig @VZONE_PUBLIC_IP si possible (test autoritaire réel).
+    """
+    public_ip = (getattr(settings, "VZONE_PUBLIC_IP", "") or "").strip()
+    host = domain.name.strip().lower().rstrip(".")
+    expected = (domain.ipv4_address or public_ip or "").strip()
+
+    dig = shutil.which("dig")
+    if dig and public_ip:
+        try:
+            result = subprocess.run(
+                [dig, f"@{public_ip}", "+time=3", "+tries=1", "+short", host, "A"],
+                capture_output=True,
+                text=True,
+                timeout=12,
+                check=False,
+            )
+            answers = [
+                line.strip()
+                for line in (result.stdout or "").splitlines()
+                if line.strip() and not line.strip().startswith(";")
+            ]
+            if not answers:
+                raise VZoneAPIException(
+                    detail=(
+                        f"DNS autoritaire KO: {public_ip}:53 ne répond pas pour {host} "
+                        f"(dig @{public_ip} {host} A → vide). "
+                        "Let's Encrypt échouera aussi. "
+                        "Exécutez: sudo bash /opt/vzone-src/scripts/ensure-dns.sh && "
+                        "sudo bash /opt/vzone-src/scripts/repair-external-access.sh "
+                        "et ouvrez TCP+UDP 53 chez Contabo. "
+                        f"Puis: dig @8.8.8.8 {host} A +short"
+                    ),
+                    code="dns_not_ready",
+                    status_code=502,
+                )
+            if expected and expected not in answers:
+                logger.warning(
+                    "DNS A pour %s = %s (attendu %s) — on continue quand même",
+                    host,
+                    answers,
+                    expected,
+                )
+            return
+        except VZoneAPIException:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.exception("Préflight dig échoué pour %s", host)
+
+    # Fallback faible : résolution système
+    ips = _resolve_a_records(host)
+    if not ips:
+        raise VZoneAPIException(
+            detail=(
+                f"Le domaine {host} ne résout pas encore (pas d'enregistrement A). "
+                "Corrigez le DNS autoritaire (BIND + port 53) avant Let's Encrypt. "
+                "sudo bash /opt/vzone-src/scripts/ensure-dns.sh && "
+                "sudo bash /opt/vzone-src/scripts/repair-external-access.sh"
+            ),
+            code="dns_not_ready",
+            status_code=502,
+        )
 
 
 def _ssl_issue_bin() -> str | None:
@@ -268,6 +361,10 @@ def issue_with_certbot(domain: Domain, email: str) -> CertificateMaterial:
 
     extras = _extra_hostnames(domain)
     hostnames = [domain.name, *extras]
+
+    # Éviter un round-trip certbot inutile si le DNS autoritaire n'est pas prêt
+    if not getattr(settings, "DEBUG", False):
+        _assert_public_dns_ready(domain)
 
     # Production : file queue → agent systemd root (compatible NoNewPrivileges)
     if has_agent or wrapper:
