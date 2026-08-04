@@ -34,6 +34,7 @@ urlpatterns = [
     path("api/v1/monitoring/", include("apps.monitoring.urls")),
     path("api/v1/firewall/", include("apps.firewall.urls")),
     path("api/v1/security/", include("apps.security.urls")),
+    path("api/v1/wordpress/", include("apps.wordpress.urls")),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path(
         "api/docs/",

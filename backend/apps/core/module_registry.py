@@ -101,6 +101,7 @@ class ModuleRegistry:
             "apps.monitoring.module",
             "apps.firewall.module",
             "apps.security.module",
+            "apps.wordpress.module",
         ]
         for path in module_paths:
             try:

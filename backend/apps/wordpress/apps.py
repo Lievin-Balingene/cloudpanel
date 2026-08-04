@@ -1,0 +1,10 @@
+from __future__ import annotations
+
+from django.apps import AppConfig
+
+
+class WordpressConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.wordpress"
+    label = "wordpress"
+    verbose_name = "WordPress"

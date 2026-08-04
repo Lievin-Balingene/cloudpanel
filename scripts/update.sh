@@ -80,6 +80,11 @@ if [[ -f "${REPO_DIR}/scripts/install-certbot.sh" ]]; then
   bash "${REPO_DIR}/scripts/install-certbot.sh" || echo "[vzone] Avertissement: install-certbot.sh a échoué"
 fi
 
+# WP-CLI / WordPress
+if [[ -f "${REPO_DIR}/scripts/install-wp-cli.sh" ]]; then
+  bash "${REPO_DIR}/scripts/install-wp-cli.sh" || echo "[vzone] Avertissement: install-wp-cli.sh a échoué"
+fi
+
 bash "${REPO_DIR}/scripts/ensure-nginx.sh" "${VZONE_ROOT}/deploy/nginx/vzone.conf"
 
 # Appliquer vhosts SSL + ouvrir 443 + reload

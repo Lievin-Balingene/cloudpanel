@@ -16,6 +16,7 @@ import {
   Code2,
   Terminal,
   FileCode2,
+  LayoutTemplate,
   GitBranch,
   Box,
   HardDrive,
@@ -82,6 +83,7 @@ const sections: NavSection[] = [
     label: "Software",
     items: [
       { to: "/panel/php", label: "Select PHP Version", icon: FileCode2 },
+      { to: "/panel/wordpress", label: "WordPress", icon: LayoutTemplate },
       { to: "/panel/python", label: "Setup Python App", icon: Code2 },
       { to: "/panel/node", label: "Setup Node.js App", icon: Terminal },
       { to: "/panel/git", label: "Git Version Control", icon: GitBranch },

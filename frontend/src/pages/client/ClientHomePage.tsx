@@ -13,6 +13,7 @@ import {
   Code2,
   Terminal,
   FileCode2,
+  LayoutTemplate,
   GitBranch,
   Box,
   HardDrive,
@@ -90,6 +91,7 @@ const sections: Section[] = [
     title: "SOFTWARE",
     tools: [
       { to: "/panel/php", label: "Select PHP Version", desc: "MultiPHP Manager", icon: FileCode2 },
+      { to: "/panel/wordpress", label: "WordPress", desc: "Install & manage WP sites", icon: LayoutTemplate },
       { to: "/panel/python", label: "Setup Python App", desc: "WSGI / ASGI apps", icon: Code2 },
       { to: "/panel/node", label: "Setup Node.js App", desc: "npm & process", icon: Terminal },
       { to: "/panel/git", label: "Git Version Control", desc: "Clone & deploy", icon: GitBranch },
