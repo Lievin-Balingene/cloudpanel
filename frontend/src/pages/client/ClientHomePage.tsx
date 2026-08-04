@@ -28,7 +28,7 @@ import type { DashboardOverview } from "@/types";
 type Tool = {
   to: string;
   label: string;
-  desc: string;
+  desc?: string;
   icon: LucideIcon;
   disabled?: boolean;
 };
@@ -37,78 +37,76 @@ type Section = { title: string; tools: Tool[] };
 
 const sections: Section[] = [
   {
-    title: "FILES",
+    title: "Files",
     tools: [
-      { to: "/panel/files", label: "File Manager", desc: "Manage your files", icon: Folder },
-      { to: "/panel/ftp", label: "FTP Accounts", desc: "Add FTP accounts", icon: Upload },
-      { to: "/panel/backups", label: "Backup", desc: "Backup & restore", icon: HardDrive },
+      { to: "/panel/files", label: "File Manager", icon: Folder },
+      { to: "/panel/ftp", label: "FTP Accounts", icon: Upload },
+      { to: "/panel/backups", label: "Backup", icon: HardDrive },
     ],
   },
   {
-    title: "DATABASES",
+    title: "Databases",
     tools: [
       {
         to: "/panel/databases",
         label: "MySQL® Databases",
-        desc: "Create and manage databases",
         icon: Database,
       },
     ],
   },
   {
-    title: "DOMAINS",
+    title: "Domains",
     tools: [
-      { to: "/panel/domains", label: "Domains", desc: "Create and manage domains", icon: AppWindow },
-      { to: "/panel/dns", label: "Zone Editor", desc: "Manage DNS records", icon: Globe },
-      { to: "/panel/domains", label: "SSL/TLS Status", desc: "View certificate status", icon: Shield },
+      { to: "/panel/domains", label: "Domains", icon: AppWindow },
+      { to: "/panel/dns", label: "Zone Editor", icon: Globe },
+      { to: "/panel/domains", label: "SSL/TLS Status", icon: Shield },
     ],
   },
   {
-    title: "EMAIL",
+    title: "Email",
     tools: [
-      { to: "/panel/email", label: "Email Accounts", desc: "Create email accounts", icon: Mail },
+      { to: "/panel/email", label: "Email Accounts", icon: Mail },
     ],
   },
   {
-    title: "METRICS",
+    title: "Metrics",
     tools: [
       {
         to: "/panel/package",
         label: "Resource Usage",
-        desc: "View package quotas",
         icon: Activity,
       },
     ],
   },
   {
-    title: "SECURITY",
+    title: "Security",
     tools: [
-      { to: "/panel/security", label: "Security", desc: "2FA & password policy", icon: KeyRound },
-      { to: "/panel/domains", label: "SSL/TLS", desc: "Manage certificates", icon: Shield },
+      { to: "/panel/security", label: "Security", icon: KeyRound },
+      { to: "/panel/domains", label: "SSL/TLS", icon: Shield },
     ],
   },
   {
-    title: "SOFTWARE",
+    title: "Software",
     tools: [
-      { to: "/panel/php", label: "Select PHP Version", desc: "MultiPHP Manager", icon: FileCode2 },
-      { to: "/panel/wordpress", label: "WordPress", desc: "Install & manage WP sites", icon: LayoutTemplate },
-      { to: "/panel/python", label: "Setup Python App", desc: "WSGI / ASGI apps", icon: Code2 },
-      { to: "/panel/node", label: "Setup Node.js App", desc: "npm & process", icon: Terminal },
-      { to: "/panel/git", label: "Git Version Control", desc: "Clone & deploy", icon: GitBranch },
-      { to: "/panel/docker", label: "Docker Containers", desc: "Images & logs", icon: Box },
+      { to: "/panel/php", label: "Select PHP Version", icon: FileCode2 },
+      { to: "/panel/wordpress", label: "WordPress", icon: LayoutTemplate },
+      { to: "/panel/python", label: "Setup Python App", icon: Code2 },
+      { to: "/panel/node", label: "Setup Node.js App", icon: Terminal },
+      { to: "/panel/git", label: "Git Version Control", icon: GitBranch },
+      { to: "/panel/docker", label: "Docker Containers", icon: Box },
     ],
   },
   {
-    title: "ADVANCED",
+    title: "Advanced",
     tools: [
-      { to: "/panel/cron", label: "Cron Jobs", desc: "Coming soon", icon: Activity, disabled: true },
+      { to: "/panel/cron", label: "Cron Jobs", icon: Activity, disabled: true },
     ],
   },
   {
-    title: "PREFERENCES",
+    title: "Preferences",
     tools: [
-      { to: "/panel/package", label: "Package", desc: "Your hosting plan", icon: Package },
-      { to: "/panel/security", label: "Password & Security", desc: "Account security", icon: KeyRound },
+      { to: "/panel/package", label: "Package", icon: Package },
+      { to: "/panel/security", label: "Password & Security", icon: KeyRound },
     ],
   },
 ];
@@ -129,7 +127,7 @@ export function ClientHomePage() {
         tools: section.tools.filter(
           (t) =>
             t.label.toLowerCase().includes(needle) ||
-            t.desc.toLowerCase().includes(needle) ||
+            (t.desc ?? "").toLowerCase().includes(needle) ||
             section.title.toLowerCase().includes(needle),
         ),
       }))
@@ -137,11 +135,11 @@ export function ClientHomePage() {
   }, [q]);
 
   return (
-    <div className="space-y-4 animate-fade-up">
+    <div className="space-y-3 animate-fade-up">
       <div className="vz-panel p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-xl font-semibold text-cp-text">Home</h1>
+            <h1 className="text-lg font-semibold text-cp-text">Home</h1>
             <p className="text-sm text-cp-muted">
               Package : <strong>{data?.my_package ?? "non assigné"}</strong>
               {" · "}
@@ -164,25 +162,25 @@ export function ClientHomePage() {
 
       {filtered.map((section) => (
         <section key={section.title} className="vz-panel overflow-hidden">
-          <div className="border-b border-cp-border bg-[#f7f9fb] px-4 py-2 dark:border-ink-800 dark:bg-ink-900">
-            <h2 className="text-xs font-bold uppercase tracking-[0.08em] text-cp-muted">
+          <div className="border-b border-cp-border bg-[#f7f9fb] px-3 py-2 dark:border-ink-800 dark:bg-ink-900">
+            <h2 className="text-[11px] font-semibold tracking-wide text-cp-muted">
               {section.title}
             </h2>
           </div>
-          <div className="grid gap-2 p-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <div className="grid gap-1.5 p-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {section.tools.map((tool) => {
               const body = (
                 <div
-                  className={`flex items-start gap-3 rounded border border-transparent p-3 transition ${
+                  className={`flex items-center gap-2.5 rounded border border-transparent px-2.5 py-2 transition ${
                     tool.disabled
                       ? "cursor-not-allowed opacity-45"
                       : "hover:border-cp-border hover:bg-cp-canvas"
                   }`}
                 >
-                  <tool.icon className="mt-0.5 h-8 w-8 shrink-0 text-cp-orange" />
+                  <tool.icon className="h-4 w-4 shrink-0 text-cp-orange" />
                   <div className="min-w-0">
-                    <p className="text-sm font-semibold text-cp-text">{tool.label}</p>
-                    <p className="text-xs text-cp-muted">{tool.desc}</p>
+                    <p className="text-[13px] font-medium leading-5 text-cp-text">{tool.label}</p>
+                    {tool.desc ? <p className="text-xs text-cp-muted">{tool.desc}</p> : null}
                   </div>
                 </div>
               );
