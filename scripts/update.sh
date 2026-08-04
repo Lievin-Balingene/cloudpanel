@@ -130,9 +130,9 @@ if [[ -f "${REPO_DIR}/scripts/ensure-https.sh" ]]; then
   bash "${REPO_DIR}/scripts/ensure-https.sh" || echo "[vzone] Avertissement: ensure-https.sh a échoué"
 fi
 
-# Vérifier que le default_server n'est plus le panel
-if nginx -T 2>/dev/null | awk '/default_server/,/}/' | grep -q 'frontend/dist'; then
-  echo "[vzone] ALERTE: default_server pointe encore vers le panel — lancez scripts/fix-site-routing.sh"
+# Vérifier que le default_server panel est bien actif
+if ! nginx -T 2>/dev/null | grep -q 'zz-vzone-panel.conf\|frontend/dist'; then
+  echo "[vzone] ALERTE: conf panel absente de nginx -T — lancez scripts/repair-panel-404.sh"
 fi
 
 systemctl daemon-reload

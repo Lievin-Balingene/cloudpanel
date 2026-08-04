@@ -142,30 +142,40 @@ rm -f /etc/nginx/sites-enabled/default \
       /etc/nginx/sites-enabled/000-default \
       /etc/nginx/conf.d/default.conf 2>/dev/null || true
 
-if [[ -d /etc/nginx/sites-available ]]; then
-  install -m 644 "$TMP" /etc/nginx/sites-available/vzone
-  ln -sfn /etc/nginx/sites-available/vzone /etc/nginx/sites-enabled/vzone
-  for f in /etc/nginx/sites-enabled/*; do
-    base="$(basename "$f")"
-    [[ "$base" == "vzone" ]] && continue
-    [[ -e "$f" ]] || continue
-    if grep -q "default_server" "$f" 2>/dev/null; then
-      echo "[vzone] Désactivation de $base (conflit default_server)"
-      rm -f "$f"
-    fi
-  done
-else
-  install -m 644 "$TMP" /etc/nginx/conf.d/vzone.conf
-fi
-rm -f "$TMP"
+# Une seule source de vérité : conf.d (toujours inclus par nginx Debian/Ubuntu).
+# Les installs précédentes mettaient parfois la conf seulement dans sites-enabled
+# alors que conf.d était vide → 404 sur toutes les pages.
+install -m 644 "$TMP" /etc/nginx/conf.d/zz-vzone-panel.conf
+rm -f /etc/nginx/conf.d/vzone.conf \
+      /etc/nginx/sites-enabled/vzone \
+      /etc/nginx/sites-available/vzone 2>/dev/null || true
 
-# Toujours une seule conf panel : sites-enabled OU conf.d, pas les deux
-if [[ -L /etc/nginx/sites-enabled/vzone || -f /etc/nginx/sites-enabled/vzone ]]; then
-  rm -f /etc/nginx/conf.d/vzone.conf 2>/dev/null || true
-fi
+# Désactiver tout autre default_server concurrent
+for f in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf; do
+  [[ -e "$f" ]] || continue
+  base="$(basename "$f")"
+  [[ "$base" == "zz-vzone-panel.conf" ]] && continue
+  [[ "$base" == "vzone-domains-include.conf" ]] && continue
+  [[ "$base" == "vzone-map-upgrade.conf" ]] && continue
+  if grep -q "default_server" "$f" 2>/dev/null; then
+    echo "[vzone] Désactivation default_server concurrent: $f"
+    if [[ -d /etc/nginx/sites-enabled && "$f" == /etc/nginx/sites-enabled/* ]]; then
+      rm -f "$f"
+    else
+      mv -f "$f" "${f}.disabled-by-vzone" 2>/dev/null || rm -f "$f"
+    fi
+  fi
+done
+rm -f "$TMP"
 
 # Retirer vhosts domaine qui dupliquent le panel (conflit server_name)
 for h in ${PANEL_HOSTS}; do
+  [[ -n "$h" ]] || continue
+  safe="$(echo "$h" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/_/g')"
+  rm -f "${DOMAINS_DIR}/${safe}.conf" 2>/dev/null || true
+done
+# Aussi IP / localhost / hostname machine si un vhost les a capturés
+for h in ${HOST_IP} localhost 127.0.0.1 "$(hostname -f 2>/dev/null || true)"; do
   [[ -n "$h" ]] || continue
   safe="$(echo "$h" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/_/g')"
   rm -f "${DOMAINS_DIR}/${safe}.conf" 2>/dev/null || true
@@ -174,12 +184,18 @@ if [[ -d "$DOMAINS_DIR" ]]; then
   for f in "${DOMAINS_DIR}"/*.conf; do
     [[ -f "$f" ]] || continue
     [[ "$(basename "$f")" == ".keep.conf" ]] && continue
-    for h in ${PANEL_HOSTS}; do
+    for h in ${PANEL_HOSTS} ${HOST_IP} localhost; do
+      [[ -n "$h" ]] || continue
       if grep -qE "server_name[^;]*[[:space:]]${h}([[:space:;]]|$)" "$f" 2>/dev/null; then
         echo "[vzone] Suppression conflit $f ($h)"
         rm -f "$f"
       fi
     done
+    # default_server dans un vhost domaine = casse le panel
+    if grep -q "default_server" "$f" 2>/dev/null; then
+      echo "[vzone] Suppression vhost domaine default_server: $f"
+      rm -f "$f"
+    fi
   done
 fi
 
@@ -199,11 +215,19 @@ if [[ ! -f "${VZONE_ROOT}/frontend/dist/index.html" ]]; then
 fi
 if [[ ! -f "${VZONE_ROOT}/frontend/dist/index.html" ]]; then
   echo "[vzone] ERREUR: ${VZONE_ROOT}/frontend/dist/index.html manquant"
-  echo "[vzone] Exécutez: sudo bash /opt/vzone-src/scripts/repair-nginx-500.sh"
+  echo "[vzone] Exécutez: sudo bash /opt/vzone-src/scripts/repair-frontend.sh"
   exit 1
 fi
-chmod -R a+rX "${VZONE_ROOT}/frontend" || true
+
+# www-data doit pouvoir traverser /opt → … → dist
 chmod a+x /opt /opt/vzone /opt/vzone/frontend "${VZONE_ROOT}/frontend/dist" 2>/dev/null || true
+chmod -R a+rX "${VZONE_ROOT}/frontend/dist" || true
+chown -R root:www-data "${VZONE_ROOT}/frontend/dist" 2>/dev/null || true
+if ! sudo -u www-data test -r "${VZONE_ROOT}/frontend/dist/index.html" 2>/dev/null; then
+  echo "[vzone] ALERTE: www-data ne lit pas index.html — chmod 755 sur les parents"
+  chmod 755 /opt /opt/vzone /opt/vzone/frontend "${VZONE_ROOT}/frontend/dist" 2>/dev/null || true
+  chmod 644 "${VZONE_ROOT}/frontend/dist/index.html" 2>/dev/null || true
+fi
 
 nginx -t
 # Pendant une émission SSL panel : reload seulement (pas de restart nginx/API
@@ -217,13 +241,32 @@ fi
 
 sleep 1
 echo "[vzone] Tests locaux"
+PANEL_OK=1
 for url in "http://127.0.0.1/login" "https://127.0.0.1/login"; do
-  code="$(curl -sk -o /dev/null -w "%{http_code}" "$url" || true)"
+  code="$(curl -sk -o /tmp/vzone-nginx-test.body -w "%{http_code}" "$url" || true)"
   echo "  $url → HTTP ${code}"
+  if [[ "$code" != "200" ]]; then
+    PANEL_OK=0
+  fi
 done
 if [[ -n "$HOST_IP" ]]; then
-  code="$(curl -sk -o /dev/null -w "%{http_code}" -H "Host: ${HOST_IP}" "http://127.0.0.1/login" || true)"
+  code="$(curl -sk -o /tmp/vzone-nginx-test.body -w "%{http_code}" -H "Host: ${HOST_IP}" "http://127.0.0.1/login" || true)"
   echo "  Host ${HOST_IP}/login → HTTP ${code}"
+  [[ "$code" == "200" ]] || PANEL_OK=0
+fi
+if [[ -n "$PANEL_PRIMARY" ]]; then
+  code="$(curl -sk -o /tmp/vzone-nginx-test.body -w "%{http_code}" -H "Host: ${PANEL_PRIMARY}" "http://127.0.0.1/login" || true)"
+  echo "  Host ${PANEL_PRIMARY}/login → HTTP ${code}"
+  [[ "$code" == "200" ]] || PANEL_OK=0
+fi
+if [[ "${PANEL_OK}" -ne 1 ]]; then
+  echo "[vzone] ERREUR: /login ne renvoie pas HTTP 200" >&2
+  echo "[vzone] Diagnostique:" >&2
+  echo "  ls -la ${VZONE_ROOT}/frontend/dist/index.html" >&2
+  echo "  nginx -T 2>/dev/null | grep -E 'default_server|root |zz-vzone|try_files' | head -40" >&2
+  nginx -T 2>/dev/null | grep -E 'listen |server_name |root |default_server|try_files|zz-vzone' | head -60 >&2 || true
+  echo "[vzone] Réparez: sudo bash /opt/vzone-src/scripts/repair-panel-404.sh" >&2
+  exit 1
 fi
 echo "[vzone] Nginx OK — panel accessible via IP, hostname et HTTPS"
 
