@@ -17,11 +17,12 @@ if [[ -f "$ENV_FILE" ]]; then
   set +a
 fi
 
-# Vide = panel uniquement via IP / localhost (default_server). Ne pas forcer un FQDN.
+# Vide = panel uniquement via IP / localhost. Ne jamais y mettre un domaine client.
+# Ne PAS utiliser « _ » ici : le catch-all parking est default_server dans vzone.conf.
 PANEL_HOSTS="${VZONE_PANEL_HOSTNAMES:-}"
 PANEL_HOSTS="${PANEL_HOSTS//,/ }"
 HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
-PANEL_NAMES="_ localhost 127.0.0.1"
+PANEL_NAMES="localhost 127.0.0.1"
 [[ -n "$PANEL_HOSTS" ]] && PANEL_NAMES="${PANEL_NAMES} ${PANEL_HOSTS}"
 [[ -n "$HOST_IP" ]] && PANEL_NAMES="${PANEL_NAMES} ${HOST_IP}"
 PANEL_NAMES="$(echo "$PANEL_NAMES" | xargs)"
@@ -270,7 +271,24 @@ if [[ "${PANEL_OK}" -ne 1 ]]; then
   echo "[vzone] Réparez: sudo bash /opt/vzone-src/scripts/repair-panel-404.sh" >&2
   exit 1
 fi
-echo "[vzone] Nginx OK — panel accessible via IP, hostname et HTTPS"
+echo "[vzone] Nginx OK — panel accessible via IP / hostnames panel (pas via domaines clients)"
+
+# Régénérer TOUS les vhosts domaines → public_html (évite 7une.info → /login)
+if [[ -x "${VZONE_ROOT}/backend/.venv/bin/python" && -f "$ENV_FILE" ]]; then
+  echo "[vzone] Sync vhosts domaines (sites clients)"
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+  export DJANGO_SETTINGS_MODULE=vzone.settings.production
+  "${VZONE_ROOT}/backend/.venv/bin/python" "${VZONE_ROOT}/backend/manage.py" shell <<'PY' || echo "[vzone] Avertissement: sync vhosts échoué"
+from apps.domains.vhosts import sync_all_domain_vhosts
+n = sync_all_domain_vhosts()
+print(f"[vzone] vhosts domaines régénérés: {n}")
+PY
+  echo "[vzone] Fichiers:"
+  ls -la "${DOMAINS_DIR}" 2>/dev/null | head -n 40 || true
+fi
 
 # Synchroniser ALLOWED_HOSTS (sinon API domaines échoue via vpanel / IP)
 if [[ -f "$ENV_FILE" ]]; then
