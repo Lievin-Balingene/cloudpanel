@@ -72,6 +72,10 @@ def test_subdomain_and_redirect(api: APIClient):
     assert sub.json()["data"]["name"] == "blog.parent-demo.test"
     assert sub.json()["data"]["domain_type"] == "subdomain"
 
+    parent.refresh_from_db()
+    assert parent.dns_zone_id
+    assert parent.dns_zone.records.filter(record_type="A", name="blog", content="203.0.113.20").exists()
+
     redirect = api.post(
         reverse("domain-redirect-list", kwargs={"domain_id": parent.pk}),
         {
@@ -83,6 +87,37 @@ def test_subdomain_and_redirect(api: APIClient):
     )
     assert redirect.status_code == 201
     assert redirect.json()["data"]["source_path"] == "/old"
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_subdomain_dns_without_parent_fk(tmp_path, settings):
+    """Même si parent.dns_zone FK est vide, le sous-domaine doit créer l'A."""
+    settings.VZONE_DNS_ZONES_DIR = str(tmp_path / "zones")
+    settings.VZONE_DNS_ZONES_CONF = str(tmp_path / "zones.conf")
+    settings.VZONE_DNS_RELOAD_FLAG = str(tmp_path / "reload.requested")
+    settings.VZONE_PUBLIC_IP = "203.0.113.88"
+    settings.VZONE_HOME_ROOT = tmp_path / "homes"
+    settings.VZONE_NGINX_DOMAINS_DIR = str(tmp_path / "nginx")
+    Path(settings.VZONE_NGINX_DOMAINS_DIR).mkdir(parents=True, exist_ok=True)
+
+    admin = AdminFactory(password="TestPassword123!")
+    parent = create_domain(name="apex-heal.test", owner=admin, ipv4_address="203.0.113.88")
+    parent.dns_zone = None
+    parent.save(update_fields=["dns_zone"])
+
+    sub = create_domain(
+        name="app.apex-heal.test",
+        owner=admin,
+        domain_type=Domain.DomainType.SUBDOMAIN,
+        parent=parent,
+        create_dns_zone=False,
+    )
+    parent.refresh_from_db()
+    assert parent.dns_zone_id
+    assert parent.dns_zone.records.filter(record_type="A", name="app").exists()
+    assert sub.dns_zone_id == parent.dns_zone_id
+
 
 
 @pytest.mark.integration

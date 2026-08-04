@@ -122,12 +122,93 @@ def provision_document_root(docroot: str, *, hostname: str, domain_type: str) ->
 def _ensure_a_record(zone: DnsZone, name: str, ipv4: str | None) -> None:
     if not ipv4:
         return
+    label = (name or "@").strip() or "@"
+    existing = DnsRecord.objects.filter(zone=zone, record_type="A", name=label)
+    if existing.count() > 1:
+        keep = existing.order_by("id").first()
+        assert keep is not None
+        existing.exclude(pk=keep.pk).delete()
     DnsRecord.objects.update_or_create(
         zone=zone,
         record_type="A",
-        name=name,
+        name=label,
         defaults={"content": ipv4, "ttl": zone.ttl_default, "is_active": True},
     )
+
+
+def _resolve_parent_dns_zone(parent: Domain) -> DnsZone:
+    """Zone DNS du parent (FK, zone homonyme, ou création)."""
+    if parent.dns_zone_id:
+        return parent.dns_zone
+    zone = DnsZone.objects.filter(name=parent.name).first()
+    if zone is None:
+        zone = create_zone_with_defaults(name=parent.name, owner=parent.owner)
+        ip = parent.ipv4_address or _default_ipv4()
+        _ensure_a_record(zone, "@", ip)
+        _ensure_a_record(zone, "www", ip)
+        zone.bump_serial()
+    if parent.dns_zone_id != zone.pk:
+        parent.dns_zone = zone
+        parent.save(update_fields=["dns_zone", "updated_at"])
+    return zone
+
+
+def _subdomain_dns_label(hostname: str, parent_name: str) -> str:
+    host = hostname.strip().lower().rstrip(".")
+    parent = parent_name.strip().lower().rstrip(".")
+    suffix = f".{parent}"
+    if not host.endswith(suffix):
+        raise VZoneAPIException(
+            detail="Le sous-domaine doit se terminer par le domaine parent.",
+            code="invalid_subdomain",
+            status_code=400,
+        )
+    label = host[: -len(suffix)]
+    if not label:
+        raise VZoneAPIException(
+            detail="Label de sous-domaine invalide.",
+            code="invalid_subdomain",
+            status_code=400,
+        )
+    return label
+
+
+def ensure_subdomain_dns(domain: Domain, *, sync: bool = True) -> DnsZone | None:
+    """Crée/met à jour l'A du sous-domaine dans la zone parent + sync BIND."""
+    if domain.domain_type != Domain.DomainType.SUBDOMAIN or not domain.parent_id:
+        return None
+    parent = domain.parent
+    zone = _resolve_parent_dns_zone(parent)
+    label = _subdomain_dns_label(domain.name, parent.name)
+    ip = domain.ipv4_address or parent.ipv4_address or _default_ipv4()
+    _ensure_a_record(zone, label, ip)
+    if domain.dns_zone_id != zone.pk:
+        domain.dns_zone = zone
+        domain.save(update_fields=["dns_zone", "updated_at"])
+    zone.bump_serial()
+    if sync:
+        try:
+            from apps.dns.authoritative import schedule_zone_sync
+
+            schedule_zone_sync(zone)
+        except Exception:  # noqa: BLE001
+            logger.exception("Planification sync DNS (sous-domaine)")
+    return zone
+
+
+def heal_all_subdomain_dns() -> int:
+    """Répare les A manquants pour tous les sous-domaines (sans reload BIND)."""
+    count = 0
+    qs = Domain.objects.filter(domain_type=Domain.DomainType.SUBDOMAIN).select_related(
+        "parent", "parent__dns_zone"
+    )
+    for domain in qs:
+        try:
+            if ensure_subdomain_dns(domain, sync=False):
+                count += 1
+        except Exception:  # noqa: BLE001
+            logger.exception("heal subdomain DNS %s", domain.name)
+    return count
 
 
 def _sync_vhost_safe(domain: Domain | None = None, *, remove_name: str | None = None) -> None:
@@ -256,10 +337,10 @@ def create_domain(
             schedule_zone_sync(zone)
         except Exception:  # noqa: BLE001
             logger.exception("Planification sync DNS")
-    elif domain_type == Domain.DomainType.SUBDOMAIN and parent and parent.dns_zone_id:
-        zone = parent.dns_zone
-        label = hostname[: -(len(parent.name) + 1)] or "@"
-        _ensure_a_record(zone, label, ipv4_address or parent.ipv4_address)
+    elif domain_type == Domain.DomainType.SUBDOMAIN and parent:
+        zone = _resolve_parent_dns_zone(parent)
+        label = _subdomain_dns_label(hostname, parent.name)
+        _ensure_a_record(zone, label, ipv4_address or parent.ipv4_address or _default_ipv4())
         zone.bump_serial()
         try:
             from apps.dns.authoritative import schedule_zone_sync
@@ -290,6 +371,21 @@ def delete_domain(domain: Domain, *, remove_dns_zone: bool = False) -> None:
     domain_name = domain.name
     docroot = domain.document_root
     domain_type = domain.domain_type
+    parent = domain.parent
+    # Retirer l'A du sous-domaine dans la zone parent avant delete
+    if domain_type == Domain.DomainType.SUBDOMAIN and parent:
+        try:
+            z = zone or (parent.dns_zone if parent.dns_zone_id else DnsZone.objects.filter(name=parent.name).first())
+            if z:
+                label = _subdomain_dns_label(domain_name, parent.name)
+                DnsRecord.objects.filter(zone=z, record_type="A", name=label).delete()
+                z.bump_serial()
+                from apps.dns.authoritative import schedule_zone_sync
+
+                schedule_zone_sync(z)
+        except Exception:  # noqa: BLE001
+            logger.exception("Nettoyage DNS sous-domaine %s", domain_name)
+
     domain.delete()
     if remove_dns_zone and zone and not Domain.objects.filter(dns_zone=zone).exists():
         if zone.name == domain_name:

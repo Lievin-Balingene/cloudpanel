@@ -17,5 +17,10 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        from apps.domains.services import heal_all_subdomain_dns
+
+        healed = heal_all_subdomain_dns()
         count = sync_all_zones_to_named(ensure_glue=not options["no_glue"])
-        self.stdout.write(self.style.SUCCESS(f"Zones DNS publiées: {count}"))
+        self.stdout.write(
+            self.style.SUCCESS(f"Sous-domaines DNS réparés: {healed}; zones publiées: {count}")
+        )

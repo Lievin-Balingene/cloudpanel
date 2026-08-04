@@ -246,6 +246,12 @@ def sync_all_zones_to_named(*, ensure_glue: bool = True) -> int:
             ensure_ns_glue_records()
         except Exception:  # noqa: BLE001
             logger.exception("Glue NS")
+    try:
+        from apps.domains.services import heal_all_subdomain_dns
+
+        heal_all_subdomain_dns()
+    except Exception:  # noqa: BLE001
+        logger.exception("Heal subdomain DNS")
     zones = list(DnsZone.objects.filter(is_active=True).prefetch_related("records"))
     # Clean orphan zone files
     zdir = dns_zones_dir()
