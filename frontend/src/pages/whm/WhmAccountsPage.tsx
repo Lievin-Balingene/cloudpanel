@@ -17,6 +17,7 @@ const emptyCreate = {
   email: "",
   username: "",
   password: "",
+  domain: "",
   role: "client",
   package_id: "",
 };
@@ -59,29 +60,25 @@ export function WhmAccountsPage() {
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["users"] });
     void qc.invalidateQueries({ queryKey: ["dashboard-overview"] });
+    void qc.invalidateQueries({ queryKey: ["domains"] });
   };
 
   const createUser = useMutation({
     mutationFn: async () => {
-      const user = await apiRequest<User>("/auth/users/", {
-        method: "POST",
-        body: JSON.stringify({
-          email: form.email,
-          username: form.username,
-          password: form.password,
-          role: form.role,
-        }),
-      });
+      const payload: Record<string, unknown> = {
+        email: form.email,
+        username: form.username,
+        password: form.password,
+        role: form.role,
+        domain: form.domain.trim().toLowerCase(),
+      };
       if (form.package_id) {
-        await apiRequest("/packages/assign/", {
-          method: "POST",
-          body: JSON.stringify({
-            user_id: user.id,
-            package_id: Number(form.package_id),
-          }),
-        });
+        payload.package_id = Number(form.package_id);
       }
-      return user;
+      return apiRequest<User>("/auth/users/", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
     },
     onSuccess: () => {
       setError(null);
@@ -165,52 +162,80 @@ export function WhmAccountsPage() {
   return (
     <div className="space-y-4 animate-fade-up">
       <div className="vz-panel p-4">
-        <h1 className="text-xl font-semibold text-cp-text">Comptes</h1>
+        <h1 className="text-xl font-semibold text-cp-text">Create a New Account</h1>
         <p className="text-sm text-cp-muted">
-          Créer, modifier, suspendre ou supprimer des comptes d&apos;hébergement.
+          Comme cPanel : username + domaine principal → home,{" "}
+          <code className="font-mono text-xs">public_html</code>, zone DNS et vhost nginx.
         </p>
       </div>
 
-      <form className="vz-panel grid gap-2 p-4 md:grid-cols-6" onSubmit={onSubmit}>
-        <input
-          className="vz-input"
-          placeholder="username"
-          required
-          value={form.username}
-          onChange={(e) => setForm({ ...form, username: e.target.value })}
-        />
-        <input
-          className="vz-input md:col-span-2"
-          type="email"
-          placeholder="email"
-          required
-          value={form.email}
-          onChange={(e) => setForm({ ...form, email: e.target.value })}
-        />
-        <input
-          className="vz-input"
-          type="password"
-          placeholder="mot de passe"
-          required
-          minLength={10}
-          value={form.password}
-          onChange={(e) => setForm({ ...form, password: e.target.value })}
-        />
-        <select
-          className="vz-input"
-          value={form.package_id}
-          onChange={(e) => setForm({ ...form, package_id: e.target.value })}
-        >
-          <option value="">Package…</option>
-          {packages.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-        <button className="vz-btn-primary" type="submit" disabled={createUser.isPending}>
-          Créer compte
-        </button>
+      <form className="vz-panel grid gap-3 p-4 md:grid-cols-2 lg:grid-cols-3" onSubmit={onSubmit}>
+        <label className="space-y-1">
+          <span className="text-[11px] font-medium text-cp-muted">Username *</span>
+          <input
+            className="vz-input"
+            placeholder="ex: johndoe"
+            required
+            value={form.username}
+            onChange={(e) => setForm({ ...form, username: e.target.value })}
+          />
+        </label>
+        <label className="space-y-1 lg:col-span-2">
+          <span className="text-[11px] font-medium text-cp-muted">Domain *</span>
+          <input
+            className="vz-input"
+            placeholder="exemple.com"
+            required
+            value={form.domain}
+            onChange={(e) => setForm({ ...form, domain: e.target.value })}
+          />
+          <span className="text-[11px] text-cp-muted">
+            Domaine principal → <code className="font-mono">~/public_html</code> + DNS A + nginx
+          </span>
+        </label>
+        <label className="space-y-1 lg:col-span-2">
+          <span className="text-[11px] font-medium text-cp-muted">Email *</span>
+          <input
+            className="vz-input"
+            type="email"
+            placeholder="email"
+            required
+            value={form.email}
+            onChange={(e) => setForm({ ...form, email: e.target.value })}
+          />
+        </label>
+        <label className="space-y-1">
+          <span className="text-[11px] font-medium text-cp-muted">Password *</span>
+          <input
+            className="vz-input"
+            type="password"
+            placeholder="mot de passe"
+            required
+            minLength={10}
+            value={form.password}
+            onChange={(e) => setForm({ ...form, password: e.target.value })}
+          />
+        </label>
+        <label className="space-y-1">
+          <span className="text-[11px] font-medium text-cp-muted">Package</span>
+          <select
+            className="vz-input"
+            value={form.package_id}
+            onChange={(e) => setForm({ ...form, package_id: e.target.value })}
+          >
+            <option value="">Package…</option>
+            {packages.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="flex items-end">
+          <button className="vz-btn-primary w-full" type="submit" disabled={createUser.isPending}>
+            Créer le compte
+          </button>
+        </div>
       </form>
 
       {editing && editForm && (
@@ -218,6 +243,11 @@ export function WhmAccountsPage() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-semibold text-cp-navy">
               Modifier <span className="font-mono">{editing.username}</span>
+              {editing.primary_domain && (
+                <span className="ml-2 text-sm font-normal text-cp-muted">
+                  ({editing.primary_domain})
+                </span>
+              )}
             </h2>
             <button type="button" className="vz-btn-ghost" onClick={() => setEditing(null)}>
               Annuler
@@ -298,6 +328,7 @@ export function WhmAccountsPage() {
           <thead className="bg-cp-canvas text-xs uppercase text-cp-muted dark:bg-ink-900">
             <tr>
               <th className="px-3 py-2">Compte</th>
+              <th className="px-3 py-2">Domaine</th>
               <th className="px-3 py-2">E-mail</th>
               <th className="px-3 py-2">Rôle</th>
               <th className="px-3 py-2">État</th>
@@ -308,7 +339,7 @@ export function WhmAccountsPage() {
           <tbody>
             {isLoading && (
               <tr>
-                <td className="px-3 py-4" colSpan={6}>
+                <td className="px-3 py-4" colSpan={7}>
                   Chargement…
                 </td>
               </tr>
@@ -316,6 +347,9 @@ export function WhmAccountsPage() {
             {users.map((u) => (
               <tr key={u.id} className="border-t border-cp-border dark:border-ink-800">
                 <td className="px-3 py-2 font-medium">{u.username}</td>
+                <td className="px-3 py-2 font-mono text-xs text-cp-navy dark:text-ink-200">
+                  {u.primary_domain || "—"}
+                </td>
                 <td className="px-3 py-2">{u.email}</td>
                 <td className="px-3 py-2 capitalize">{u.role}</td>
                 <td className="px-3 py-2">
@@ -363,7 +397,7 @@ export function WhmAccountsPage() {
             ))}
             {!isLoading && users.length === 0 && (
               <tr>
-                <td className="px-3 py-4 text-cp-muted" colSpan={6}>
+                <td className="px-3 py-4 text-cp-muted" colSpan={7}>
                   Aucun compte.
                 </td>
               </tr>

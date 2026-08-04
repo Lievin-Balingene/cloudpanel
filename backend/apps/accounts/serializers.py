@@ -31,6 +31,7 @@ class ResourceQuotaSerializer(serializers.ModelSerializer):
 
 class UserSerializer(serializers.ModelSerializer):
     quota = ResourceQuotaSerializer(read_only=True)
+    primary_domain = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -49,6 +50,7 @@ class UserSerializer(serializers.ModelSerializer):
             "parent",
             "system_username",
             "home_directory",
+            "primary_domain",
             "last_login",
             "last_login_ip",
             "date_joined",
@@ -61,8 +63,27 @@ class UserSerializer(serializers.ModelSerializer):
             "date_joined",
             "system_username",
             "home_directory",
+            "primary_domain",
             "two_factor_enabled",
         )
+
+    def get_primary_domain(self, obj: User) -> str:
+        try:
+            from apps.domains.models import Domain
+
+            primary = (
+                Domain.objects.filter(
+                    owner=obj,
+                    domain_type=Domain.DomainType.PRIMARY,
+                    is_active=True,
+                )
+                .order_by("created_at")
+                .values_list("name", flat=True)
+                .first()
+            )
+            return primary or ""
+        except Exception:  # noqa: BLE001
+            return ""
 
 
 class UserUpdateSerializer(serializers.ModelSerializer):
@@ -138,6 +159,9 @@ class UserUpdateSerializer(serializers.ModelSerializer):
 class UserCreateSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=10)
     quota = ResourceQuotaSerializer(required=False)
+    # Domaine principal cPanel (obligatoire pour client/revendeur)
+    domain = serializers.CharField(required=False, allow_blank=True, default="")
+    package_id = serializers.IntegerField(required=False, allow_null=True)
 
     class Meta:
         model = User
@@ -151,6 +175,8 @@ class UserCreateSerializer(serializers.ModelSerializer):
             "module_permissions",
             "parent",
             "quota",
+            "domain",
+            "package_id",
         )
 
     def validate_username(self, value: str) -> str:
@@ -173,6 +199,16 @@ class UserCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(str(exc.detail)) from exc
         return value
 
+    def validate_domain(self, value: str) -> str:
+        name = (value or "").strip().lower().rstrip(".")
+        if not name:
+            return ""
+        if "." not in name or " " in name:
+            raise serializers.ValidationError(
+                "Domaine principal invalide (FQDN requis, ex: exemple.com)."
+            )
+        return name
+
     def validate_role(self, value: str) -> str:
         request = self.context.get("request")
         actor = getattr(request, "user", None)
@@ -186,18 +222,62 @@ class UserCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Un client ne peut pas créer d'utilisateurs.")
         return value
 
+    def validate(self, attrs: dict) -> dict:
+        role = attrs.get("role") or User.Role.CLIENT
+        domain = (attrs.get("domain") or "").strip()
+        if role in {User.Role.CLIENT, User.Role.RESELLER} and not domain:
+            raise serializers.ValidationError(
+                {
+                    "domain": "Le domaine principal est requis (comme sur cPanel Create a New Account).",
+                }
+            )
+        return attrs
+
     def create(self, validated_data: dict) -> User:
-        from apps.accounts.services import provision_account_home
+        from apps.accounts.services import (
+            provision_account_home,
+            provision_primary_domain_for_account,
+        )
 
         quota_data = validated_data.pop("quota", None)
         password = validated_data.pop("password")
-        # Username déjà normalisé (minuscules) via validate_username
+        domain_name = (validated_data.pop("domain", None) or "").strip()
+        package_id = validated_data.pop("package_id", None)
+
         user = User.objects.create_user(password=password, **validated_data)
         if quota_data:
             for key, value in quota_data.items():
                 setattr(user.quota, key, value)
             user.quota.save()
+
         provision_account_home(user)
+        user.refresh_from_db()
+
+        # Package avant domaine pour appliquer les quotas (domains, disk, …)
+        if package_id:
+            try:
+                from apps.packages.models import HostingPackage
+                from apps.packages.services import apply_package_to_user
+
+                package = HostingPackage.objects.get(pk=package_id)
+                request = self.context.get("request")
+                apply_package_to_user(
+                    user,
+                    package,
+                    assigned_by=getattr(request, "user", None),
+                )
+            except Exception as exc:  # noqa: BLE001
+                raise serializers.ValidationError(
+                    {"package_id": f"Impossible d'assigner le package : {exc}"}
+                ) from exc
+
+        if domain_name and user.role in {User.Role.CLIENT, User.Role.RESELLER}:
+            try:
+                provision_primary_domain_for_account(user, domain_name)
+            except VZoneAPIException as exc:
+                # Compte créé mais domaine KO — remonter clairement
+                raise serializers.ValidationError({"domain": str(exc.detail)}) from exc
+
         user.refresh_from_db()
         return user
 

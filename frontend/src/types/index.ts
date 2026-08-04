@@ -28,6 +28,9 @@ export interface User {
   must_change_password: boolean;
   two_factor_enabled: boolean;
   module_permissions: string[];
+  system_username?: string;
+  home_directory?: string;
+  primary_domain?: string;
   quota?: ResourceQuota;
 }
 

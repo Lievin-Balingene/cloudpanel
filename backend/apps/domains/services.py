@@ -106,17 +106,10 @@ def provision_document_root(docroot: str, *, hostname: str, domain_type: str) ->
 
     index = root / "index.html"
     if not index.exists():
+        from apps.accounts.services import cpanel_welcome_html
+
         index.write_text(
-            "<!DOCTYPE html>\n"
-            "<html lang=\"fr\"><head><meta charset=\"utf-8\">"
-            f"<title>{hostname}</title>"
-            "<style>body{font-family:system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;color:#2c3e50}"
-            "h1{font-size:1.5rem}p{color:#6b7c8f}</style></head>"
-            f"<body><h1>{hostname}</h1>"
-            "<p>Document root V-zone Panel — déposez vos fichiers ici "
-            "(ou liez une app Python/Node/PHP : elle aura la priorité).</p>"
-            f"<p><small>Type&nbsp;: {domain_type}</small></p>"
-            "</body></html>\n",
+            cpanel_welcome_html(hostname),
             encoding="utf-8",
         )
         secure_file(index, 0o644)

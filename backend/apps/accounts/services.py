@@ -79,13 +79,12 @@ def provision_account_home(user: User) -> Path:
     home = personal_home(user)
     try:
         ensure_cpanel_tree(home)
+        # index.html de bienvenue : laissé au domaine primaire (create) si possible ;
+        # sinon page minimale pour public_html.
         index = home / "public_html" / "index.html"
         if not index.exists():
             index.write_text(
-                "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\">"
-                f"<title>{sys_name}</title></head>"
-                f"<body><h1>Account {sys_name}</h1>"
-                "<p>V-zone Panel — document root (public_html).</p></body></html>\n",
+                cpanel_welcome_html(sys_name, account=sys_name),
                 encoding="utf-8",
             )
     except OSError as exc:
@@ -101,6 +100,81 @@ def provision_account_home(user: User) -> Path:
     )
     logger.info("Home provisionné pour %s → %s", user.username, home)
     return home
+
+
+def cpanel_welcome_html(hostname: str, *, account: str = "") -> str:
+    """Page d'accueil style cPanel dans public_html."""
+    acct = account or hostname
+    return (
+        "<!DOCTYPE html>\n"
+        '<html lang="fr"><head><meta charset="utf-8">'
+        f"<title>{hostname}</title>"
+        "<style>"
+        "body{margin:0;font-family:system-ui,-apple-system,sans-serif;"
+        "background:linear-gradient(160deg,#e8eef4 0%,#f7f9fc 45%,#fff 100%);"
+        "color:#2c3e50;min-height:100vh;display:flex;align-items:center;justify-content:center}"
+        ".box{max-width:36rem;padding:2.5rem;background:#fff;border:1px solid #d5dee8;"
+        "border-radius:12px;box-shadow:0 8px 30px rgba(26,43,60,.08)}"
+        "h1{margin:0 0 .5rem;font-size:1.6rem;color:#1a2b3c}"
+        "p{margin:.5rem 0;color:#6b7c8f;line-height:1.5}"
+        "code{font-size:.85rem;background:#f0f4f8;padding:.15rem .4rem;border-radius:4px}"
+        ".ok{display:inline-block;margin-top:1rem;padding:.35rem .75rem;border-radius:999px;"
+        "background:#e8f7ef;color:#0f7a45;font-size:.8rem;font-weight:600}"
+        "</style></head><body><div class=\"box\">"
+        f"<h1>{hostname}</h1>"
+        f"<p>Compte <code>{acct}</code> — document root "
+        "<code>public_html</code> (comme cPanel).</p>"
+        "<p>Déposez vos fichiers ici (HTML, PHP, ou liez une app Python/Node depuis le panel).</p>"
+        '<span class="ok">Site prêt</span>'
+        "</div></body></html>\n"
+    )
+
+
+def provision_primary_domain_for_account(user: User, domain_name: str) -> object:
+    """
+    Crée le domaine principal du compte (cPanel) :
+    Domain primary → ~/public_html, zone DNS + A @/www, vhost nginx.
+    """
+    from apps.domains.models import Domain
+    from apps.domains.services import create_domain
+
+    name = (domain_name or "").strip().lower().rstrip(".")
+    if not name or "." not in name:
+        raise VZoneAPIException(
+            detail="Domaine principal invalide (FQDN requis, ex: exemple.com).",
+            code="invalid_primary_domain",
+            status_code=400,
+        )
+
+    existing = Domain.objects.filter(owner=user, domain_type=Domain.DomainType.PRIMARY).first()
+    if existing:
+        return existing
+
+    domain = create_domain(
+        name=name,
+        owner=user,
+        domain_type=Domain.DomainType.PRIMARY,
+        create_dns_zone=True,
+    )
+    # Page d'accueil avec le vrai hostname (remplace éventuellement l'index générique)
+    try:
+        index = Path(domain.document_root) / "index.html"
+        index.write_text(
+            cpanel_welcome_html(domain.name, account=user.username),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        logger.warning("Impossible d'écrire index.html pour %s: %s", domain.name, exc)
+
+    # Sync vhost immédiat (en plus de on_commit) pour que le site réponde tout de suite
+    try:
+        from apps.domains.vhosts import sync_domain_vhost
+
+        sync_domain_vhost(domain)
+    except Exception:  # noqa: BLE001
+        logger.exception("Sync vhost primary échoué pour %s", domain.name)
+
+    return domain
 
 
 def delete_account(user: User) -> None:

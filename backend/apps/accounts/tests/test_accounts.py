@@ -79,9 +79,26 @@ def test_me_authenticated(api: APIClient):
 def test_reseller_creates_client_only(api: APIClient, tmp_path, settings):
     settings.VZONE_HOME_ROOT = tmp_path / "homes"
     settings.VZONE_HOME_ROOT.mkdir(parents=True, exist_ok=True)
+    settings.VZONE_NGINX_DOMAINS_DIR = str(tmp_path / "nginx")
+    settings.VZONE_PUBLIC_IP = "203.0.113.10"
+    Path(settings.VZONE_NGINX_DOMAINS_DIR).mkdir(parents=True, exist_ok=True)
 
     reseller = ResellerFactory(password="TestPassword123!")
     api.force_authenticate(user=reseller)
+
+    # Sans domaine → erreur
+    missing = api.post(
+        reverse("user-list"),
+        {
+            "email": "nodomain@vzone.test",
+            "username": "nodomain",
+            "password": "TestPassword123!",
+            "role": "client",
+        },
+        format="json",
+    )
+    assert missing.status_code == 400
+
     response = api.post(
         reverse("user-list"),
         {
@@ -89,10 +106,14 @@ def test_reseller_creates_client_only(api: APIClient, tmp_path, settings):
             "username": "newclient",
             "password": "TestPassword123!",
             "role": "client",
+            "domain": "newclient.example.com",
         },
         format="json",
     )
-    assert response.status_code == 201
+    assert response.status_code == 201, response.content
+    data = response.json()["data"]
+    assert data.get("primary_domain") == "newclient.example.com"
+
     created = User.objects.get(username="newclient")
     assert created.parent_id == reseller.pk
     assert created.system_username == "newclient"
@@ -104,6 +125,23 @@ def test_reseller_creates_client_only(api: APIClient, tmp_path, settings):
     assert (home / "ssl").is_dir()
     assert (home / ".trash").is_dir()
     assert (home / "public_html" / "index.html").is_file()
+    index_html = (home / "public_html" / "index.html").read_text(encoding="utf-8")
+    assert "newclient.example.com" in index_html
+
+    from apps.domains.models import Domain
+    from apps.dns.models import DnsRecord, DnsZone
+
+    primary = Domain.objects.get(owner=created, domain_type=Domain.DomainType.PRIMARY)
+    assert primary.name == "newclient.example.com"
+    assert primary.document_root.endswith("public_html")
+    zone = DnsZone.objects.get(name="newclient.example.com")
+    assert DnsRecord.objects.filter(zone=zone, record_type="A", name="@").exists()
+    vhost = Path(settings.VZONE_NGINX_DOMAINS_DIR) / "newclient.example.com.conf"
+    assert vhost.exists()
+    conf = vhost.read_text(encoding="utf-8")
+    assert "server_name" in conf
+    assert "newclient.example.com" in conf
+    assert "public_html" in conf.replace("\\", "/")
 
     forbidden = api.post(
         reverse("user-list"),
@@ -112,6 +150,7 @@ def test_reseller_creates_client_only(api: APIClient, tmp_path, settings):
             "username": "other",
             "password": "TestPassword123!",
             "role": "reseller",
+            "domain": "other.example.com",
         },
         format="json",
     )
@@ -202,6 +241,7 @@ def test_update_and_delete_user(api: APIClient, tmp_path, settings):
             "username": "editme",
             "password": "TestPassword123!",
             "role": "client",
+            "domain": "editme.example.com",
         },
         format="json",
     )
