@@ -145,8 +145,9 @@ export function ServerSetupManager({ title }: { title: string }) {
             Appliquer aussi à Postfix (myhostname)
           </label>
           <p className="text-xs text-cp-muted">
-            Applique `hostnamectl`, met à jour `/etc/hosts`, `VZONE_PANEL_HOSTNAMES`, `ALLOWED_HOSTS` et
-            régénère Nginx.
+            Applique `hostnamectl`, met à jour `/etc/hosts` et `ALLOWED_HOSTS`, régénère Nginx. Le hostname
+            OS sert au mail/PTR — ce n&apos;est pas l&apos;URL du panel (accès via IP). N&apos;utilisez pas un
+            domaine client comme hostname panel.
           </p>
         </section>
 

@@ -44,7 +44,11 @@ echo "[vzone] Test local :"
 curl -sI -o /dev/null -w "HTTP  http://127.0.0.1/ → %{http_code}\n" http://127.0.0.1/ || true
 curl -skI -o /dev/null -w "HTTPS https://127.0.0.1/ → %{http_code}\n" https://127.0.0.1/ || true
 
-DOMAIN="${1:-vpanel.vzonecloud.co.uk}"
+DOMAIN="${1:-}"
+if [[ -z "$DOMAIN" ]]; then
+  HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  DOMAIN="${HOST_IP:-localhost}"
+fi
 if [[ -n "$DOMAIN" ]]; then
   echo "[vzone] Test Host ${DOMAIN}:"
   curl -sI -o /dev/null -w "HTTP  → %{http_code}\n" -H "Host: ${DOMAIN}" http://127.0.0.1/ || true

@@ -38,9 +38,12 @@ echo "[6] Fichiers vhosts domaines"
 ls -la /var/lib/vzone/nginx/domains/ 2>/dev/null || true
 
 echo "[7] Tests locaux"
-PANEL="${VZONE_PANEL_HOSTNAMES:-vpanel.vzonecloud.co.uk}"
+PANEL="${VZONE_PANEL_HOSTNAMES:-}"
 PANEL="${PANEL%%,*}"
 PANEL="$(echo "$PANEL" | awk '{print $1}')"
+HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+[[ -z "$PANEL" ]] && PANEL="${HOST_IP}"
+[[ -z "$PANEL" ]] && PANEL="127.0.0.1"
 curl -sI -H "Host: unknown.invalid" http://127.0.0.1/ | head -n 5 || true
 echo "---"
 curl -sI -H "Host: ${PANEL}" http://127.0.0.1/login | head -n 5 || true

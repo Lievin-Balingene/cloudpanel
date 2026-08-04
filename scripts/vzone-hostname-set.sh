@@ -49,23 +49,44 @@ if [[ -f "${ENV_FILE}" ]]; then
     fi
   }
 
-  # Conserve les panel hosts existants, ajoute le nouveau hostname
-  CURRENT_PANEL="$(grep '^VZONE_PANEL_HOSTNAMES=' "${ENV_FILE}" | head -n1 | cut -d= -f2- || true)"
-  PANEL_LIST="${HOSTNAME}"
-  if [[ -n "${CURRENT_PANEL}" ]]; then
-    # Remplace le premier host (hostname serveur) en gardant les alias panel
-    IFS=',' read -r -a arr <<< "${CURRENT_PANEL}"
-    keep=()
-    for h in "${arr[@]}"; do
-      h="$(echo "$h" | xargs)"
-      [[ -z "$h" || "$h" == "${HOSTNAME}" ]] && continue
-      keep+=("$h")
-    done
-    if ((${#keep[@]})); then
-      PANEL_LIST="${HOSTNAME},$(IFS=,; echo "${keep[*]}")"
+  # Le FQDN OS (mail/PTR) n'est PAS automatiquement l'URL du panel.
+  # Sinon un domaine client enregistré comme hostname vole le site au profit du SPA.
+  # Panel = IP (default_server) + éventuels VZONE_PANEL_HOSTNAMES dédiés.
+  # Option: VZONE_HOSTNAME_IS_PANEL=1 pour lier hostname → panel (ancien comportement).
+  if [[ "${VZONE_HOSTNAME_IS_PANEL:-0}" == "1" ]]; then
+    CURRENT_PANEL="$(grep '^VZONE_PANEL_HOSTNAMES=' "${ENV_FILE}" | head -n1 | cut -d= -f2- || true)"
+    PANEL_LIST="${HOSTNAME}"
+    if [[ -n "${CURRENT_PANEL}" ]]; then
+      IFS=',' read -r -a arr <<< "${CURRENT_PANEL}"
+      keep=()
+      for h in "${arr[@]}"; do
+        h="$(echo "$h" | xargs)"
+        [[ -z "$h" || "$h" == "${HOSTNAME}" ]] && continue
+        keep+=("$h")
+      done
+      if ((${#keep[@]})); then
+        PANEL_LIST="${HOSTNAME},$(IFS=,; echo "${keep[*]}")"
+      fi
+    fi
+    upsert "VZONE_PANEL_HOSTNAMES" "${PANEL_LIST}"
+  else
+    # Retirer ce FQDN de la liste panel s'il y était (libère le domaine pour le site)
+    CURRENT_PANEL="$(grep '^VZONE_PANEL_HOSTNAMES=' "${ENV_FILE}" | head -n1 | cut -d= -f2- || true)"
+    if [[ -n "${CURRENT_PANEL}" ]]; then
+      keep=()
+      IFS=',' read -r -a arr <<< "${CURRENT_PANEL}"
+      for h in "${arr[@]}"; do
+        h="$(echo "$h" | xargs | tr '[:upper:]' '[:lower:]')"
+        [[ -z "$h" || "$h" == "${HOSTNAME}" ]] && continue
+        keep+=("$h")
+      done
+      if ((${#keep[@]})); then
+        upsert "VZONE_PANEL_HOSTNAMES" "$(IFS=,; echo "${keep[*]}")"
+      else
+        upsert "VZONE_PANEL_HOSTNAMES" ""
+      fi
     fi
   fi
-  upsert "VZONE_PANEL_HOSTNAMES" "${PANEL_LIST}"
 
   CURRENT_ALLOWED="$(grep '^VZONE_ALLOWED_HOSTS=' "${ENV_FILE}" | head -n1 | cut -d= -f2- || true)"
   ALLOWED="${HOSTNAME},localhost,127.0.0.1"

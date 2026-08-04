@@ -17,10 +17,12 @@ if [[ -f "$ENV_FILE" ]]; then
   set +a
 fi
 
-PANEL_HOSTS="${VZONE_PANEL_HOSTNAMES:-vpanel.vzonecloud.co.uk}"
+# Vide = panel uniquement via IP / localhost (default_server). Ne pas forcer un FQDN.
+PANEL_HOSTS="${VZONE_PANEL_HOSTNAMES:-}"
 PANEL_HOSTS="${PANEL_HOSTS//,/ }"
 HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
-PANEL_NAMES="_ ${PANEL_HOSTS} localhost 127.0.0.1"
+PANEL_NAMES="_ localhost 127.0.0.1"
+[[ -n "$PANEL_HOSTS" ]] && PANEL_NAMES="${PANEL_NAMES} ${PANEL_HOSTS}"
 [[ -n "$HOST_IP" ]] && PANEL_NAMES="${PANEL_NAMES} ${HOST_IP}"
 PANEL_NAMES="$(echo "$PANEL_NAMES" | xargs)"
 PANEL_PRIMARY="$(echo "$PANEL_HOSTS" | awk '{print $1}')"
@@ -174,8 +176,8 @@ for h in ${PANEL_HOSTS}; do
   safe="$(echo "$h" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/_/g')"
   rm -f "${DOMAINS_DIR}/${safe}.conf" 2>/dev/null || true
 done
-# Aussi IP / localhost / hostname machine si un vhost les a capturés
-for h in ${HOST_IP} localhost 127.0.0.1 "$(hostname -f 2>/dev/null || true)"; do
+# IP / localhost seulement — PAS le FQDN machine (peut être un domaine client)
+for h in ${HOST_IP} localhost 127.0.0.1; do
   [[ -n "$h" ]] || continue
   safe="$(echo "$h" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/_/g')"
   rm -f "${DOMAINS_DIR}/${safe}.conf" 2>/dev/null || true

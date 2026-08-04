@@ -161,7 +161,7 @@ fi
 
 echo
 echo "=== Suite ==="
-echo "1) Depuis VOTRE PC : https://vpanel.vzonecloud.co.uk/login"
+echo "1) Depuis VOTRE PC : https://${HOST_IP}/login"
 echo "2) Si ERR_CONNECTION_TIMED_OUT (pas REFUSED) : pare-feu Contabo → ouvrir TCP 80 et 443."
 echo "3) Diagnostic :"
 echo "   nft list ruleset | grep -E '${HOST_IP}.*(80|443).*reject'"

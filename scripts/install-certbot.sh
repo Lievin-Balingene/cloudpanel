@@ -66,7 +66,7 @@ if [[ -f "$ENV_FILE" ]]; then
   if [[ -n "${VZONE_PANEL_HOSTNAMES:-}" ]]; then
     grep -q '^VZONE_PANEL_HOSTNAMES=' "$ENV_FILE" || echo "VZONE_PANEL_HOSTNAMES=${VZONE_PANEL_HOSTNAMES}" >> "$ENV_FILE"
   elif ! grep -q '^VZONE_PANEL_HOSTNAMES=' "$ENV_FILE"; then
-    echo "VZONE_PANEL_HOSTNAMES=vpanel.vzonecloud.co.uk" >> "$ENV_FILE"
+    echo "VZONE_PANEL_HOSTNAMES=" >> "$ENV_FILE"
   fi
 fi
 
