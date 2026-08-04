@@ -12,7 +12,7 @@ MAPS_DIR="${VZONE_MAIL_MAPS_DIR:-${DATA_ROOT}/mail/maps}"
 RC_ROOT="${VZONE_ROUNDCUBE_ROOT:-/opt/vzone/roundcube}"
 DOVECOT_USERS_PUB="/etc/dovecot/vzone-users"
 
-echo "=== repair-mail-auth (0.25.2) ==="
+echo "=== repair-mail-auth (0.25.3) ==="
 
 if [[ -f "$ENV_FILE" ]]; then
   set -a; source "$ENV_FILE"; set +a
@@ -58,27 +58,28 @@ touch "$ENV_FILE"
 grep -q '^VZONE_MAIL_HOME_ROOT=' "$ENV_FILE" 2>/dev/null \
   || echo "VZONE_MAIL_HOME_ROOT=/var/mail/vhosts" >> "$ENV_FILE"
 if grep -q '^VZONE_ROUNDCUBE_IMAP_HOST=' "$ENV_FILE" 2>/dev/null; then
-  sed -i 's|^VZONE_ROUNDCUBE_IMAP_HOST=.*|VZONE_ROUNDCUBE_IMAP_HOST=ssl://127.0.0.1:993|' "$ENV_FILE"
+  sed -i 's|^VZONE_ROUNDCUBE_IMAP_HOST=.*|VZONE_ROUNDCUBE_IMAP_HOST=127.0.0.1:143|' "$ENV_FILE"
 else
-  echo "VZONE_ROUNDCUBE_IMAP_HOST=ssl://127.0.0.1:993" >> "$ENV_FILE"
+  echo "VZONE_ROUNDCUBE_IMAP_HOST=127.0.0.1:143" >> "$ENV_FILE"
 fi
 
 if [[ -d "${REPO_DIR}/deploy/dovecot" ]]; then
-  echo "[dovecot] reinstallation conf…"
+  echo "[dovecot] conf minimale (sans conf.d Ubuntu)…"
+  # Neutraliser les includes Ubuntu qui ajoutent PAM / passdb conflictuels
+  if [[ -d /etc/dovecot/conf.d ]] && [[ ! -d /etc/dovecot/conf.d.vzone-bak ]]; then
+    mv /etc/dovecot/conf.d /etc/dovecot/conf.d.vzone-bak
+  fi
+  mkdir -p /etc/dovecot/conf.d
   install -m 644 "${REPO_DIR}/deploy/dovecot/dovecot.conf" /etc/dovecot/dovecot.conf
-  install -m 644 "${REPO_DIR}/deploy/dovecot/10-auth.conf" /etc/dovecot/conf.d/10-auth.conf
-  install -m 644 "${REPO_DIR}/deploy/dovecot/10-mail.conf" /etc/dovecot/conf.d/10-mail.conf
-  install -m 644 "${REPO_DIR}/deploy/dovecot/10-master.conf" /etc/dovecot/conf.d/10-master.conf
-  install -m 644 "${REPO_DIR}/deploy/dovecot/10-ssl.conf" /etc/dovecot/conf.d/10-ssl.conf
-  install -m 644 "${REPO_DIR}/deploy/dovecot/auth-passwdfile.conf.ext" /etc/dovecot/conf.d/auth-passwdfile.conf.ext
-  sed -i "s|__MAPS_DIR__|${MAPS_DIR}|g" /etc/dovecot/conf.d/auth-passwdfile.conf.ext
-  sed -i "s|__MAPS_DIR__|${MAPS_DIR}|g" /etc/dovecot/conf.d/10-mail.conf
+  # Fichiers legacy (ignorés si dovecot.conf est autonome — gardés pour référence)
+  install -m 644 "${REPO_DIR}/deploy/dovecot/10-auth.conf" /etc/dovecot/conf.d/10-auth.conf 2>/dev/null || true
+  install -m 644 "${REPO_DIR}/deploy/dovecot/auth-passwdfile.conf.ext" /etc/dovecot/conf.d/auth-passwdfile.conf.ext 2>/dev/null || true
 fi
 
 if [[ -d "$RC_ROOT" && -f "${REPO_DIR}/deploy/roundcube/vzone-sso.php" ]]; then
   echo "[roundcube] mise a jour SSO + imap_host…"
   if [[ -f "${RC_ROOT}/config/config.inc.php" ]]; then
-    sed -i "s|\$config\['imap_host'\] = '.*'|\$config['imap_host'] = 'ssl://127.0.0.1:993'|" \
+    sed -i "s|\$config\['imap_host'\] = '.*'|\$config['imap_host'] = '127.0.0.1:143'|" \
       "${RC_ROOT}/config/config.inc.php" || true
     if ! grep -q "imap_auth_type" "${RC_ROOT}/config/config.inc.php"; then
       sed -i "/imap_host/a \$config['imap_auth_type'] = 'LOGIN';" \
@@ -94,10 +95,24 @@ set -a; source "$ENV_FILE"; set +a
 export DJANGO_SETTINGS_MODULE=vzone.settings.production
 echo "[django] rehash + write_mail_maps…"
 "${VZONE_ROOT}/backend/.venv/bin/python" "${VZONE_ROOT}/backend/manage.py" shell <<'PY'
+import shutil
+import subprocess
 from apps.email.models import Mailbox
 from apps.email.passwd import hash_password
 from apps.email.services import write_mail_maps, publish_dovecot_users
 from pathlib import Path
+
+def make_hash(plain: str) -> str:
+    if shutil.which("doveadm"):
+        r = subprocess.run(
+            ["doveadm", "pw", "-s", "SHA512-CRYPT", "-p", plain],
+            capture_output=True,
+            text=True,
+        )
+        out = (r.stdout or "").strip()
+        if r.returncode == 0 and out.startswith("$6$"):
+            return out
+    return hash_password(plain)
 
 n_ok = n_skip = 0
 for box in Mailbox.objects.filter(is_active=True):
@@ -112,17 +127,22 @@ for box in Mailbox.objects.filter(is_active=True):
         print(f"  · {box.address}: pas de secret → skip (reset MDP panel)")
         n_skip += 1
         continue
-    box.password_hash = hash_password(plain)
+    box.password_hash = make_hash(plain)
     box.save(update_fields=["password_hash", "updated_at"])
     n_ok += 1
-    print(f"  ✓ {box.address}: hash mis a jour")
+    print(f"  ✓ {box.address}: hash mis a jour ({box.password_hash[:12]}…)")
 
 root = write_mail_maps()
 src = Path(root) / "dovecot-users"
 pub = publish_dovecot_users(src)
+text = src.read_text(encoding="utf-8") if src.exists() else ""
 print("maps:", root)
 print("published:", pub)
-print("dovecot-users lines:", len(src.read_text(encoding="utf-8").splitlines()) if src.exists() else 0)
+print("sample line:", text.splitlines()[0][:80] + "…" if text else "(empty)")
+# Vérifier absence de préfixe {SHA512-CRYPT} (incompatible avec default_pass_scheme)
+bad = [ln.split(":")[0] for ln in text.splitlines() if "{SHA512" in ln]
+if bad:
+    print("WARN prefixes restants:", bad[:5])
 print(f"rehash ok={n_ok} skip={n_skip}")
 PY
 
@@ -143,11 +163,17 @@ sleep 1
 echo
 echo "[tests]"
 systemctl is-active dovecot || true
-grep -A3 'passdb' /etc/dovecot/conf.d/auth-passwdfile.conf.ext || true
+echo "--- doveconf passdb/userdb ---"
+doveconf -n 2>/dev/null | grep -E 'passdb|userdb|default_pass|auth_mechanisms|protocols' || true
 ls -la "$DOVECOT_USERS_PUB" "${MAPS_DIR}/dovecot-users" 2>&1 || true
+echo "--- premiere ligne vzone-users (hash masqué) ---"
+if [[ -f "$DOVECOT_USERS_PUB" ]]; then
+  head -n1 "$DOVECOT_USERS_PUB" | awk -F: '{print $1":***:"$3":"$4":"$5":"$6}'
+fi
 cut -d: -f1 "$DOVECOT_USERS_PUB" 2>/dev/null | head -n 15 || true
 ss -tlnp 2>/dev/null | grep -E ':143|:993|:587' || true
-journalctl -u dovecot -n 20 --no-pager 2>/dev/null | tail -n 20 || true
+echo "--- journal auth ---"
+journalctl -u dovecot -n 40 --no-pager 2>/dev/null | grep -iE 'auth|error|fail|passwd|vzone|info@' | tail -n 30 || journalctl -u dovecot -n 20 --no-pager 2>/dev/null | tail -n 20 || true
 
 if command -v doveadm >/dev/null 2>&1; then
   echo

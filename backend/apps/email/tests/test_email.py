@@ -87,9 +87,7 @@ def test_create_domain_mailbox_forwarder(api: APIClient, mail_root):
     assert (maps / "vmailbox").exists()
     assert "info@example.test" in (maps / "vmailbox").read_text(encoding="utf-8")
     assert "info@example.test" in (maps / "dovecot-users").read_text(encoding="utf-8")
-    assert "{SHA512-CRYPT}" in (maps / "dovecot-users").read_text(encoding="utf-8") or "$6$" in (
-        maps / "dovecot-users"
-    ).read_text(encoding="utf-8")
+    assert "$6$" in (maps / "dovecot-users").read_text(encoding="utf-8")
     assert "sales@example.test" in (maps / "valiases").read_text(encoding="utf-8")
 
     box_obj = Mailbox.objects.get(pk=box.json()["data"]["id"])

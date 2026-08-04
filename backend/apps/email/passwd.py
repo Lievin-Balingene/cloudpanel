@@ -40,11 +40,14 @@ def verify_password(raw: str, hashed: str) -> bool:
 
 
 def dovecot_password_field(hashed: str) -> str:
-    """Champ password pour passwd-file Dovecot."""
+    """
+    Champ password pour passwd-file Dovecot.
+
+    Avec default_pass_scheme = SHA512-CRYPT, on publie le hash $6$… NU
+    (sans préfixe {SHA512-CRYPT}) — le préfixe + scheme= provoquent parfois
+    Temporary authentication failure / UNAVAILABLE.
+    """
     if not hashed:
         return ""
-    if hashed.startswith("{"):
-        return hashed
-    if hashed.startswith("$6$"):
-        return f"{{SHA512-CRYPT}}{hashed}"
-    return hashed
+    cleaned = hashed.removeprefix("{SHA512-CRYPT}").removeprefix("{SHA512-CRYPT.ROUNDS}")
+    return cleaned

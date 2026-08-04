@@ -9,8 +9,8 @@ $config['db_dsnw'] = '__DB_DSN__';
 $config['db_prefix'] = '';
 
 // IMAP / SMTP locaux (Dovecot + Postfix)
-// IMAPS local : plus fiable que plain:143 quand ssl=yes côté Dovecot
-$config['imap_host'] = 'ssl://127.0.0.1:993';
+// Plain IMAP local : évite ssl://*:143 (wrong version number)
+$config['imap_host'] = '127.0.0.1:143';
 $config['imap_auth_type'] = 'LOGIN';
 $config['smtp_host'] = 'tls://127.0.0.1:587';
 $config['smtp_user'] = '%u';

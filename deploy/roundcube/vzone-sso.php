@@ -38,7 +38,6 @@ if (!empty($data['exp']) && time() > (int)$data['exp']) {
 
 $user = trim((string)$data['user']);
 $pass = (string)$data['password'];
-$hostHint = trim((string)($data['imap_host'] ?? ''));
 
 if ($user === '' || $pass === '') {
     http_response_code(403);
@@ -65,53 +64,8 @@ try {
     // ignore
 }
 
-/**
- * Normalise un host IMAP Roundcube.
- * Interdit ssl://*:143 (plain IMAP + SSL wrap → wrong version number).
- */
-$normalizeHost = static function (?string $h): ?string {
-    if ($h === null) {
-        return null;
-    }
-    $h = trim($h);
-    if ($h === '') {
-        return null;
-    }
-    // Bare host / host:port → IMAPS 993 (snakeoil + verify_peer=false)
-    if (!preg_match('#^(ssl|tls|imaps?)://#i', $h)) {
-        if (preg_match('#:143$#', $h) || !str_contains($h, ':')) {
-            $host = preg_replace('#:\\d+$#', '', $h) ?: '127.0.0.1';
-            return 'ssl://' . $host . ':993';
-        }
-        return $h;
-    }
-    // ssl://host:143 → corriger vers 993
-    if (preg_match('#^ssl://([^:/]+)(?::143)?$#i', $h, $m)) {
-        return 'ssl://' . $m[1] . ':993';
-    }
-    if (preg_match('#^ssl://[^:]+:143$#i', $h)) {
-        return preg_replace('#:143$#', ':993', $h);
-    }
-    return $h;
-};
-
-$hosts = [];
-foreach ([
-    $normalizeHost($hostHint),
-    'ssl://127.0.0.1:993',
-    '127.0.0.1:143', // plain LOGIN (disable_plaintext_auth=no)
-    null,
-] as $h) {
-    if ($h === null) {
-        if (!in_array(null, $hosts, true)) {
-            $hosts[] = null;
-        }
-        continue;
-    }
-    if ($h !== '' && !in_array($h, $hosts, true)) {
-        $hosts[] = $h;
-    }
-}
+// Plain IMAP local uniquement (pas de ssl:// sur :143)
+$hosts = ['127.0.0.1:143', null];
 
 $ok = false;
 $errors = [];
@@ -149,15 +103,15 @@ $logFile = INSTALL_PATH . 'logs/errors.log';
 if (is_readable($logFile)) {
     $lines = @file($logFile);
     if (is_array($lines) && $lines) {
-        $logTail = implode('', array_slice($lines, -8));
+        $logTail = implode('', array_slice($lines, -6));
     }
 }
 
 http_response_code(403);
 echo "Connexion Roundcube impossible pour {$user}.\n\n";
-echo "Cause typique : Dovecot UNAVAILABLE (maps illisibles).\n";
+echo "Cause typique : Dovecot UNAVAILABLE (passdb).\n";
 echo "Réparez : sudo bash /opt/vzone-src/scripts/repair-mail-auth.sh\n";
-echo "Test   : doveadm auth test '{$user}' 'VOTRE_MOT_DE_PASSE'\n\n";
+echo "Puis collez la sortie [doveadm auth test] + journalctl -u dovecot -n 40\n\n";
 if ($errors) {
     echo "Essais IMAP :\n- " . implode("\n- ", $errors) . "\n\n";
 }

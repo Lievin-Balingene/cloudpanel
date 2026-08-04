@@ -64,15 +64,12 @@ sed -i "s|__MAPS_DIR__|${MAPS_DIR}|g" /etc/postfix/main.cf
 postmap "$MAPS_DIR/valiases" 2>/dev/null || true
 postmap "$MAPS_DIR/virtual_mailboxes" 2>/dev/null || true
 
-# --- Dovecot ---
+# --- Dovecot (conf autonome — pas de !include conf.d/*.conf Ubuntu) ---
+if [[ -d /etc/dovecot/conf.d ]] && [[ ! -d /etc/dovecot/conf.d.vzone-bak ]]; then
+  mv /etc/dovecot/conf.d /etc/dovecot/conf.d.vzone-bak
+fi
+mkdir -p /etc/dovecot/conf.d
 install -m 644 "${REPO_DIR}/deploy/dovecot/dovecot.conf" /etc/dovecot/dovecot.conf
-install -m 644 "${REPO_DIR}/deploy/dovecot/10-auth.conf" /etc/dovecot/conf.d/10-auth.conf
-install -m 644 "${REPO_DIR}/deploy/dovecot/10-mail.conf" /etc/dovecot/conf.d/10-mail.conf
-install -m 644 "${REPO_DIR}/deploy/dovecot/10-master.conf" /etc/dovecot/conf.d/10-master.conf
-install -m 644 "${REPO_DIR}/deploy/dovecot/10-ssl.conf" /etc/dovecot/conf.d/10-ssl.conf
-install -m 644 "${REPO_DIR}/deploy/dovecot/auth-passwdfile.conf.ext" /etc/dovecot/conf.d/auth-passwdfile.conf.ext
-# passdb pointe vers /etc/dovecot/vzone-users (plus de __MAPS_DIR__)
-sed -i "s|__MAPS_DIR__|${MAPS_DIR}|g" /etc/dovecot/conf.d/10-mail.conf
 if [[ -f "${MAPS_DIR}/dovecot-users" ]]; then
   install -m 640 -o root -g vmail "${MAPS_DIR}/dovecot-users" /etc/dovecot/vzone-users
 else
