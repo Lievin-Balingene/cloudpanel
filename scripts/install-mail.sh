@@ -71,8 +71,15 @@ install -m 644 "${REPO_DIR}/deploy/dovecot/10-mail.conf" /etc/dovecot/conf.d/10-
 install -m 644 "${REPO_DIR}/deploy/dovecot/10-master.conf" /etc/dovecot/conf.d/10-master.conf
 install -m 644 "${REPO_DIR}/deploy/dovecot/10-ssl.conf" /etc/dovecot/conf.d/10-ssl.conf
 install -m 644 "${REPO_DIR}/deploy/dovecot/auth-passwdfile.conf.ext" /etc/dovecot/conf.d/auth-passwdfile.conf.ext
-sed -i "s|__MAPS_DIR__|${MAPS_DIR}|g" /etc/dovecot/conf.d/auth-passwdfile.conf.ext
+# passdb pointe vers /etc/dovecot/vzone-users (plus de __MAPS_DIR__)
 sed -i "s|__MAPS_DIR__|${MAPS_DIR}|g" /etc/dovecot/conf.d/10-mail.conf
+if [[ -f "${MAPS_DIR}/dovecot-users" ]]; then
+  install -m 640 -o root -g vmail "${MAPS_DIR}/dovecot-users" /etc/dovecot/vzone-users
+else
+  touch /etc/dovecot/vzone-users
+  chown root:vmail /etc/dovecot/vzone-users
+  chmod 640 /etc/dovecot/vzone-users
+fi
 
 # --- OpenDKIM ---
 install -m 644 "${REPO_DIR}/deploy/opendkim/opendkim.conf" /etc/opendkim.conf

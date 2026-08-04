@@ -160,20 +160,51 @@ def _ensure_vmail_traverse(path: Path) -> None:
 
 
 def _secure_mail_map_file(path: Path) -> None:
-    """vzone écrit, vmail (auth-worker) lit — sinon Roundcube refuse le login."""
+    """vzone écrit, vmail lit — sinon Roundcube refuse le login."""
     try:
         os.chmod(path, 0o640)
     except OSError:
         pass
     try:
         import grp
-        import pwd
 
         gid = grp.getgrnam("vmail").gr_gid
         # Garder owner actuel (vzone), fixer le groupe vmail
         os.chown(path, -1, gid)
     except (ImportError, KeyError, PermissionError, OSError) as exc:
         logger.warning("Impossible de fixer groupe vmail sur %s: %s", path, exc)
+
+
+def publish_dovecot_users(source: Path) -> Path | None:
+    """
+    Publie dovecot-users vers /etc/dovecot/vzone-users.
+
+    Évite Temporary authentication failure quand /var/lib/vzone est 0700
+    (auth-worker ne peut pas traverser jusqu'aux maps).
+    """
+    if not source.is_file():
+        return None
+    # Hors production Linux : ne pas tenter /etc/dovecot
+    if os.name == "nt" or not Path("/etc/dovecot").is_dir():
+        return None
+    dest = Path("/etc/dovecot/vzone-users")
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, dest)
+        os.chmod(dest, 0o640)
+        try:
+            import grp
+            import pwd
+
+            uid = pwd.getpwnam("root").pw_uid
+            gid = grp.getgrnam("vmail").gr_gid
+            os.chown(dest, uid, gid)
+        except (ImportError, KeyError, PermissionError, OSError):
+            pass
+        return dest
+    except OSError as exc:
+        logger.warning("Publication /etc/dovecot/vzone-users échouée: %s", exc)
+        return None
 
 
 def generate_dkim_keys() -> tuple[str, str]:
@@ -427,6 +458,7 @@ def write_mail_maps() -> Path:
     _write(vmailbox_legacy, legacy_lines)
     _write(key_table, key_lines)
     _write(signing_table, sign_lines)
+    publish_dovecot_users(dovecot_users)
 
     # S'assurer que chaque maildir est bien accessible à vmail
     for box in Mailbox.objects.filter(is_active=True, is_suspended=False):

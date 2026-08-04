@@ -1,9 +1,10 @@
 passdb {
   driver = passwd-file
-  # Le préfixe {SHA512-CRYPT} dans dovecot-users prime ; scheme = défaut si absent
-  args = username_format=%u __MAPS_DIR__/dovecot-users
+  # Copie publiée hors /var/lib/vzone (souvent 700) — lisible par auth-worker=vmail
+  # Le préfixe {SHA512-CRYPT} dans le fichier prime ; pas de scheme= forcé
+  args = username_format=%u /etc/dovecot/vzone-users
 }
 userdb {
   driver = passwd-file
-  args = username_format=%u __MAPS_DIR__/dovecot-users
+  args = username_format=%u /etc/dovecot/vzone-users
 }

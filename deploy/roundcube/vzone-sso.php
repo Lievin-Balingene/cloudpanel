@@ -51,7 +51,6 @@ require_once INSTALL_PATH . 'program/include/iniset.php';
 /** @var rcmail $rcmail */
 $rcmail = rcmail::get_instance();
 
-// Nouvelle session propre
 try {
     if (!empty($_SESSION['user_id'])) {
         $rcmail->logout_actions();
@@ -66,16 +65,42 @@ try {
     // ignore
 }
 
-// Hosts à essayer (IMAPS local d'abord — plus fiable avec ssl=yes Dovecot)
+/**
+ * Normalise un host IMAP Roundcube.
+ * Interdit ssl://*:143 (plain IMAP + SSL wrap → wrong version number).
+ */
+$normalizeHost = static function (?string $h): ?string {
+    if ($h === null) {
+        return null;
+    }
+    $h = trim($h);
+    if ($h === '') {
+        return null;
+    }
+    // Bare host / host:port → IMAPS 993 (snakeoil + verify_peer=false)
+    if (!preg_match('#^(ssl|tls|imaps?)://#i', $h)) {
+        if (preg_match('#:143$#', $h) || !str_contains($h, ':')) {
+            $host = preg_replace('#:\\d+$#', '', $h) ?: '127.0.0.1';
+            return 'ssl://' . $host . ':993';
+        }
+        return $h;
+    }
+    // ssl://host:143 → corriger vers 993
+    if (preg_match('#^ssl://([^:/]+)(?::143)?$#i', $h, $m)) {
+        return 'ssl://' . $m[1] . ':993';
+    }
+    if (preg_match('#^ssl://[^:]+:143$#i', $h)) {
+        return preg_replace('#:143$#', ':993', $h);
+    }
+    return $h;
+};
+
 $hosts = [];
 foreach ([
-    $hostHint,
+    $normalizeHost($hostHint),
     'ssl://127.0.0.1:993',
-    'ssl://localhost:993',
-    '127.0.0.1:143',
-    'localhost:143',
-    'tls://127.0.0.1:143',
-    null, // config Roundcube par défaut
+    '127.0.0.1:143', // plain LOGIN (disable_plaintext_auth=no)
+    null,
 ] as $h) {
     if ($h === null) {
         if (!in_array(null, $hosts, true)) {
@@ -83,7 +108,6 @@ foreach ([
         }
         continue;
     }
-    $h = trim((string)$h);
     if ($h !== '' && !in_array($h, $hosts, true)) {
         $hosts[] = $h;
     }
@@ -93,14 +117,9 @@ $ok = false;
 $errors = [];
 foreach ($hosts as $host) {
     try {
-        // Roundcube 1.6 : login($user, $pass, $host = null, $cookiecheck = false)
         $ok = (bool)$rcmail->login($user, $pass, $host, false);
         if ($ok) {
             break;
-        }
-        $err = '';
-        if (!empty($rcmail->plugins)) {
-            // best-effort
         }
         $errors[] = ($host === null ? '(config)' : $host) . ': login=false';
     } catch (Throwable $e) {
@@ -125,7 +144,6 @@ if ($ok) {
     exit;
 }
 
-// Détails pour admin
 $logTail = '';
 $logFile = INSTALL_PATH . 'logs/errors.log';
 if (is_readable($logFile)) {
@@ -137,14 +155,9 @@ if (is_readable($logFile)) {
 
 http_response_code(403);
 echo "Connexion Roundcube impossible pour {$user}.\n\n";
-echo "Causes fréquentes :\n";
-echo "  1) Mot de passe boîte incorrect / non synchronisé Dovecot\n";
-echo "  2) Dovecot arrêté ou maps dovecot-users illisibles (groupe vmail)\n";
-echo "  3) Maildir inaccessible pour l'utilisateur vmail\n\n";
-echo "Réparez sur le serveur :\n";
-echo "  sudo bash /opt/vzone-src/scripts/repair-mail-auth.sh\n";
-echo "  doveadm auth test '{$user}' 'VOTRE_MOT_DE_PASSE'\n";
-echo "  Puis réinitialisez le MDP de la boîte dans le panel et rouvrez le webmail.\n\n";
+echo "Cause typique : Dovecot UNAVAILABLE (maps illisibles).\n";
+echo "Réparez : sudo bash /opt/vzone-src/scripts/repair-mail-auth.sh\n";
+echo "Test   : doveadm auth test '{$user}' 'VOTRE_MOT_DE_PASSE'\n\n";
 if ($errors) {
     echo "Essais IMAP :\n- " . implode("\n- ", $errors) . "\n\n";
 }
