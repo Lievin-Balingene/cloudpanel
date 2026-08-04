@@ -179,18 +179,33 @@ def _is_text_file(path: Path) -> bool:
 
 
 def entry_from_path(user: User, path: Path) -> FileEntry:
-    st = path.stat()
+    # Certains homes peuvent contenir des liens cassés ou des entrées
+    # temporairement illisibles ; on tombe en repli sur lstat.
+    try:
+        st = path.stat()
+    except OSError:
+        st = path.lstat()
     mime, _ = mimetypes.guess_type(str(path))
+    try:
+        is_dir = path.is_dir()
+    except OSError:
+        is_dir = False
+    is_file = False
+    if not is_dir:
+        try:
+            is_file = path.is_file()
+        except OSError:
+            is_file = False
     return FileEntry(
         name=path.name or "/",
         path=relative_to_home(user, path),
-        is_dir=path.is_dir(),
-        size=0 if path.is_dir() else st.st_size,
+        is_dir=is_dir,
+        size=0 if is_dir else st.st_size,
         modified_at=datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
         permissions=_mode_string(st.st_mode),
         mode=stat.S_IMODE(st.st_mode),
         mime=mime,
-        is_text=_is_text_file(path) if path.is_file() else False,
+        is_text=_is_text_file(path) if is_file else False,
     )
 
 
@@ -200,7 +215,13 @@ def list_directory(user: User, relative: str | None = None) -> dict:
         raise VZoneAPIException(detail="Chemin introuvable.", code="not_found", status_code=404)
     if not path.is_dir():
         raise VZoneAPIException(detail="Ce chemin n'est pas un dossier.", code="not_directory", status_code=400)
-    entries = [entry_from_path(user, child) for child in path.iterdir()]
+    entries: list[FileEntry] = []
+    for child in path.iterdir():
+        try:
+            entries.append(entry_from_path(user, child))
+        except OSError:
+            # Ne casse pas tout le listing à cause d'une entrée illisible.
+            continue
     entries.sort(key=lambda e: (not e.is_dir, e.name.lower()))
     return {
         "cwd": relative_to_home(user, path),

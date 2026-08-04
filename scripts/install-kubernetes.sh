@@ -39,7 +39,16 @@ fi
 
 if [[ -f "${ENV_FILE}" ]]; then
   grep -q '^VZONE_K8S_PROVISION_MODE=' "${ENV_FILE}" || echo "VZONE_K8S_PROVISION_MODE=auto" >> "${ENV_FILE}"
-  grep -q '^VZONE_KUBECTL_BIN=' "${ENV_FILE}" || echo "VZONE_KUBECTL_BIN=kubectl" >> "${ENV_FILE}"
+  KUBECTL_PATH="$(command -v kubectl || true)"
+  if [[ -n "${KUBECTL_PATH}" ]]; then
+    if grep -q '^VZONE_KUBECTL_BIN=' "${ENV_FILE}"; then
+      sed -i "s|^VZONE_KUBECTL_BIN=.*|VZONE_KUBECTL_BIN=${KUBECTL_PATH}|" "${ENV_FILE}"
+    else
+      echo "VZONE_KUBECTL_BIN=${KUBECTL_PATH}" >> "${ENV_FILE}"
+    fi
+  else
+    grep -q '^VZONE_KUBECTL_BIN=' "${ENV_FILE}" || echo "VZONE_KUBECTL_BIN=kubectl" >> "${ENV_FILE}"
+  fi
 fi
 
 kubectl version --client 2>/dev/null || true

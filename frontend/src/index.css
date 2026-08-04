@@ -104,3 +104,11 @@ html.dark body {
     transform: translateX(320%);
   }
 }
+
+.vzone-xterm-host .xterm {
+  height: 100%;
+}
+
+.vzone-xterm-host .xterm-viewport {
+  border-radius: 6px;
+}

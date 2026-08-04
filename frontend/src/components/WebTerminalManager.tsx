@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import "@xterm/xterm/css/xterm.css";
 import { apiRequest } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
 
@@ -17,49 +20,94 @@ export function WebTerminalManager({ title }: { title: string }) {
     queryFn: () => apiRequest<TerminalAccess>("/core/terminal/access/"),
   });
   const [connected, setConnected] = useState(false);
-  const [output, setOutput] = useState("");
-  const [line, setLine] = useState("");
-  const wsRef = useRef<WebSocket | null>(null);
-  const preRef = useRef<HTMLPreElement | null>(null);
+  const terminalRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const terminalHostRef = useRef<HTMLDivElement | null>(null);
   const wsUrl = useMemo(() => {
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
     return `${proto}://${window.location.host}/ws/terminal/?token=${encodeURIComponent(token || "")}`;
   }, [token]);
 
   useEffect(() => {
-    if (!access?.allowed || !token) return;
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-    ws.onopen = () => {
-      setConnected(true);
-      try {
-        ws.send(JSON.stringify({ type: "resize", cols: 140, rows: 34 }));
-      } catch {
-        // noop
-      }
-    };
-    ws.onmessage = (evt) => {
-      setOutput((prev) => prev + String(evt.data || ""));
-    };
-    ws.onclose = () => setConnected(false);
-    ws.onerror = () => setConnected(false);
+    if (!terminalHostRef.current || terminalRef.current) return;
+    const term = new Terminal({
+      convertEol: true,
+      cursorBlink: true,
+      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      fontSize: 13,
+      lineHeight: 1.25,
+      scrollback: 4000,
+      theme: {
+        background: "#0b1220",
+        foreground: "#d8e1ee",
+        cursor: "#f59e0b",
+      },
+    });
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(terminalHostRef.current);
+    fitAddon.fit();
+    term.focus();
+    terminalRef.current = term;
+    fitAddonRef.current = fitAddon;
     return () => {
-      ws.close();
-      wsRef.current = null;
+      term.dispose();
+      terminalRef.current = null;
+      fitAddonRef.current = null;
     };
-  }, [access?.allowed, token, wsUrl]);
+  }, []);
 
   useEffect(() => {
-    const el = preRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [output]);
+    if (!access?.allowed || !token) return;
+    const term = terminalRef.current;
+    const fitAddon = fitAddonRef.current;
+    if (!term || !fitAddon) return;
+    const ws = new WebSocket(wsUrl);
+    let disposeDataHandler: { dispose: () => void } | null = null;
+    let resizeObserver: ResizeObserver | null = null;
 
-  function sendCommand() {
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({ type: "input", data: `${line}\n` }));
-    setLine("");
-  }
+    const sendResize = () => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      fitAddon.fit();
+      ws.send(
+        JSON.stringify({
+          type: "resize",
+          cols: term.cols,
+          rows: term.rows,
+        }),
+      );
+    };
+
+    ws.onopen = () => {
+      setConnected(true);
+      term.reset();
+      term.writeln("\x1b[1;32mConnected to V-zone terminal.\x1b[0m");
+      sendResize();
+      disposeDataHandler = term.onData((data) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "input", data }));
+        }
+      });
+      resizeObserver = new ResizeObserver(() => sendResize());
+      if (terminalHostRef.current) resizeObserver.observe(terminalHostRef.current);
+    };
+    ws.onmessage = (evt) => {
+      term.write(String(evt.data || ""));
+    };
+    ws.onclose = () => {
+      setConnected(false);
+      term.writeln("\r\n\x1b[1;31mDisconnected.\x1b[0m");
+    };
+    ws.onerror = () => {
+      setConnected(false);
+      term.writeln("\r\n\x1b[1;31mConnection error.\x1b[0m");
+    };
+    return () => {
+      if (disposeDataHandler) disposeDataHandler.dispose();
+      if (resizeObserver) resizeObserver.disconnect();
+      ws.close();
+    };
+  }, [access?.allowed, token, wsUrl]);
 
   return (
     <div className="space-y-4 animate-fade-up">
@@ -80,30 +128,11 @@ export function WebTerminalManager({ title }: { title: string }) {
             Utilisateur: <strong>{access.username}</strong> · Home: <strong>{access.home_directory}</strong> ·
             Statut: <strong>{connected ? "connecté" : "déconnecté"}</strong>
           </div>
-          <div className="vz-panel p-0 overflow-hidden">
-            <pre
-              ref={preRef}
-              className="h-[60vh] overflow-auto bg-black p-3 font-mono text-xs text-green-300"
-            >
-              {output || "Connexion terminal..."}
-            </pre>
-            <div className="flex gap-2 border-t border-cp-border p-2">
-              <input
-                className="vz-input flex-1 font-mono text-sm"
-                placeholder="commande..."
-                value={line}
-                onChange={(e) => setLine(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    sendCommand();
-                  }
-                }}
-              />
-              <button className="vz-btn-primary" type="button" disabled={!connected} onClick={sendCommand}>
-                Exécuter
-              </button>
+          <div className="vz-panel overflow-hidden p-0">
+            <div className="border-b border-cp-border bg-cp-canvas px-3 py-2 text-xs text-cp-muted">
+              Terminal interactif direct (clavier/souris) — double-cliquez pour focus.
             </div>
+            <div ref={terminalHostRef} className="vzone-xterm-host h-[62vh] w-full bg-[#0b1220] p-2" />
           </div>
         </>
       )}

@@ -12,15 +12,59 @@ from django.conf import settings
 
 from apps.core.exceptions import VZoneAPIException
 
+_KUBECTL_FALLBACKS = (
+    "/usr/bin/kubectl",
+    "/usr/local/bin/kubectl",
+    "/snap/bin/kubectl",
+)
+_SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
 
 def provision_mode() -> str:
     mode = (getattr(settings, "VZONE_K8S_PROVISION_MODE", "auto") or "auto").lower()
     return mode if mode in {"auto", "live", "mock"} else "auto"
 
 
+def _subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["PATH"] = f"{_SYSTEM_PATH}:{env.get('PATH', '')}"
+    return env
+
+
+def _which(name: str, *, search_path: str | None = None) -> str | None:
+    if search_path:
+        for directory in search_path.split(os.pathsep):
+            if not directory:
+                continue
+            candidate = Path(directory) / name
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
+        return None
+    return shutil.which(name)
+
+
 def kubectl_bin() -> str:
-    configured = getattr(settings, "VZONE_KUBECTL_BIN", "") or ""
+    """Résout le binaire kubectl (PATH systemd souvent minimal pour vzone-api)."""
+    configured = (getattr(settings, "VZONE_KUBECTL_BIN", "") or "").strip()
+    if configured and Path(configured).is_file():
+        return configured
+    path = _subprocess_env()["PATH"]
+    for candidate in (configured, "kubectl", *_KUBECTL_FALLBACKS):
+        if not candidate:
+            continue
+        if Path(candidate).is_file():
+            return candidate
+        found = _which(candidate, search_path=path) if "/" not in candidate else None
+        if found:
+            return found
     return configured or "kubectl"
+
+
+def kubectl_available() -> bool:
+    path = kubectl_bin()
+    if Path(path).is_file():
+        return True
+    return _which(path, search_path=_subprocess_env()["PATH"]) is not None
 
 
 def should_execute() -> bool:
@@ -29,7 +73,7 @@ def should_execute() -> bool:
         return False
     if mode == "live":
         return True
-    return shutil.which(kubectl_bin()) is not None
+    return kubectl_available()
 
 
 def _run(cmd: list[str], *, timeout: int = 60) -> subprocess.CompletedProcess:
@@ -40,7 +84,7 @@ def _run(cmd: list[str], *, timeout: int = 60) -> subprocess.CompletedProcess:
             capture_output=True,
             text=True,
             timeout=timeout,
-            env=os.environ.copy(),
+            env=_subprocess_env(),
         )
     except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as exc:
         stderr = getattr(exc, "stderr", None) or getattr(exc, "stdout", None) or str(exc)
@@ -109,7 +153,8 @@ def overview_for() -> dict:
             bad += 1
     return {
         "provision_mode": provision_mode(),
-        "kubectl_available": bool(shutil.which(kubectl_bin()) or Path(kubectl_bin()).exists()),
+        "kubectl_available": kubectl_available(),
+        "kubectl_bin": kubectl_bin(),
         "namespaces": len(resources["namespaces"]),
         "pods": len(resources["pods"]),
         "workloads": len(resources["workloads"]),
