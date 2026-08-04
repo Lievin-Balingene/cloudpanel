@@ -121,13 +121,34 @@ if ($ok) {
         @session_write_close();
     }
 
-    $target = './?_task=mail&_mbox=INBOX';
+    // IMPORTANT: ne pas utiliser « ./?_task=… » — sous /webmail/vzone-sso.php
+    // le navigateur résout en /webmail/vzone-sso.php?_task=mail (sans token) → Token invalide.
+    $base = '/webmail/';
     try {
-        if (method_exists($rcmail, 'url')) {
-            $target = $rcmail->url(['_task' => 'mail', '_mbox' => 'INBOX']);
+        $rp = (string)$rcmail->config->get('request_path', '/webmail/');
+        if ($rp !== '') {
+            $base = rtrim($rp, '/') . '/';
         }
     } catch (Throwable $e) {
         // keep default
+    }
+    $target = $base . '?_task=mail&_mbox=INBOX';
+    try {
+        if (method_exists($rcmail, 'url')) {
+            $u = (string)$rcmail->url(['_task' => 'mail', '_mbox' => 'INBOX']);
+            // Forcer un chemin absolu sous /webmail/ (pas relatif au script SSO)
+            if ($u !== '' && !preg_match('#vzone-sso\.php#i', $u)) {
+                if (str_starts_with($u, 'http://') || str_starts_with($u, 'https://')) {
+                    $target = $u;
+                } elseif (str_starts_with($u, '/')) {
+                    $target = $u;
+                } else {
+                    $target = $base . ltrim($u, './');
+                }
+            }
+        }
+    } catch (Throwable $e) {
+        // keep $target
     }
     header('Location: ' . $target);
     exit;
