@@ -144,8 +144,10 @@ chmod 770 "$TEMP_DIR" "${RC_ROOT}/logs"
 
 mkdir -p "$SSO_DIR"
 chown -R "${VZONE_USER}:www-data" "$(dirname "$SSO_DIR")"
-chmod 770 "$SSO_DIR"
+chmod 2770 "$SSO_DIR"
 chmod 770 "$(dirname "$SSO_DIR")" 2>/dev/null || true
+# vzone dans www-data pour écrire des tokens lisibles par PHP
+usermod -aG www-data "${VZONE_USER}" 2>/dev/null || true
 
 # Désactiver l'installeur public
 rm -rf "${RC_ROOT}/installer" 2>/dev/null || true

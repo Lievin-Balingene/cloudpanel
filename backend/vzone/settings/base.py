@@ -306,7 +306,8 @@ VZONE_ENABLED_MODULES = env_list(
 # Email / webmail
 VZONE_WEBMAIL_URL = env("VZONE_WEBMAIL_URL", "/webmail/")
 VZONE_MAIL_MAPS_DIR = env("VZONE_MAIL_MAPS_DIR", str(VZONE_DATA_ROOT / "mail" / "maps"))
-VZONE_MAIL_HOME_ROOT = env("VZONE_MAIL_HOME_ROOT", str(VZONE_DATA_ROOT / "mail" / "homes"))
+# Maildirs virtuels (Dovecot vmail) — PAS sous /home (sinon Roundcube refuse le login)
+VZONE_MAIL_HOME_ROOT = env("VZONE_MAIL_HOME_ROOT", "/var/mail/vhosts")
 VZONE_MAIL_STACK = env("VZONE_MAIL_STACK", "auto")  # auto | live | mock
 VZONE_MAIL_PUBLIC_IP = env("VZONE_MAIL_PUBLIC_IP", "")
 VZONE_PUBLIC_IP = env("VZONE_PUBLIC_IP", VZONE_MAIL_PUBLIC_IP)
@@ -314,8 +315,9 @@ VZONE_ROUNDCUBE_SSO_DIR = env(
     "VZONE_ROUNDCUBE_SSO_DIR",
     str(VZONE_DATA_ROOT / "roundcube" / "sso"),
 )
-VZONE_ROUNDCUBE_IMAP_HOST = env("VZONE_ROUNDCUBE_IMAP_HOST", "127.0.0.1")
+VZONE_ROUNDCUBE_IMAP_HOST = env("VZONE_ROUNDCUBE_IMAP_HOST", "127.0.0.1:143")
 VZONE_ROUNDCUBE_ROOT = env("VZONE_ROUNDCUBE_ROOT", "/opt/vzone/roundcube")
+
 
 # Bases de données hébergées (provisionnement)
 VZONE_DB_PROVISION_MODE = env("VZONE_DB_PROVISION_MODE", "auto")  # auto | live | mock

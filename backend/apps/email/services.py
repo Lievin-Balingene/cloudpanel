@@ -78,14 +78,28 @@ def mail_storage_root() -> Path:
 
 
 def mailbox_maildir(owner: User, address: str) -> Path:
-    """Maildir style cPanel : ~/mail/<domaine>/<local>/{cur,new,tmp}."""
-    user_home(owner)
+    """
+    Maildir virtuel sous /var/mail/vhosts/<domaine>/<local>/ (owned vmail).
+    Évite les échecs Roundcube/IMAP quand /home/<user> n'est pas traversable par vmail.
+    """
     local, _, domain = address.partition("@")
-    path = personal_home(owner) / "mail" / domain.lower() / local.lower()
-    path.mkdir(parents=True, exist_ok=True)
-    for sub in ("cur", "new", "tmp"):
-        (path / sub).mkdir(exist_ok=True)
+    base = Path(
+        getattr(settings, "VZONE_MAIL_HOME_ROOT", None) or "/var/mail/vhosts"
+    )
+    path = base / domain.lower() / local.lower()
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        for sub in ("cur", "new", "tmp"):
+            (path / sub).mkdir(exist_ok=True)
+    except OSError:
+        # Fallback style cPanel si /var/mail/vhosts non accessible
+        user_home(owner)
+        path = personal_home(owner) / "mail" / domain.lower() / local.lower()
+        path.mkdir(parents=True, exist_ok=True)
+        for sub in ("cur", "new", "tmp"):
+            (path / sub).mkdir(exist_ok=True)
     _chown_vmail(path)
+    _ensure_vmail_traverse(path)
     return path
 
 
@@ -106,8 +120,60 @@ def _chown_vmail(path: Path) -> None:
             for name in filenames:
                 fp = Path(dirpath) / name
                 os.chown(fp, uid, gid)
+                os.chmod(fp, 0o660)
     except (PermissionError, OSError) as exc:
-        logger.debug("chown vmail skip %s: %s", path, exc)
+        logger.warning("chown vmail échoué pour %s: %s", path, exc)
+
+
+def _ensure_vmail_traverse(path: Path) -> None:
+    """ACL de secours si le Maildir est encore sous /home (vmail doit traverser)."""
+    try:
+        import shutil
+
+        if "mail/vhosts" in str(path).replace("\\", "/"):
+            return
+        if not shutil.which("setfacl"):
+            return
+        # u:vmail:--x sur parents jusqu'à /home
+        cur = path
+        for _ in range(8):
+            cur = cur.parent
+            if cur in {Path("/"), Path("/home")}:
+                break
+            subprocess.run(
+                ["setfacl", "-m", "u:vmail:--x", str(cur)],
+                check=False,
+                capture_output=True,
+            )
+        subprocess.run(
+            ["setfacl", "-R", "-m", "u:vmail:rwx", str(path)],
+            check=False,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["setfacl", "-R", "-d", "-m", "u:vmail:rwx", str(path)],
+            check=False,
+            capture_output=True,
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("ACL vmail skip", exc_info=True)
+
+
+def _secure_mail_map_file(path: Path) -> None:
+    """vzone écrit, vmail (auth-worker) lit — sinon Roundcube refuse le login."""
+    try:
+        os.chmod(path, 0o640)
+    except OSError:
+        pass
+    try:
+        import grp
+        import pwd
+
+        gid = grp.getgrnam("vmail").gr_gid
+        # Garder owner actuel (vzone), fixer le groupe vmail
+        os.chown(path, -1, gid)
+    except (ImportError, KeyError, PermissionError, OSError) as exc:
+        logger.warning("Impossible de fixer groupe vmail sur %s: %s", path, exc)
 
 
 def generate_dkim_keys() -> tuple[str, str]:
@@ -304,10 +370,33 @@ def write_mail_maps() -> Path:
         "mail_domain", "mail_domain__owner"
     ):
         maildir = Path(box.maildir) if box.maildir else None
-        if maildir is None or not maildir.exists():
-            maildir = mailbox_maildir(box.mail_domain.owner, box.address)
+        # Migrer hors de /home/… vers /var/mail/vhosts si possible (auth Roundcube)
+        needs_new = (
+            maildir is None
+            or not maildir.exists()
+            or "/home/" in str(maildir).replace("\\", "/")
+            or "vhosts" not in str(maildir).replace("\\", "/")
+        )
+        if needs_new:
+            new_path = mailbox_maildir(box.mail_domain.owner, box.address)
+            # Copier le contenu existant si on migre
+            if maildir and maildir.exists() and new_path.resolve() != maildir.resolve():
+                try:
+                    for sub in ("cur", "new", "tmp"):
+                        src = maildir / sub
+                        dst = new_path / sub
+                        if src.is_dir():
+                            for item in src.iterdir():
+                                target = dst / item.name
+                                if not target.exists():
+                                    shutil.copy2(item, target)
+                except OSError as exc:
+                    logger.warning("Migration maildir %s → %s: %s", maildir, new_path, exc)
+            maildir = new_path
             box.maildir = str(maildir)
             box.save(update_fields=["maildir", "updated_at"])
+        else:
+            _chown_vmail(maildir)
         pwd = dovecot_password_field(box.password_hash)
         dovecot_lines.append(f"{box.address}:{pwd}:5000:5000::{maildir}::")
         mailbox_lines.append(f"{box.address} {box.mail_domain.name}/{box.local_part}/")
@@ -329,6 +418,7 @@ def write_mail_maps() -> Path:
 
     def _write(path: Path, lines: list[str]) -> None:
         path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+        _secure_mail_map_file(path)
 
     _write(dovecot_users, dovecot_lines)
     _write(virtual_mailboxes, mailbox_lines)
@@ -338,10 +428,12 @@ def write_mail_maps() -> Path:
     _write(key_table, key_lines)
     _write(signing_table, sign_lines)
 
-    try:
-        os.chmod(dovecot_users, 0o640)
-    except OSError:
-        pass
+    # S'assurer que chaque maildir est bien accessible à vmail
+    for box in Mailbox.objects.filter(is_active=True, is_suspended=False):
+        if box.maildir:
+            p = Path(box.maildir)
+            if p.exists():
+                _chown_vmail(p)
 
     reload_mail_services()
     return root
@@ -576,23 +668,38 @@ def create_webmail_sso(box: Mailbox) -> dict:
         or (Path(settings.VZONE_DATA_ROOT) / "roundcube" / "sso")
     )
     sso_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(sso_dir, 0o2770)
+    except OSError:
+        pass
     token = secrets.token_hex(32)
+    imap_host = (
+        getattr(settings, "VZONE_ROUNDCUBE_IMAP_HOST", None) or "127.0.0.1:143"
+    ).strip()
     payload = {
         "user": box.address,
         "password": password,
-        "imap_host": getattr(settings, "VZONE_ROUNDCUBE_IMAP_HOST", "127.0.0.1"),
-        "exp": int(time.time()) + 60,
+        "imap_host": imap_host,
+        "exp": int(time.time()) + 90,
     }
     token_path = sso_dir / f"{token}.json"
     token_path.write_text(json.dumps(payload), encoding="utf-8")
     try:
-        token_path.chmod(0o640)
-    except OSError:
-        pass
+        token_path.chmod(0o660)
+        import grp
+
+        # Lisible par PHP-FPM (www-data)
+        gid = grp.getgrnam("www-data").gr_gid
+        os.chown(token_path, -1, gid)
+    except (OSError, KeyError, ImportError):
+        try:
+            token_path.chmod(0o644)
+        except OSError:
+            pass
 
     base = webmail_url().rstrip("/") + "/"
     return {
         "url": f"{base}vzone-sso.php?t={token}",
-        "expires_in": 60,
+        "expires_in": 90,
         "address": box.address,
     }

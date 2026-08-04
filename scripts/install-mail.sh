@@ -37,16 +37,22 @@ if ! id vmail >/dev/null 2>&1; then
 fi
 mkdir -p /var/mail/vhosts
 chown -R vmail:vmail /var/mail/vhosts
+# Panel (vzone) crée les boîtes ; Dovecot (vmail) les lit/écrit
+usermod -aG vmail "${VZONE_USER}" 2>/dev/null || true
+chmod 2770 /var/mail/vhosts
+chgrp vmail /var/mail/vhosts
 
 mkdir -p "$MAPS_DIR" "$MAPS_DIR/dkim" /etc/opendkim/keys
 touch "$MAPS_DIR/vmailbox" "$MAPS_DIR/valiases" "$MAPS_DIR/vdomains" \
   "$MAPS_DIR/dovecot-users" "$MAPS_DIR/virtual_mailboxes"
 chown -R "${VZONE_USER}:vmail" "${DATA_ROOT}/mail"
 chmod -R g+rwX "${DATA_ROOT}/mail"
+chmod 2770 "${DATA_ROOT}/mail" "$MAPS_DIR" 2>/dev/null || true
 # Clés DKIM lisibles par OpenDKIM
 chgrp -R opendkim "$MAPS_DIR/dkim" 2>/dev/null || true
 chmod -R g+rX "$MAPS_DIR/dkim" 2>/dev/null || true
 chmod 640 "$MAPS_DIR"/dovecot-users 2>/dev/null || true
+chgrp vmail "$MAPS_DIR"/dovecot-users 2>/dev/null || true
 # Panel peut écrire, Dovecot/vmail lit
 usermod -aG vmail "${VZONE_USER}" 2>/dev/null || true
 

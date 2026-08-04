@@ -244,6 +244,11 @@ export function EmailManager({ title }: { title: string }) {
             <p className="text-sm text-cp-muted">
               Domaines mail, boîtes, redirections, SPF / DKIM / DMARC — webmail Roundcube.
             </p>
+            <p className="mt-1 text-xs text-cp-muted">
+              Connexion Roundcube : utilisez l&apos;adresse <strong>complète</strong>{" "}
+              (<code className="font-mono">local@domaine.tld</code>) et le mot de passe de la
+              boîte — pas le compte panel.
+            </p>
           </div>
           <div className="flex flex-wrap gap-2">
             {overview?.webmail_url && (
