@@ -26,6 +26,7 @@ import { WhmSecurityPage } from "./pages/whm/WhmSecurityPage";
 import { WhmWordPressPage } from "./pages/whm/WhmWordPressPage";
 import { WhmKubernetesPage } from "./pages/whm/WhmKubernetesPage";
 import { WhmTerminalPage } from "./pages/whm/WhmTerminalPage";
+import { WhmServerSetupPage } from "./pages/whm/WhmServerSetupPage";
 import { ClientHomePage } from "./pages/client/ClientHomePage";
 import { ClientDnsPage } from "./pages/client/ClientDnsPage";
 import { ClientPackagePage } from "./pages/client/ClientPackagePage";
@@ -103,6 +104,7 @@ export default function App() {
         <Route index element={<WhmHomePage />} />
         <Route path="accounts" element={<WhmAccountsPage />} />
         <Route path="packages" element={<WhmPackagesPage />} />
+        <Route path="server-setup" element={<WhmServerSetupPage />} />
         <Route path="domains" element={<WhmDomainsPage />} />
         <Route path="files" element={<WhmFilesPage />} />
         <Route path="ftp" element={<WhmFtpPage />} />

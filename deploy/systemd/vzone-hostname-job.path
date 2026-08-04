@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch V-zone hostname job requests
+
+[Path]
+PathExistsGlob=/var/lib/vzone/hostname/jobs/*.request
+MakeDirectory=true
+Unit=vzone-hostname-job.service
+
+[Install]
+WantedBy=multi-user.target

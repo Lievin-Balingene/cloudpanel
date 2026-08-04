@@ -208,6 +208,9 @@ PY
   if [[ -f "${SCRIPT_DIR}/install-certbot.sh" ]]; then
     bash "${SCRIPT_DIR}/install-certbot.sh" || log "Avertissement: certbot non installé"
   fi
+  if [[ -f "${SCRIPT_DIR}/install-hostname-agent.sh" ]]; then
+    bash "${SCRIPT_DIR}/install-hostname-agent.sh" || log "Avertissement: agent hostname non installé"
+  fi
   # WP-CLI / WordPress
   if [[ -f "${SCRIPT_DIR}/install-wp-cli.sh" ]]; then
     bash "${SCRIPT_DIR}/install-wp-cli.sh" || log "Avertissement: wp-cli non installé"

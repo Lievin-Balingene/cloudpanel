@@ -85,6 +85,11 @@ if [[ -f "${REPO_DIR}/scripts/install-certbot.sh" ]]; then
   bash "${REPO_DIR}/scripts/install-certbot.sh" || echo "[vzone] Avertissement: install-certbot.sh a échoué"
 fi
 
+# Agent hostname WHM (Basic Setup)
+if [[ -f "${REPO_DIR}/scripts/install-hostname-agent.sh" ]]; then
+  bash "${REPO_DIR}/scripts/install-hostname-agent.sh" || echo "[vzone] Avertissement: install-hostname-agent.sh a échoué"
+fi
+
 # WP-CLI / WordPress
 if [[ -f "${REPO_DIR}/scripts/install-wp-cli.sh" ]]; then
   bash "${REPO_DIR}/scripts/install-wp-cli.sh" || echo "[vzone] Avertissement: install-wp-cli.sh a échoué"

@@ -103,6 +103,7 @@ class ModuleRegistry:
             "apps.security.module",
             "apps.wordpress.module",
             "apps.kubernetes.module",
+            "apps.server_setup.module",
         ]
         for path in module_paths:
             try:

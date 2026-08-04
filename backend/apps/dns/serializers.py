@@ -105,6 +105,6 @@ class DnsZoneSerializer(serializers.ModelSerializer):
 class DnsZoneCreateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255)
     owner_id = serializers.IntegerField(required=False)
-    primary_ns = serializers.CharField(required=False, default="ns1.vzone.local.")
-    secondary_ns = serializers.CharField(required=False, default="ns2.vzone.local.")
-    admin_email = serializers.CharField(required=False, default="hostmaster.vzone.local.")
+    primary_ns = serializers.CharField(required=False, allow_blank=True)
+    secondary_ns = serializers.CharField(required=False, allow_blank=True)
+    admin_email = serializers.CharField(required=False, allow_blank=True)

@@ -46,9 +46,9 @@ class DnsZoneListCreateView(APIView):
         zone = create_zone_with_defaults(
             name=serializer.validated_data["name"],
             owner=owner,
-            primary_ns=serializer.validated_data["primary_ns"],
-            secondary_ns=serializer.validated_data["secondary_ns"],
-            admin_email=serializer.validated_data["admin_email"],
+            primary_ns=serializer.validated_data.get("primary_ns") or None,
+            secondary_ns=serializer.validated_data.get("secondary_ns") or None,
+            admin_email=serializer.validated_data.get("admin_email") or None,
         )
         return Response(
             {"success": True, "data": DnsZoneSerializer(zone).data},
