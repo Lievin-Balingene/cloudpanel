@@ -24,6 +24,8 @@ import { WhmMonitoringPage } from "./pages/whm/WhmMonitoringPage";
 import { WhmFirewallPage } from "./pages/whm/WhmFirewallPage";
 import { WhmSecurityPage } from "./pages/whm/WhmSecurityPage";
 import { WhmWordPressPage } from "./pages/whm/WhmWordPressPage";
+import { WhmKubernetesPage } from "./pages/whm/WhmKubernetesPage";
+import { WhmTerminalPage } from "./pages/whm/WhmTerminalPage";
 import { ClientHomePage } from "./pages/client/ClientHomePage";
 import { ClientDnsPage } from "./pages/client/ClientDnsPage";
 import { ClientPackagePage } from "./pages/client/ClientPackagePage";
@@ -40,6 +42,8 @@ import { ClientDockerPage } from "./pages/client/ClientDockerPage";
 import { ClientBackupPage } from "./pages/client/ClientBackupPage";
 import { ClientSecurityPage } from "./pages/client/ClientSecurityPage";
 import { ClientWordPressPage } from "./pages/client/ClientWordPressPage";
+import { ClientKubernetesPage } from "./pages/client/ClientKubernetesPage";
+import { ClientTerminalPage } from "./pages/client/ClientTerminalPage";
 import { useAuthStore } from "./stores/auth";
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -108,6 +112,8 @@ export default function App() {
         <Route path="node" element={<WhmNodePage />} />
         <Route path="php" element={<WhmPhpPage />} />
         <Route path="wordpress" element={<WhmWordPressPage />} />
+        <Route path="kubernetes" element={<WhmKubernetesPage />} />
+        <Route path="terminal" element={<WhmTerminalPage />} />
         <Route path="git" element={<WhmGitPage />} />
         <Route path="docker" element={<WhmDockerPage />} />
         <Route path="backups" element={<WhmBackupPage />} />
@@ -138,6 +144,8 @@ export default function App() {
         <Route path="node" element={<ClientNodePage />} />
         <Route path="php" element={<ClientPhpPage />} />
         <Route path="wordpress" element={<ClientWordPressPage />} />
+        <Route path="kubernetes" element={<ClientKubernetesPage />} />
+        <Route path="terminal" element={<ClientTerminalPage />} />
         <Route path="git" element={<ClientGitPage />} />
         <Route path="docker" element={<ClientDockerPage />} />
         <Route path="backups" element={<ClientBackupPage />} />

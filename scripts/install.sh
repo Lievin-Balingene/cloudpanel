@@ -212,6 +212,10 @@ PY
   if [[ -f "${SCRIPT_DIR}/install-wp-cli.sh" ]]; then
     bash "${SCRIPT_DIR}/install-wp-cli.sh" || log "Avertissement: wp-cli non installé"
   fi
+  # Kubernetes / kubectl
+  if [[ -f "${SCRIPT_DIR}/install-kubernetes.sh" ]]; then
+    bash "${SCRIPT_DIR}/install-kubernetes.sh" || log "Avertissement: kubectl non installé"
+  fi
   install -m 755 "${SCRIPT_DIR}/vzone-postgresql-ensure.sh" /usr/local/sbin/vzone-postgresql-ensure
   install -m 644 "${REPO_DIR}/deploy/systemd/vzone-postgresql.service" /etc/systemd/system/vzone-postgresql.service
   systemctl daemon-reload

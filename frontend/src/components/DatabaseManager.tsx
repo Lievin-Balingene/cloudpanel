@@ -1,11 +1,11 @@
-import { FormEvent, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Database,
   ExternalLink,
+  Filter,
+  Plus,
   ShieldOff,
   Trash2,
-  UserPlus,
 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
 
@@ -47,6 +47,8 @@ interface DbPrivilege {
   engine: string;
   privileges: string;
 }
+
+type WizardStep = 1 | 2 | 3;
 
 function IconAction({
   label,
@@ -96,19 +98,18 @@ export function DatabaseManager({ title }: { title: string }) {
     queryFn: () => apiRequest<DbPrivilege[]>("/databases/privileges/"),
   });
 
-  const [dbForm, setDbForm] = useState({ name: "", engine: "mysql" });
-  const [userForm, setUserForm] = useState({
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardStep, setWizardStep] = useState<WizardStep>(1);
+  const [wizard, setWizard] = useState({
+    dbName: "",
+    engine: "mysql",
     username: "",
     password: "",
-    engine: "mysql",
     host: "localhost",
-  });
-  const [grantForm, setGrantForm] = useState({
-    database_id: 0,
-    user_id: 0,
     privileges: "ALL",
   });
   const [error, setError] = useState<string | null>(null);
+  const [engineFilter, setEngineFilter] = useState<"all" | "mysql" | "postgresql">("all");
   const [confirm, setConfirm] = useState<{
     title: string;
     message: string;
@@ -121,41 +122,6 @@ export function DatabaseManager({ title }: { title: string }) {
     void qc.invalidateQueries({ queryKey: ["database-users"] });
     void qc.invalidateQueries({ queryKey: ["database-privileges"] });
   };
-
-  const createDb = useMutation({
-    mutationFn: () =>
-      apiRequest("/databases/", { method: "POST", body: JSON.stringify(dbForm) }),
-    onSuccess: () => {
-      setDbForm({ name: "", engine: "mysql" });
-      setError(null);
-      invalidateAll();
-    },
-    onError: (err: Error) => setError(err.message),
-  });
-
-  const createUser = useMutation({
-    mutationFn: () =>
-      apiRequest("/databases/users/", { method: "POST", body: JSON.stringify(userForm) }),
-    onSuccess: () => {
-      setUserForm({ username: "", password: "", engine: "mysql", host: "localhost" });
-      setError(null);
-      invalidateAll();
-    },
-    onError: (err: Error) => setError(err.message),
-  });
-
-  const createGrant = useMutation({
-    mutationFn: (payload: typeof grantForm) =>
-      apiRequest("/databases/privileges/", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      }),
-    onSuccess: () => {
-      setError(null);
-      invalidateAll();
-    },
-    onError: (err: Error) => setError(err.message),
-  });
 
   const removeDb = useMutation({
     mutationFn: (id: number) => apiRequest(`/databases/${id}/`, { method: "DELETE" }),
@@ -197,37 +163,68 @@ export function DatabaseManager({ title }: { title: string }) {
     onError: (err: Error) => setError(err.message),
   });
 
-  const selectedDbId = grantForm.database_id || databases[0]?.id || 0;
-  const selectedUserId = grantForm.user_id || users[0]?.id || 0;
+  const visibleDatabases =
+    engineFilter === "all" ? databases : databases.filter((d) => d.engine === engineFilter);
+  const visibleUsers = engineFilter === "all" ? users : users.filter((u) => u.engine === engineFilter);
+  const visiblePrivileges =
+    engineFilter === "all" ? privileges : privileges.filter((p) => p.engine === engineFilter);
 
-  function onCreateDb(e: FormEvent) {
-    e.preventDefault();
-    createDb.mutate();
-  }
-
-  function onCreateUser(e: FormEvent) {
-    e.preventDefault();
-    createUser.mutate();
-  }
-
-  function onGrant(e: FormEvent) {
-    e.preventDefault();
-    if (!selectedDbId || !selectedUserId) {
-      setError("Sélectionnez une base et un utilisateur.");
-      return;
-    }
-    const payload = {
-      ...grantForm,
-      database_id: selectedDbId,
-      user_id: selectedUserId,
-    };
-    setGrantForm(payload);
-    createGrant.mutate(payload);
-  }
+  const createWizard = useMutation({
+    mutationFn: async () => {
+      const db = await apiRequest<HostedDatabase>("/databases/", {
+        method: "POST",
+        body: JSON.stringify({
+          name: wizard.dbName,
+          engine: wizard.engine,
+        }),
+      });
+      const user = await apiRequest<DbUser>("/databases/users/", {
+        method: "POST",
+        body: JSON.stringify({
+          username: wizard.username,
+          password: wizard.password,
+          engine: wizard.engine,
+          host: wizard.engine === "postgresql" ? "localhost" : wizard.host,
+        }),
+      });
+      await apiRequest("/databases/privileges/", {
+        method: "POST",
+        body: JSON.stringify({
+          database_id: db.id,
+          user_id: user.id,
+          privileges: wizard.privileges,
+        }),
+      });
+    },
+    onSuccess: () => {
+      setError(null);
+      setWizardOpen(false);
+      setWizardStep(1);
+      setWizard({
+        dbName: "",
+        engine: "mysql",
+        username: "",
+        password: "",
+        host: "localhost",
+        privileges: "ALL",
+      });
+      invalidateAll();
+    },
+    onError: (err: Error) => setError(err.message),
+  });
 
   function askConfirm(title: string, message: string, onConfirm: () => void) {
     setConfirm({ title, message, onConfirm });
   }
+
+  const engineLabel =
+    engineFilter === "all" ? "All Databases" : engineFilter === "mysql" ? "MySQL Databases" : "PostgreSQL Databases";
+  const provisionBadgeClass =
+    overview?.provision_mode === "live"
+      ? "bg-emerald-100 text-emerald-800"
+      : overview?.provision_mode === "auto"
+        ? "bg-amber-100 text-amber-800"
+        : "bg-slate-100 text-slate-700";
 
   return (
     <div className="space-y-4 animate-fade-up">
@@ -236,10 +233,41 @@ export function DatabaseManager({ title }: { title: string }) {
           <div>
             <h1 className="text-xl font-semibold">{title}</h1>
             <p className="text-sm text-cp-muted">
-              MySQL/MariaDB et PostgreSQL — bases, utilisateurs et privilèges.
+              Manage MySQL and PostgreSQL databases, users, and privileges.
             </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+              <span className="rounded border border-cp-border bg-cp-canvas px-2 py-1 text-cp-muted">
+                {engineLabel}
+              </span>
+              <span className={`rounded px-2 py-1 font-semibold uppercase ${provisionBadgeClass}`}>
+                Mode: {overview?.provision_mode ?? "unknown"}
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Filter className="h-4 w-4 text-cp-muted" />
+            <select
+              className="vz-input min-w-40"
+              value={engineFilter}
+              onChange={(e) => setEngineFilter(e.target.value as "all" | "mysql" | "postgresql")}
+            >
+              <option value="all">Tous les moteurs</option>
+              <option value="mysql">MySQL</option>
+              <option value="postgresql">PostgreSQL</option>
+            </select>
           </div>
           <div className="flex flex-wrap gap-2">
+            <button
+              className="vz-btn-primary"
+              type="button"
+              onClick={() => {
+                setWizardOpen(true);
+                setWizardStep(1);
+              }}
+            >
+              <Plus className="h-4 w-4" />
+              Créer une base de données
+            </button>
             {overview?.phpmyadmin_url && (
               <a
                 className="vz-btn-primary"
@@ -266,14 +294,14 @@ export function DatabaseManager({ title }: { title: string }) {
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
         {[
           { label: "Bases", value: overview?.databases ?? "—" },
           { label: "MySQL", value: overview?.mysql_databases ?? "—" },
           { label: "PostgreSQL", value: overview?.postgresql_databases ?? "—" },
           { label: "Utilisateurs", value: overview?.users ?? "—" },
         ].map((card) => (
-          <div key={card.label} className="vz-panel p-4">
+          <div key={card.label} className="vz-panel p-3">
             <p className="text-xs font-semibold uppercase text-cp-muted">{card.label}</p>
             <p className="mt-1 text-2xl font-semibold text-cp-orange">{card.value}</p>
           </div>
@@ -284,29 +312,10 @@ export function DatabaseManager({ title }: { title: string }) {
         <p className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-cp-danger">{error}</p>
       )}
 
-      <form className="vz-panel grid gap-2 p-4 md:grid-cols-4" onSubmit={onCreateDb}>
-        <input
-          className="vz-input md:col-span-2"
-          placeholder="nom (ex: app)"
-          required
-          value={dbForm.name}
-          onChange={(e) => setDbForm({ ...dbForm, name: e.target.value })}
-        />
-        <select
-          className="vz-input"
-          value={dbForm.engine}
-          onChange={(e) => setDbForm({ ...dbForm, engine: e.target.value })}
-        >
-          <option value="mysql">MySQL</option>
-          <option value="postgresql">PostgreSQL</option>
-        </select>
-        <button className="vz-btn-primary" type="submit" disabled={createDb.isPending}>
-          <Database className="h-4 w-4" />
-          Créer base
-        </button>
-      </form>
-
       <div className="vz-panel overflow-x-auto">
+        <div className="border-b border-cp-border bg-cp-header px-3 py-2 text-xs font-semibold uppercase tracking-wide text-white">
+          Current Databases
+        </div>
         <table className="min-w-full text-left text-sm">
           <thead className="bg-cp-canvas text-xs uppercase text-cp-muted dark:bg-ink-900">
             <tr>
@@ -325,7 +334,7 @@ export function DatabaseManager({ title }: { title: string }) {
                 </td>
               </tr>
             )}
-            {databases.map((db) => (
+            {visibleDatabases.map((db) => (
               <tr key={db.id} className="border-t border-cp-border dark:border-ink-800">
                 <td className="px-3 py-2 font-mono text-xs">{db.name}</td>
                 <td className="px-3 py-2">{db.engine}</td>
@@ -348,10 +357,10 @@ export function DatabaseManager({ title }: { title: string }) {
                 </td>
               </tr>
             ))}
-            {!isLoading && databases.length === 0 && (
+            {!isLoading && visibleDatabases.length === 0 && (
               <tr>
                 <td className="px-3 py-4 text-cp-muted" colSpan={5}>
-                  Aucune base.
+                  No databases found for this filter.
                 </td>
               </tr>
             )}
@@ -359,44 +368,10 @@ export function DatabaseManager({ title }: { title: string }) {
         </table>
       </div>
 
-      <form className="vz-panel grid gap-2 p-4 md:grid-cols-5" onSubmit={onCreateUser}>
-        <input
-          className="vz-input"
-          placeholder="utilisateur"
-          required
-          value={userForm.username}
-          onChange={(e) => setUserForm({ ...userForm, username: e.target.value })}
-        />
-        <input
-          className="vz-input"
-          type="password"
-          placeholder="mot de passe"
-          required
-          minLength={8}
-          value={userForm.password}
-          onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
-        />
-        <select
-          className="vz-input"
-          value={userForm.engine}
-          onChange={(e) => setUserForm({ ...userForm, engine: e.target.value })}
-        >
-          <option value="mysql">MySQL</option>
-          <option value="postgresql">PostgreSQL</option>
-        </select>
-        <input
-          className="vz-input"
-          placeholder="host"
-          value={userForm.host}
-          onChange={(e) => setUserForm({ ...userForm, host: e.target.value })}
-        />
-        <button className="vz-btn-primary" type="submit" disabled={createUser.isPending}>
-          <UserPlus className="h-4 w-4" />
-          Créer user
-        </button>
-      </form>
-
       <div className="vz-panel overflow-x-auto">
+        <div className="border-b border-cp-border bg-cp-header px-3 py-2 text-xs font-semibold uppercase tracking-wide text-white">
+          Current Users
+        </div>
         <table className="min-w-full text-left text-sm">
           <thead className="bg-cp-canvas text-xs uppercase text-cp-muted dark:bg-ink-900">
             <tr>
@@ -407,7 +382,7 @@ export function DatabaseManager({ title }: { title: string }) {
             </tr>
           </thead>
           <tbody>
-            {users.map((u) => (
+            {visibleUsers.map((u) => (
               <tr key={u.id} className="border-t border-cp-border dark:border-ink-800">
                 <td className="px-3 py-2 font-mono text-xs">{u.username}</td>
                 <td className="px-3 py-2">{u.engine}</td>
@@ -440,10 +415,10 @@ export function DatabaseManager({ title }: { title: string }) {
                 </td>
               </tr>
             ))}
-            {users.length === 0 && (
+            {visibleUsers.length === 0 && (
               <tr>
                 <td className="px-3 py-4 text-cp-muted" colSpan={4}>
-                  Aucun utilisateur SQL.
+                  No SQL users found for this filter.
                 </td>
               </tr>
             )}
@@ -451,48 +426,9 @@ export function DatabaseManager({ title }: { title: string }) {
         </table>
       </div>
 
-      <form className="vz-panel grid gap-2 p-4 md:grid-cols-4" onSubmit={onGrant}>
-        <select
-          className="vz-input"
-          value={selectedDbId}
-          onChange={(e) => setGrantForm({ ...grantForm, database_id: Number(e.target.value) })}
-        >
-          <option value={0}>Base…</option>
-          {databases.map((d) => (
-            <option key={d.id} value={d.id}>
-              {d.name}
-            </option>
-          ))}
-        </select>
-        <select
-          className="vz-input"
-          value={selectedUserId}
-          onChange={(e) => setGrantForm({ ...grantForm, user_id: Number(e.target.value) })}
-        >
-          <option value={0}>User…</option>
-          {users.map((u) => (
-            <option key={u.id} value={u.id}>
-              {u.username}
-            </option>
-          ))}
-        </select>
-        <select
-          className="vz-input"
-          value={grantForm.privileges}
-          onChange={(e) => setGrantForm({ ...grantForm, privileges: e.target.value })}
-        >
-          <option value="ALL">ALL</option>
-          <option value="WRITE">WRITE</option>
-          <option value="READ">READ</option>
-        </select>
-        <button className="vz-btn-primary" type="submit" disabled={createGrant.isPending}>
-          Accorder
-        </button>
-      </form>
-
       <div className="vz-panel overflow-x-auto">
-        <div className="border-b border-cp-border bg-cp-canvas px-3 py-2 text-xs font-semibold uppercase text-cp-muted dark:border-ink-800 dark:bg-ink-900">
-          Privilèges
+        <div className="border-b border-cp-border bg-cp-header px-3 py-2 text-xs font-semibold uppercase tracking-wide text-white">
+          Current Privileges
         </div>
         <table className="min-w-full text-left text-sm">
           <thead>
@@ -504,7 +440,7 @@ export function DatabaseManager({ title }: { title: string }) {
             </tr>
           </thead>
           <tbody>
-            {privileges.map((p) => (
+            {visiblePrivileges.map((p) => (
               <tr key={p.id} className="border-t border-cp-border dark:border-ink-800">
                 <td className="px-3 py-2 font-mono text-xs">{p.username}</td>
                 <td className="px-3 py-2 font-mono text-xs">{p.database_name}</td>
@@ -529,10 +465,10 @@ export function DatabaseManager({ title }: { title: string }) {
                 </td>
               </tr>
             ))}
-            {privileges.length === 0 && (
+            {visiblePrivileges.length === 0 && (
               <tr>
                 <td className="px-3 py-4 text-cp-muted" colSpan={4}>
-                  Aucun privilège.
+                  No privileges found for this filter.
                 </td>
               </tr>
             )}
@@ -560,6 +496,165 @@ export function DatabaseManager({ title }: { title: string }) {
               >
                 Confirmer
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {wizardOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-2xl rounded border border-cp-border bg-white shadow-xl dark:border-ink-700 dark:bg-ink-950">
+            <div className="flex items-center justify-between border-b border-cp-border bg-cp-header px-4 py-2 text-white dark:border-ink-800">
+              <h2 className="text-sm font-semibold uppercase tracking-wide">Database Wizard</h2>
+              <button
+                type="button"
+                className="rounded px-2 py-1 text-xs hover:bg-white/15"
+                onClick={() => {
+                  setWizardOpen(false);
+                  setWizardStep(1);
+                }}
+              >
+                Fermer
+              </button>
+            </div>
+            <div className="p-4">
+              <p className="mb-3 text-xs text-cp-muted">
+                Follow steps below to create a database, create a user, and assign privileges.
+              </p>
+
+            <div className="mb-4 flex items-center gap-2 text-xs">
+              {[1, 2, 3].map((n) => (
+                <div
+                  key={n}
+                  className={`rounded-md px-2.5 py-1 font-semibold ${
+                    wizardStep === n
+                      ? "bg-cp-orange text-white"
+                      : wizardStep > n
+                        ? "bg-emerald-100 text-emerald-800"
+                        : "bg-cp-canvas text-cp-muted"
+                  }`}
+                >
+                  Step {n}
+                </div>
+              ))}
+            </div>
+
+            {wizardStep === 1 && (
+              <div className="space-y-3">
+                <p className="text-sm text-cp-muted">Database Name and Engine.</p>
+                <label className="space-y-1">
+                  <span className="text-xs font-medium text-cp-muted">Database Name</span>
+                  <input
+                  className="vz-input"
+                  placeholder="ex: app"
+                  value={wizard.dbName}
+                  onChange={(e) => setWizard({ ...wizard, dbName: e.target.value })}
+                />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs font-medium text-cp-muted">Engine</span>
+                <select
+                  className="vz-input"
+                  value={wizard.engine}
+                  onChange={(e) => setWizard({ ...wizard, engine: e.target.value })}
+                >
+                  <option value="mysql">MySQL</option>
+                  <option value="postgresql">PostgreSQL</option>
+                </select>
+                </label>
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    className="vz-btn-primary"
+                    disabled={!wizard.dbName.trim()}
+                    onClick={() => setWizardStep(2)}
+                  >
+                    Suivant
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {wizardStep === 2 && (
+              <div className="space-y-3">
+                <p className="text-sm text-cp-muted">Database User and Password.</p>
+                <label className="space-y-1">
+                  <span className="text-xs font-medium text-cp-muted">Username</span>
+                  <input
+                  className="vz-input"
+                  placeholder="utilisateur"
+                  value={wizard.username}
+                  onChange={(e) => setWizard({ ...wizard, username: e.target.value })}
+                />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs font-medium text-cp-muted">Password</span>
+                  <input
+                  className="vz-input"
+                  type="password"
+                  minLength={8}
+                  placeholder="mot de passe"
+                  value={wizard.password}
+                  onChange={(e) => setWizard({ ...wizard, password: e.target.value })}
+                />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs font-medium text-cp-muted">Host</span>
+                  <input
+                  className="vz-input"
+                  placeholder="host"
+                  disabled={wizard.engine === "postgresql"}
+                  value={wizard.host}
+                  onChange={(e) => setWizard({ ...wizard, host: e.target.value })}
+                />
+                </label>
+                <div className="flex justify-between">
+                  <button type="button" className="vz-btn-ghost" onClick={() => setWizardStep(1)}>
+                    Précédent
+                  </button>
+                  <button
+                    type="button"
+                    className="vz-btn-primary"
+                    disabled={!wizard.username.trim() || wizard.password.length < 8}
+                    onClick={() => setWizardStep(3)}
+                  >
+                    Suivant
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {wizardStep === 3 && (
+              <div className="space-y-3">
+                <p className="text-sm text-cp-muted">Assign User Privileges.</p>
+                <select
+                  className="vz-input"
+                  value={wizard.privileges}
+                  onChange={(e) => setWizard({ ...wizard, privileges: e.target.value })}
+                >
+                  <option value="ALL">ALL PRIVILEGES</option>
+                  <option value="WRITE">WRITE</option>
+                  <option value="READ">READ</option>
+                </select>
+                <div className="rounded border border-cp-border bg-cp-canvas px-3 py-2 text-xs text-cp-muted">
+                  Database: <strong>{wizard.dbName || "—"}</strong> · User: <strong>{wizard.username || "—"}</strong>{" "}
+                  · Engine: <strong>{wizard.engine}</strong>
+                </div>
+                <div className="flex justify-between">
+                  <button type="button" className="vz-btn-ghost" onClick={() => setWizardStep(2)}>
+                    Précédent
+                  </button>
+                  <button
+                    type="button"
+                    className="vz-btn-primary"
+                    disabled={createWizard.isPending}
+                    onClick={() => createWizard.mutate()}
+                  >
+                    Save Changes
+                  </button>
+                </div>
+              </div>
+            )}
             </div>
           </div>
         </div>

@@ -90,6 +90,11 @@ if [[ -f "${REPO_DIR}/scripts/install-wp-cli.sh" ]]; then
   bash "${REPO_DIR}/scripts/install-wp-cli.sh" || echo "[vzone] Avertissement: install-wp-cli.sh a échoué"
 fi
 
+# Kubernetes / kubectl
+if [[ -f "${REPO_DIR}/scripts/install-kubernetes.sh" ]]; then
+  bash "${REPO_DIR}/scripts/install-kubernetes.sh" || echo "[vzone] Avertissement: install-kubernetes.sh a échoué"
+fi
+
 install -m 755 "${REPO_DIR}/scripts/vzone-postgresql-ensure.sh" /usr/local/sbin/vzone-postgresql-ensure
 install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-postgresql.service" /etc/systemd/system/vzone-postgresql.service
 

@@ -11,6 +11,7 @@ from apps.core.module_registry import registry
 from apps.core.permissions import IsAdministrator
 from apps.core.serializers import HealthSerializer, ModuleSerializer, VersionSerializer
 from apps.core.services import collect_system_metrics, health_as_dict
+from apps.packages.models import PackageAssignment
 from vzone import __version__
 
 
@@ -73,3 +74,35 @@ class SystemMetricsView(APIView):
 
     def get(self, request: Request) -> Response:
         return Response({"success": True, "data": collect_system_metrics()})
+
+
+class WebTerminalAccessView(APIView):
+    """Retourne l'accès terminal (autorisé si package allow_ssh)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request) -> Response:
+        user = request.user
+        allowed = False
+        reason = "SSH désactivé dans votre package."
+        if getattr(user, "role", None) in {"administrator", "reseller"}:
+            allowed = True
+            reason = "Rôle administrateur/revendeur."
+        else:
+            assignment = (
+                PackageAssignment.objects.filter(user=user).select_related("package").first()
+            )
+            if assignment and assignment.package and assignment.package.allow_ssh:
+                allowed = True
+                reason = "Autorisé par le package."
+        return Response(
+            {
+                "success": True,
+                "data": {
+                    "allowed": allowed,
+                    "reason": reason,
+                    "home_directory": getattr(user, "home_directory", "") or f"/home/{user.username}",
+                    "username": user.username,
+                },
+            }
+        )

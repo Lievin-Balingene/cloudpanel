@@ -87,6 +87,7 @@ INSTALLED_APPS = [
     "apps.firewall",
     "apps.security",
     "apps.wordpress",
+    "apps.kubernetes",
 ]
 
 MIDDLEWARE = [
@@ -285,7 +286,7 @@ VZONE_WEB_STACK = env("VZONE_WEB_STACK", "auto")  # auto | live | mock
 # Modules activés (extensible à l'installation)
 VZONE_ENABLED_MODULES = env_list(
     "VZONE_ENABLED_MODULES",
-    "core,accounts,packages,dns,dashboard,domains,files,ftp,email,databases,python_apps,node_apps,php,git_deploy,docker_mgmt,backups,monitoring,firewall,security,wordpress",
+    "core,accounts,packages,dns,dashboard,domains,files,ftp,email,databases,python_apps,node_apps,php,git_deploy,docker_mgmt,backups,monitoring,firewall,security,wordpress,kubernetes",
 )
 
 # Email / webmail
@@ -341,6 +342,10 @@ VZONE_PHP_CONFIG_DIR = env("VZONE_PHP_CONFIG_DIR", str(VZONE_DATA_ROOT / "php"))
 # WordPress (wp-cli)
 VZONE_WORDPRESS_PROVISION_MODE = env("VZONE_WORDPRESS_PROVISION_MODE", "auto")  # auto | live | mock
 VZONE_WP_CLI = env("VZONE_WP_CLI", "/usr/local/bin/wp")
+
+# Kubernetes
+VZONE_K8S_PROVISION_MODE = env("VZONE_K8S_PROVISION_MODE", "auto")  # auto | live | mock
+VZONE_KUBECTL_BIN = env("VZONE_KUBECTL_BIN", "kubectl")
 
 # Git Deploy
 VZONE_GIT_PROVISION_MODE = env("VZONE_GIT_PROVISION_MODE", "auto")  # auto | live | mock
