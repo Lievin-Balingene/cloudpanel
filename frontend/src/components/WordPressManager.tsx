@@ -1,8 +1,11 @@
 import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Trash2 } from "lucide-react";
+import { ExternalLink, Plus, Trash2 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
 import { runWithProgress } from "@/stores/operations";
+import { IconAction } from "@/components/ui/IconAction";
+import { Modal } from "@/components/ui/Modal";
+import { EmptyState, PageHeader, StatusDot } from "@/components/ui/PageChrome";
 
 interface WpOverview {
   sites: number;
@@ -77,6 +80,7 @@ export function WordPressManager({ title }: { title: string }) {
     user: string;
     password: string;
   } | null>(null);
+  const [installOpen, setInstallOpen] = useState(false);
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["wordpress-overview"] });
@@ -128,6 +132,7 @@ export function WordPressManager({ title }: { title: string }) {
         locale: "fr_FR",
       });
       invalidate();
+      setInstallOpen(false);
     },
     onError: (err: Error) => setError(err.message),
   });
@@ -157,32 +162,13 @@ export function WordPressManager({ title }: { title: string }) {
 
   return (
     <div className="space-y-4 animate-fade-up">
-      <div className="vz-panel p-4">
-        <h1 className="text-xl font-semibold">{title}</h1>
-        <p className="text-sm text-cp-muted">
-          Installez WordPress sur un domaine : MySQL, PHP-FPM et fichiers via WP-CLI.
-        </p>
-        {overview && !overview.wp_cli && overview.provision_mode !== "mock" && (
+      <PageHeader title={title} subtitle="Installez WordPress avec MySQL, PHP-FPM et WP-CLI." stats={[{ label: "Sites", value: overview?.sites ?? "—" }, { label: "Actifs", value: overview?.active ?? "—" }, { label: "Erreurs", value: overview?.error ?? "—" }, { label: "WP-CLI", value: overview?.wp_cli ? "OK" : "—" }]} actions={<button type="button" className="vz-btn-primary" onClick={() => setInstallOpen(true)} disabled={!availableDomains.length}><Plus className="h-4 w-4" /> Installer WordPress</button>} />
+      {overview && !overview.wp_cli && overview.provision_mode !== "mock" && (
           <p className="mt-2 text-sm text-amber-700">
             WP-CLI n’est pas détecté sur le serveur. Exécutez{" "}
             <code className="rounded bg-black/5 px-1">sudo bash /opt/vzone-src/scripts/install-wp-cli.sh</code>
           </p>
         )}
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {[
-          { label: "Sites", value: overview?.sites ?? "—" },
-          { label: "Actifs", value: overview?.active ?? "—" },
-          { label: "Erreurs", value: overview?.error ?? "—" },
-          { label: "WP-CLI", value: overview?.wp_cli ? "OK" : "—" },
-        ].map((card) => (
-          <div key={card.label} className="vz-panel p-4">
-            <p className="text-xs font-semibold uppercase text-cp-muted">{card.label}</p>
-            <p className="mt-1 text-2xl font-semibold text-cp-orange">{card.value}</p>
-          </div>
-        ))}
-      </div>
 
       {error && (
         <p className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-cp-danger">{error}</p>
@@ -209,9 +195,9 @@ export function WordPressManager({ title }: { title: string }) {
         </div>
       )}
 
-      <form className="vz-panel grid gap-2 p-4 md:grid-cols-6" onSubmit={onInstall}>
+      {installOpen && <Modal title="Installer WordPress" subtitle="Un domaine, une base et un compte administrateur seront configurés." onClose={() => setInstallOpen(false)} wide><form className="grid gap-3 sm:grid-cols-2" onSubmit={onInstall}>
         <select
-          className="vz-input md:col-span-2"
+          className="vz-input sm:col-span-2"
           required
           value={form.domain_id}
           onChange={(e) => setForm({ ...form, domain_id: e.target.value })}
@@ -242,11 +228,8 @@ export function WordPressManager({ title }: { title: string }) {
           value={form.admin_email}
           onChange={(e) => setForm({ ...form, admin_email: e.target.value })}
         />
-        <button className="vz-btn-primary" type="submit" disabled={install.isPending || !availableDomains.length}>
-          Installer
-        </button>
         <input
-          className="vz-input md:col-span-2"
+          className="vz-input"
           type="password"
           placeholder="Mot de passe admin (auto si vide)"
           value={form.admin_password}
@@ -261,11 +244,12 @@ export function WordPressManager({ title }: { title: string }) {
           <option value="en_US">English</option>
         </select>
         {!availableDomains.length && (
-          <p className="md:col-span-6 text-sm text-cp-muted">
+          <p className="sm:col-span-2 text-sm text-cp-muted">
             Aucun domaine libre — créez un domaine ou désinstallez un site WordPress existant.
           </p>
         )}
-      </form>
+        <div className="flex justify-end gap-2 sm:col-span-2"><button type="button" className="vz-btn-ghost" onClick={() => setInstallOpen(false)}>Annuler</button><button className="vz-btn-primary" type="submit" disabled={install.isPending || !availableDomains.length}>Installer</button></div>
+      </form></Modal>}
 
       <div className="vz-panel overflow-x-auto">
         <table className="min-w-full text-left text-sm">
@@ -307,35 +291,12 @@ export function WordPressManager({ title }: { title: string }) {
                     {site.database_name || "—"} / {site.db_username || "—"}
                   </p>
                 </td>
-                <td className="px-3 py-3">
-                  <span className="rounded bg-cp-canvas px-2 py-0.5 text-xs uppercase">{site.status}</span>
-                </td>
+                <td className="px-3 py-3"><StatusDot status={site.status} label={site.status} /></td>
                 <td className="px-3 py-3">
                   <div className="flex flex-wrap gap-2">
-                    {site.admin_url && (
-                      <a
-                        className="vz-btn-secondary inline-flex items-center gap-1 text-xs"
-                        href={site.admin_url}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                        wp-admin
-                      </a>
-                    )}
-                    {site.site_url && (
-                      <a
-                        className="vz-btn-secondary text-xs"
-                        href={site.site_url}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Visiter
-                      </a>
-                    )}
-                    <button
-                      type="button"
-                      className="vz-btn-secondary inline-flex items-center gap-1 text-xs text-cp-danger"
+                    {site.admin_url && <a href={site.admin_url} target="_blank" rel="noreferrer" className="inline-flex h-8 w-8 items-center justify-center text-cp-muted" title="Ouvrir wp-admin" aria-label="Ouvrir wp-admin"><ExternalLink className="h-4 w-4" /></a>}
+                    {site.site_url && <a href={site.site_url} target="_blank" rel="noreferrer" className="inline-flex h-8 w-8 items-center justify-center text-cp-muted" title="Visiter le site" aria-label="Visiter le site"><ExternalLink className="h-4 w-4" /></a>}
+                    <IconAction label={`Supprimer WordPress sur ${site.domain_name}`} danger
                       disabled={remove.isPending}
                       onClick={() => {
                         if (
@@ -346,10 +307,7 @@ export function WordPressManager({ title }: { title: string }) {
                           remove.mutate(site.id);
                         }
                       }}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      Supprimer
-                    </button>
+                    ><Trash2 className="h-4 w-4" /></IconAction>
                   </div>
                 </td>
               </tr>
@@ -357,6 +315,7 @@ export function WordPressManager({ title }: { title: string }) {
           </tbody>
         </table>
       </div>
+      {!isLoading && sites.length === 0 && <div className="vz-panel"><EmptyState icon={<Plus className="h-5 w-5" />} message="Aucun site WordPress installé." action={<button className="vz-btn-primary" onClick={() => setInstallOpen(true)} disabled={!availableDomains.length}>Installer WordPress</button>} /></div>}
     </div>
   );
 }

@@ -1,8 +1,12 @@
 import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ExternalLink, Plus, Shield, Trash2 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
 import { runWithProgress } from "@/stores/operations";
 import type { Domain } from "@/types";
+import { IconAction } from "@/components/ui/IconAction";
+import { Modal } from "@/components/ui/Modal";
+import { EmptyState, PageHeader, StatusDot } from "@/components/ui/PageChrome";
 
 export function DomainsManager({ title }: { title: string }) {
   const qc = useQueryClient();
@@ -19,6 +23,9 @@ export function DomainsManager({ title }: { title: string }) {
     parent_id: "",
   });
   const [subLabel, setSubLabel] = useState("www");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [subdomainOpen, setSubdomainOpen] = useState(false);
+  const [redirectOpen, setRedirectOpen] = useState(false);
   const [redirect, setRedirect] = useState({
     source_path: "/",
     destination_url: "https://",
@@ -51,6 +58,7 @@ export function DomainsManager({ title }: { title: string }) {
       void qc.invalidateQueries({ queryKey: ["domains"] });
       void qc.invalidateQueries({ queryKey: ["dns-zones"] });
       void qc.invalidateQueries({ queryKey: ["dashboard-overview"] });
+      setCreateOpen(false);
     },
   });
 
@@ -66,6 +74,7 @@ export function DomainsManager({ title }: { title: string }) {
       setSubLabel("");
       void qc.invalidateQueries({ queryKey: ["domains"] });
       if (created?.id) setSelectedId(created.id);
+      setSubdomainOpen(false);
     },
   });
 
@@ -77,7 +86,10 @@ export function DomainsManager({ title }: { title: string }) {
         body: JSON.stringify(redirect),
       });
     },
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["domains"] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["domains"] });
+      setRedirectOpen(false);
+    },
   });
 
   const issueSsl = useMutation({
@@ -116,69 +128,40 @@ export function DomainsManager({ title }: { title: string }) {
 
   return (
     <div className="space-y-4 animate-fade-up">
-      <div className="vz-panel p-4">
-        <h1 className="text-xl font-semibold">{title}</h1>
-        <p className="text-sm text-cp-muted">
-          Domaines, addon, parked, alias, sous-domaines, redirections et SSL Let&apos;s Encrypt.
+      <PageHeader
+        title={title}
+        subtitle="Domaines, alias, sous-domaines, redirections et certificats Let’s Encrypt."
+        stats={[
+          { label: "Domaines", value: domains.length },
+          { label: "SSL actifs", value: domains.filter((d) => d.ssl?.status === "active").length },
+        ]}
+        actions={
+          <button type="button" className="vz-btn-primary" onClick={() => setCreateOpen(true)}>
+            <Plus className="h-4 w-4" /> Ajouter un domaine
+          </button>
+        }
+      />
+      {domainsLoadError && (
+        <p className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-cp-danger">
+          Impossible de charger les domaines : {(domainsError as Error)?.message || "erreur API"}
         </p>
-        {domainsLoadError && (
-          <p className="mt-2 text-sm text-cp-danger">
-            Impossible de charger les domaines : {(domainsError as Error)?.message || "erreur API"}
-          </p>
-        )}
-      </div>
-
-      <form className="vz-panel grid gap-2 p-4 md:grid-cols-6" onSubmit={onCreate}>
-        <input
-          className="vz-input md:col-span-2"
-          placeholder="exemple.com"
-          required
-          value={form.name}
-          onChange={(e) => setForm({ ...form, name: e.target.value })}
-        />
-        <select
-          className="vz-input"
-          value={form.domain_type}
-          onChange={(e) => setForm({ ...form, domain_type: e.target.value })}
-        >
-          <option value="primary">Primary</option>
-          <option value="addon">Addon</option>
-          <option value="parked">Parked</option>
-          <option value="alias">Alias</option>
-        </select>
-        <input
-          className="vz-input"
-          placeholder="IPv4 (auto si vide)"
-          value={form.ipv4_address}
-          onChange={(e) => setForm({ ...form, ipv4_address: e.target.value })}
-        />
-        <select
-          className="vz-input"
-          value={form.parent_id}
-          onChange={(e) => setForm({ ...form, parent_id: e.target.value })}
-        >
-          <option value="">Parent (parked/alias)</option>
-          {parents.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-        <button className="vz-btn-primary" type="submit" disabled={createDomain.isPending}>
-          {createDomain.isPending ? "Ajout…" : "Ajouter"}
-        </button>
-        {(createDomain.isError || createSub.isError || createRedirect.isError || issueSsl.isError) && (
-          <p className="md:col-span-6 text-sm text-cp-danger">
-            {(createDomain.error as Error)?.message ||
-              (createSub.error as Error)?.message ||
-              (createRedirect.error as Error)?.message ||
-              (issueSsl.error as Error)?.message}
-          </p>
-        )}
-        {createDomain.isSuccess && (
-          <p className="md:col-span-6 text-sm text-emerald-700">Domaine ajouté.</p>
-        )}
-      </form>
+      )}
+      {createOpen && (
+        <Modal title="Ajouter un domaine" subtitle="Une zone DNS est créée automatiquement." onClose={() => setCreateOpen(false)} wide>
+          <form className="grid gap-3 sm:grid-cols-2" onSubmit={onCreate}>
+            <input className="vz-input sm:col-span-2" placeholder="exemple.com" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            <select className="vz-input" value={form.domain_type} onChange={(e) => setForm({ ...form, domain_type: e.target.value })}>
+              <option value="primary">Principal</option><option value="addon">Additionnel</option><option value="parked">Parké</option><option value="alias">Alias</option>
+            </select>
+            <input className="vz-input" placeholder="IPv4 (auto si vide)" value={form.ipv4_address} onChange={(e) => setForm({ ...form, ipv4_address: e.target.value })} />
+            <select className="vz-input sm:col-span-2" value={form.parent_id} onChange={(e) => setForm({ ...form, parent_id: e.target.value })}>
+              <option value="">Parent (parked/alias)</option>{parents.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            {createDomain.isError && <p className="sm:col-span-2 text-sm text-cp-danger">{(createDomain.error as Error)?.message}</p>}
+            <div className="flex justify-end gap-2 sm:col-span-2"><button type="button" className="vz-btn-ghost" onClick={() => setCreateOpen(false)}>Annuler</button><button className="vz-btn-primary" disabled={createDomain.isPending}>Ajouter</button></div>
+          </form>
+        </Modal>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
         <div className="vz-panel overflow-hidden">
@@ -203,6 +186,7 @@ export function DomainsManager({ title }: { title: string }) {
                 </button>
               </li>
             ))}
+            {!isLoading && domains.length === 0 && <li><EmptyState icon={<ExternalLink className="h-5 w-5" />} message="Aucun domaine configuré." /></li>}
           </ul>
         </div>
 
@@ -228,96 +212,27 @@ export function DomainsManager({ title }: { title: string }) {
                     </p>
                   ) : null}
                   {selected.ssl && (
-                    <p className="mt-2 text-sm">
-                      SSL : <strong>{selected.ssl.status}</strong> ({selected.ssl.provider})
+                    <div className="mt-2"><StatusDot status={selected.ssl.status} label={`SSL ${selected.ssl.status} · ${selected.ssl.provider}`} />
                       {selected.ssl.expires_at
-                        ? ` · expire ${new Date(selected.ssl.expires_at).toLocaleDateString("fr-FR")}`
-                        : ""}
-                    </p>
+                        ? <span className="ml-2 text-xs text-cp-muted">expire {new Date(selected.ssl.expires_at).toLocaleDateString("fr-FR")}</span>
+                        : ""}</div>
                   )}
                   {selected.ssl?.last_error ? (
                     <p className="mt-1 text-xs text-cp-danger">{selected.ssl.last_error}</p>
                   ) : null}
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    className="vz-btn-primary"
-                    onClick={() => issueSsl.mutate()}
-                    disabled={issueSsl.isPending}
-                  >
-                    Let&apos;s Encrypt
-                  </button>
-                  <button
-                    type="button"
-                    className="vz-btn-ghost text-cp-danger"
-                    onClick={() => removeDomain.mutate(selected.id)}
-                  >
-                    Supprimer
-                  </button>
+                <div className="flex gap-1">
+                  <IconAction label="Émettre le certificat Let’s Encrypt" onClick={() => issueSsl.mutate()} disabled={issueSsl.isPending}><Shield className="h-4 w-4" /></IconAction>
+                  <IconAction label="Supprimer le domaine" danger onClick={() => removeDomain.mutate(selected.id)}><Trash2 className="h-4 w-4" /></IconAction>
                 </div>
               </div>
             </div>
 
             {["primary", "addon"].includes(selected.domain_type) && (
-              <form
-                className="vz-panel space-y-2 p-4"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  createSub.mutate();
-                }}
-              >
-                <p className="text-sm font-medium text-cp-text">Créer un sous-domaine</p>
-                <p className="text-xs text-cp-muted">
-                  Crée automatiquement{" "}
-                  <code className="font-mono">~/public_html/&lt;label&gt;/</code> avec un{" "}
-                  <code className="font-mono">index.html</code>, et pointe le sous-domaine dessus.
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  <input
-                    className="vz-input max-w-[160px]"
-                    value={subLabel}
-                    onChange={(e) => setSubLabel(e.target.value)}
-                    placeholder="blog"
-                    required
-                  />
-                  <span className="self-center text-sm text-cp-muted">.{selected.name}</span>
-                  <button className="vz-btn-primary" type="submit" disabled={createSub.isPending}>
-                    {createSub.isPending ? "Création…" : "Créer sous-domaine"}
-                  </button>
-                </div>
-                {createSub.isError ? (
-                  <p className="text-xs text-cp-danger">
-                    {(createSub.error as Error)?.message || "Échec création sous-domaine"}
-                  </p>
-                ) : null}
-              </form>
+              <div className="vz-panel flex items-center justify-between p-4"><div><p className="font-medium">Sous-domaines</p><p className="text-xs text-cp-muted">Crée un répertoire et un index pour le nouveau site.</p></div><button className="vz-btn-secondary" onClick={() => setSubdomainOpen(true)}><Plus className="h-4 w-4" /> Ajouter</button></div>
             )}
 
-            <form
-              className="vz-panel grid gap-2 p-4 md:grid-cols-4"
-              onSubmit={(e) => {
-                e.preventDefault();
-                createRedirect.mutate();
-              }}
-            >
-              <input
-                className="vz-input"
-                value={redirect.source_path}
-                onChange={(e) => setRedirect({ ...redirect, source_path: e.target.value })}
-                placeholder="/chemin"
-              />
-              <input
-                className="vz-input md:col-span-2"
-                value={redirect.destination_url}
-                onChange={(e) => setRedirect({ ...redirect, destination_url: e.target.value })}
-                placeholder="https://destination"
-                required
-              />
-              <button className="vz-btn-ghost" type="submit">
-                Ajouter redirection
-              </button>
-            </form>
+            <div className="vz-panel flex items-center justify-between p-4"><div><p className="font-medium">Redirections</p><p className="text-xs text-cp-muted">{selected.redirects.length} configurée{selected.redirects.length > 1 ? "s" : ""}</p></div><button className="vz-btn-secondary" onClick={() => setRedirectOpen(true)}><Plus className="h-4 w-4" /> Ajouter</button></div>
 
             {selected.redirects.length > 0 && (
               <div className="vz-panel overflow-x-auto">
@@ -343,9 +258,11 @@ export function DomainsManager({ title }: { title: string }) {
             )}
           </div>
         ) : (
-          <div className="vz-panel p-6 text-sm text-cp-muted">Aucun domaine sélectionné.</div>
+          <div className="vz-panel"><EmptyState icon={<ExternalLink className="h-5 w-5" />} message="Sélectionnez un domaine pour afficher ses réglages." /></div>
         )}
       </div>
+      {subdomainOpen && selected && <Modal title="Créer un sous-domaine" onClose={() => setSubdomainOpen(false)}><form className="space-y-3" onSubmit={(e) => { e.preventDefault(); createSub.mutate(); }}><p className="text-sm text-cp-muted">Le sous-domaine pointera vers son propre répertoire.</p><div className="flex items-center gap-2"><input className="vz-input" value={subLabel} onChange={(e) => setSubLabel(e.target.value)} placeholder="blog" required /><span className="text-sm text-cp-muted">.{selected.name}</span></div>{createSub.isError && <p className="text-sm text-cp-danger">{(createSub.error as Error)?.message}</p>}<div className="flex justify-end gap-2"><button type="button" className="vz-btn-ghost" onClick={() => setSubdomainOpen(false)}>Annuler</button><button className="vz-btn-primary" disabled={createSub.isPending}>Créer</button></div></form></Modal>}
+      {redirectOpen && selected && <Modal title="Ajouter une redirection" onClose={() => setRedirectOpen(false)}><form className="space-y-3" onSubmit={(e) => { e.preventDefault(); createRedirect.mutate(); }}><input className="vz-input w-full" value={redirect.source_path} onChange={(e) => setRedirect({ ...redirect, source_path: e.target.value })} placeholder="/chemin" /><input className="vz-input w-full" value={redirect.destination_url} onChange={(e) => setRedirect({ ...redirect, destination_url: e.target.value })} placeholder="https://destination" required />{createRedirect.isError && <p className="text-sm text-cp-danger">{(createRedirect.error as Error)?.message}</p>}<div className="flex justify-end gap-2"><button type="button" className="vz-btn-ghost" onClick={() => setRedirectOpen(false)}>Annuler</button><button className="vz-btn-primary" disabled={createRedirect.isPending}>Ajouter</button></div></form></Modal>}
     </div>
   );
 }

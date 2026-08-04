@@ -1,7 +1,11 @@
 import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { FilePlus2, Globe2, Plus, ShieldCheck, ShieldOff, Trash2 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
 import type { DnsRecord, DnsZone } from "@/types";
+import { IconAction } from "@/components/ui/IconAction";
+import { Modal } from "@/components/ui/Modal";
+import { EmptyState, PageHeader, StatusDot } from "@/components/ui/PageChrome";
 
 export function DnsManager({ title }: { title: string }) {
   const qc = useQueryClient();
@@ -11,6 +15,7 @@ export function DnsManager({ title }: { title: string }) {
   });
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [zoneName, setZoneName] = useState("");
+  const [createKind, setCreateKind] = useState<"zone" | "record" | null>(null);
   const [record, setRecord] = useState({
     record_type: "A",
     name: "www",
@@ -32,6 +37,7 @@ export function DnsManager({ title }: { title: string }) {
       }),
     onSuccess: () => {
       setZoneName("");
+      setCreateKind(null);
       void qc.invalidateQueries({ queryKey: ["dns-zones"] });
     },
   });
@@ -53,7 +59,10 @@ export function DnsManager({ title }: { title: string }) {
         body: JSON.stringify(payload),
       });
     },
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["dns-zones"] }),
+    onSuccess: () => {
+      setCreateKind(null);
+      void qc.invalidateQueries({ queryKey: ["dns-zones"] });
+    },
   });
 
   const toggleDnssec = useMutation({
@@ -85,25 +94,16 @@ export function DnsManager({ title }: { title: string }) {
 
   return (
     <div className="space-y-4 animate-fade-up">
-      <div className="vz-panel p-4">
-        <h1 className="text-xl font-semibold">{title}</h1>
-        <p className="text-sm text-cp-muted">
-          A, AAAA, CNAME, TXT, MX, SRV, CAA, NS · DNSSEC · serial SOA auto.
-        </p>
-      </div>
-
-      <form className="vz-panel flex flex-wrap gap-2 p-4" onSubmit={onCreateZone}>
-        <input
-          className="vz-input max-w-sm flex-1"
-          placeholder="exemple.com"
-          required
-          value={zoneName}
-          onChange={(e) => setZoneName(e.target.value)}
-        />
-        <button className="vz-btn-primary" type="submit">
-          Créer la zone
-        </button>
-      </form>
+      <PageHeader
+        title={title}
+        subtitle="Zones DNS, enregistrements, DNSSEC et numéros de série SOA automatiques."
+        stats={[
+          { label: "Zones", value: zones.length },
+          { label: "Enregistrements", value: zones.reduce((total, zone) => total + zone.record_count, 0) },
+          { label: "DNSSEC actif", value: zones.filter((zone) => zone.dnssec_enabled).length },
+        ]}
+        actions={<button type="button" className="vz-btn-primary" onClick={() => setCreateKind("zone")}><Plus className="h-4 w-4" />Créer une zone</button>}
+      />
 
       <div className="grid gap-4 lg:grid-cols-[240px_1fr]">
         <div className="vz-panel overflow-hidden">
@@ -129,6 +129,7 @@ export function DnsManager({ title }: { title: string }) {
               </li>
             ))}
           </ul>
+          {!isLoading && zones.length === 0 && <EmptyState icon={<Globe2 className="h-8 w-8" />} message="Aucune zone DNS." action={<button type="button" className="vz-btn-primary" onClick={() => setCreateKind("zone")}><Plus className="h-4 w-4" />Créer une zone</button>} />}
         </div>
 
         <div className="space-y-3">
@@ -137,55 +138,10 @@ export function DnsManager({ title }: { title: string }) {
               <div className="vz-panel flex flex-wrap items-center justify-between gap-2 p-4">
                 <div>
                   <p className="font-semibold">{selected.name}</p>
-                  <p className="text-xs text-cp-muted">
-                    Propriétaire {selected.owner_username} · DNSSEC{" "}
-                    {selected.dnssec_enabled ? "ON" : "OFF"}
-                  </p>
+                  <div className="mt-1 flex items-center gap-2 text-xs text-cp-muted"><span>Propriétaire {selected.owner_username}</span><StatusDot status={selected.dnssec_enabled ? "active" : "inactive"} label={`DNSSEC ${selected.dnssec_enabled ? "actif" : "inactif"}`} /></div>
                 </div>
-                <button
-                  type="button"
-                  className="vz-btn-ghost"
-                  onClick={() => toggleDnssec.mutate(!selected.dnssec_enabled)}
-                >
-                  {selected.dnssec_enabled ? "Désactiver DNSSEC" : "Activer DNSSEC"}
-                </button>
+                <div className="flex items-center gap-2"><button type="button" className="vz-btn-primary" onClick={() => setCreateKind("record")}><FilePlus2 className="h-4 w-4" />Ajouter un enregistrement</button><IconAction label={selected.dnssec_enabled ? "Désactiver DNSSEC" : "Activer DNSSEC"} onClick={() => toggleDnssec.mutate(!selected.dnssec_enabled)}>{selected.dnssec_enabled ? <ShieldOff className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}</IconAction></div>
               </div>
-
-              <form className="vz-panel grid gap-2 p-4 md:grid-cols-6" onSubmit={onCreateRecord}>
-                <select
-                  className="vz-input"
-                  value={record.record_type}
-                  onChange={(e) => setRecord({ ...record, record_type: e.target.value })}
-                >
-                  {["A", "AAAA", "CNAME", "TXT", "MX", "SRV", "CAA", "NS"].map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  className="vz-input"
-                  value={record.name}
-                  onChange={(e) => setRecord({ ...record, name: e.target.value })}
-                  placeholder="nom"
-                />
-                <input
-                  className="vz-input md:col-span-2"
-                  value={record.content}
-                  onChange={(e) => setRecord({ ...record, content: e.target.value })}
-                  placeholder="contenu"
-                  required
-                />
-                <input
-                  className="vz-input"
-                  type="number"
-                  value={record.ttl}
-                  onChange={(e) => setRecord({ ...record, ttl: Number(e.target.value) })}
-                />
-                <button className="vz-btn-primary" type="submit">
-                  Ajouter
-                </button>
-              </form>
 
               <div className="vz-panel overflow-x-auto">
                 <table className="min-w-full text-left text-sm">
@@ -200,6 +156,7 @@ export function DnsManager({ title }: { title: string }) {
                     </tr>
                   </thead>
                   <tbody>
+                    {selected.records.length === 0 && <tr><td colSpan={6}><EmptyState icon={<FilePlus2 className="h-8 w-8" />} message="Aucun enregistrement dans cette zone." action={<button type="button" className="vz-btn-primary" onClick={() => setCreateKind("record")}><Plus className="h-4 w-4" />Ajouter un enregistrement</button>} /></td></tr>}
                     {selected.records.map((rec) => (
                       <tr key={rec.id} className="border-t border-cp-border dark:border-ink-800">
                         <td className="px-3 py-2 font-mono text-xs">{rec.record_type}</td>
@@ -207,15 +164,7 @@ export function DnsManager({ title }: { title: string }) {
                         <td className="px-3 py-2 font-mono text-xs">{rec.content}</td>
                         <td className="px-3 py-2">{rec.ttl ?? "—"}</td>
                         <td className="px-3 py-2">{rec.priority ?? "—"}</td>
-                        <td className="px-3 py-2 text-right">
-                          <button
-                            type="button"
-                            className="text-cp-danger hover:underline"
-                            onClick={() => deleteRecord.mutate(rec)}
-                          >
-                            Supprimer
-                          </button>
-                        </td>
+                        <td className="px-3 py-2 text-right"><IconAction label="Supprimer l’enregistrement" danger onClick={() => deleteRecord.mutate(rec)}><Trash2 className="h-4 w-4" /></IconAction></td>
                       </tr>
                     ))}
                   </tbody>
@@ -223,10 +172,12 @@ export function DnsManager({ title }: { title: string }) {
               </div>
             </>
           ) : (
-            <div className="vz-panel p-6 text-sm text-cp-muted">Aucune zone sélectionnée.</div>
+            <div className="vz-panel"><EmptyState icon={<Globe2 className="h-8 w-8" />} message="Sélectionnez ou créez une zone DNS." action={<button type="button" className="vz-btn-primary" onClick={() => setCreateKind("zone")}><Plus className="h-4 w-4" />Créer une zone</button>} /></div>
           )}
         </div>
       </div>
+      {createKind === "zone" && <Modal title="Nouvelle zone DNS" subtitle="La zone et son SOA seront créés automatiquement." onClose={() => setCreateKind(null)}><form className="space-y-3" onSubmit={onCreateZone}><div><label className="mb-1 block text-xs font-medium text-cp-muted">Nom de domaine</label><input className="vz-input" placeholder="exemple.com" required autoFocus value={zoneName} onChange={(e) => setZoneName(e.target.value)} /></div><div className="flex justify-end gap-2"><button type="button" className="vz-btn-ghost" onClick={() => setCreateKind(null)}>Annuler</button><button className="vz-btn-primary" type="submit" disabled={createZone.isPending}>{createZone.isPending ? "Création…" : "Créer"}</button></div></form></Modal>}
+      {createKind === "record" && selected && <Modal title="Nouvel enregistrement" subtitle={selected.name} onClose={() => setCreateKind(null)} wide><form className="grid gap-3 sm:grid-cols-2" onSubmit={onCreateRecord}><div><label className="mb-1 block text-xs font-medium text-cp-muted">Type</label><select className="vz-input" value={record.record_type} onChange={(e) => setRecord({ ...record, record_type: e.target.value })}>{["A", "AAAA", "CNAME", "TXT", "MX", "SRV", "CAA", "NS"].map((type) => <option key={type} value={type}>{type}</option>)}</select></div><div><label className="mb-1 block text-xs font-medium text-cp-muted">Nom</label><input className="vz-input" value={record.name} onChange={(e) => setRecord({ ...record, name: e.target.value })} placeholder="www" /></div><div className="sm:col-span-2"><label className="mb-1 block text-xs font-medium text-cp-muted">Contenu</label><input className="vz-input" required value={record.content} onChange={(e) => setRecord({ ...record, content: e.target.value })} /></div><div><label className="mb-1 block text-xs font-medium text-cp-muted">TTL</label><input className="vz-input" type="number" value={record.ttl} onChange={(e) => setRecord({ ...record, ttl: Number(e.target.value) })} /></div>{(record.record_type === "MX" || record.record_type === "SRV") && <div><label className="mb-1 block text-xs font-medium text-cp-muted">Priorité</label><input className="vz-input" type="number" value={record.priority} onChange={(e) => setRecord({ ...record, priority: Number(e.target.value) })} /></div>}<div className="flex justify-end gap-2 sm:col-span-2"><button type="button" className="vz-btn-ghost" onClick={() => setCreateKind(null)}>Annuler</button><button className="vz-btn-primary" type="submit" disabled={createRecord.isPending}>{createRecord.isPending ? "Ajout…" : "Ajouter"}</button></div></form></Modal>}
     </div>
   );
 }

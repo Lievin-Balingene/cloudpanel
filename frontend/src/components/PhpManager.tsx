@@ -1,6 +1,10 @@
 import { FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Plus, Trash2 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
+import { IconAction } from "@/components/ui/IconAction";
+import { Modal } from "@/components/ui/Modal";
+import { EmptyState, PageHeader, StatusDot } from "@/components/ui/PageChrome";
 
 interface PhpOverview {
   versions: number;
@@ -53,6 +57,7 @@ export function PhpManager({ title }: { title: string }) {
     memory_limit: "256M",
   });
   const [error, setError] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["php-overview"] });
@@ -79,6 +84,7 @@ export function PhpManager({ title }: { title: string }) {
       });
       setError(null);
       invalidate();
+      setCreateOpen(false);
     },
     onError: (err: Error) => setError(err.message),
   });
@@ -115,26 +121,7 @@ export function PhpManager({ title }: { title: string }) {
 
   return (
     <div className="space-y-4 animate-fade-up">
-      <div className="vz-panel p-4">
-        <h1 className="text-xl font-semibold">{title}</h1>
-        <p className="text-sm text-cp-muted">
-          MultiPHP — versions disponibles, sélecteur par chemin, .user.ini et pools FPM.
-        </p>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {[
-          { label: "Versions", value: overview?.versions ?? "—" },
-          { label: "Défaut", value: overview?.default_version ?? "—" },
-          { label: "Sélecteurs", value: overview?.selectors ?? "—" },
-          { label: "Actifs", value: overview?.active_selectors ?? "—" },
-        ].map((card) => (
-          <div key={card.label} className="vz-panel p-4">
-            <p className="text-xs font-semibold uppercase text-cp-muted">{card.label}</p>
-            <p className="mt-1 text-2xl font-semibold text-cp-orange">{card.value}</p>
-          </div>
-        ))}
-      </div>
+      <PageHeader title={title} subtitle="Versions PHP et sélecteurs par chemin, avec pools FPM et .user.ini." stats={[{ label: "Versions", value: overview?.versions ?? "—" }, { label: "Défaut", value: overview?.default_version ?? "—" }, { label: "Sélecteurs actifs", value: overview?.active_selectors ?? "—" }]} actions={<button className="vz-btn-primary" type="button" onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" /> Créer un sélecteur</button>} />
 
       {error && (
         <p className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-cp-danger">{error}</p>
@@ -160,14 +147,14 @@ export function PhpManager({ title }: { title: string }) {
                   {v.is_default ? " (défaut)" : ""}
                 </td>
                 <td className="px-3 py-2 font-mono text-xs text-cp-muted">{v.binary_path || "—"}</td>
-                <td className="px-3 py-2">{v.is_available ? "disponible" : "indisponible"}</td>
+                <td className="px-3 py-2"><StatusDot status={v.is_available ? "active" : "inactive"} label={v.is_available ? "Disponible" : "Indisponible"} /></td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      <form className="vz-panel grid gap-2 p-4 md:grid-cols-6" onSubmit={onCreate}>
+      {createOpen && <Modal title="Créer un sélecteur PHP" onClose={() => setCreateOpen(false)} wide><form className="grid gap-3 sm:grid-cols-2" onSubmit={onCreate}>
         <select
           className="vz-input"
           value={defaultVersionId}
@@ -208,10 +195,8 @@ export function PhpManager({ title }: { title: string }) {
           value={form.memory_limit}
           onChange={(e) => setForm({ ...form, memory_limit: e.target.value })}
         />
-        <button className="vz-btn-primary" type="submit" disabled={create.isPending}>
-          Créer sélecteur
-        </button>
-      </form>
+        <div className="flex justify-end gap-2 sm:col-span-2"><button type="button" className="vz-btn-ghost" onClick={() => setCreateOpen(false)}>Annuler</button><button className="vz-btn-primary" type="submit" disabled={create.isPending}>Créer</button></div>
+      </form></Modal>}
 
       <div className="vz-panel overflow-x-auto">
         <table className="min-w-full text-left text-sm">
@@ -256,26 +241,16 @@ export function PhpManager({ title }: { title: string }) {
                 <td className="px-3 py-2">{sel.handler}</td>
                 <td className="px-3 py-2">{sel.domain_name || "—"}</td>
                 <td className="px-3 py-2">
-                  <button
-                    type="button"
-                    className="text-cp-danger hover:underline"
-                    onClick={() => {
+                  <IconAction label={`Supprimer le sélecteur ${sel.relative_path}`} danger onClick={() => {
                       if (window.confirm(`Supprimer le sélecteur ${sel.relative_path} ?`)) {
                         remove.mutate(sel.id);
                       }
-                    }}
-                  >
-                    Supprimer
-                  </button>
+                    }}><Trash2 className="h-4 w-4" /></IconAction>
                 </td>
               </tr>
             ))}
             {!isLoading && selectors.length === 0 && (
-              <tr>
-                <td className="px-3 py-4 text-cp-muted" colSpan={5}>
-                  Aucun sélecteur PHP.
-                </td>
-              </tr>
+              <tr><td colSpan={5}><EmptyState icon={<Plus className="h-5 w-5" />} message="Aucun sélecteur PHP." /></td></tr>
             )}
           </tbody>
         </table>

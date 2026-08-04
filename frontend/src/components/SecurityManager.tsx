@@ -1,6 +1,10 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Plus, Trash2, Unlock } from "lucide-react";
 import { apiRequest } from "@/lib/api";
+import { IconAction } from "@/components/ui/IconAction";
+import { Modal } from "@/components/ui/Modal";
+import { PageHeader, StatusDot, Tabs } from "@/components/ui/PageChrome";
 
 interface SecurityOverview {
   policy: {
@@ -83,6 +87,8 @@ export function SecurityManager({ title }: { title: string }) {
   });
   const [ipForm, setIpForm] = useState({ cidr: "", list_type: "block", notes: "" });
   const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState("policy");
+  const [ipOpen, setIpOpen] = useState(false);
 
   useEffect(() => {
     if (!policy) return;
@@ -129,6 +135,7 @@ export function SecurityManager({ title }: { title: string }) {
     onSuccess: () => {
       setIpForm({ cidr: "", list_type: "block", notes: "" });
       invalidate();
+      setIpOpen(false);
     },
     onError: (err: Error) => setError(err.message),
   });
@@ -156,26 +163,7 @@ export function SecurityManager({ title }: { title: string }) {
 
   return (
     <div className="space-y-4 animate-fade-up">
-      <div className="vz-panel p-4">
-        <h1 className="text-xl font-semibold">{title}</h1>
-        <p className="text-sm text-cp-muted">
-          Politique MDP, lockout login, allow/blocklist IP panel (distinct du Firewall OS).
-        </p>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {[
-          { label: "2FA actifs", value: overview?.users_2fa_enabled ?? "—" },
-          { label: "Lockouts", value: overview?.lockouts_active ?? "—" },
-          { label: "Échecs 24h", value: overview?.login_failures_24h ?? "—" },
-          { label: "Règles IP", value: overview?.ip_rules ?? "—" },
-        ].map((card) => (
-          <div key={card.label} className="vz-panel p-4">
-            <p className="text-xs font-semibold uppercase text-cp-muted">{card.label}</p>
-            <p className="mt-1 text-2xl font-semibold text-cp-orange">{card.value}</p>
-          </div>
-        ))}
-      </div>
+      <PageHeader title={title} subtitle="Politique de connexion, verrouillages et listes IP du panneau." stats={[{ label: "2FA actifs", value: overview?.users_2fa_enabled ?? "—" }, { label: "Lockouts", value: overview?.lockouts_active ?? "—" }, { label: "Échecs 24 h", value: overview?.login_failures_24h ?? "—" }, { label: "Règles IP", value: overview?.ip_rules ?? "—" }]} actions={<button className="vz-btn-primary" type="button" onClick={() => setIpOpen(true)}><Plus className="h-4 w-4" /> Ajouter une IP</button>} />
 
       {error && (
         <div className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
@@ -183,7 +171,8 @@ export function SecurityManager({ title }: { title: string }) {
         </div>
       )}
 
-      <form onSubmit={onPolicy} className="vz-panel grid gap-3 p-4 md:grid-cols-4">
+      <div className="vz-panel overflow-hidden"><Tabs tabs={[{ id: "policy", label: "Politique" }, { id: "ip", label: "Règles IP", count: ipRules.length }, { id: "lockouts", label: "Lockouts", count: lockouts.length }, { id: "attempts", label: "Connexions" }]} active={tab} onChange={setTab} />
+      {tab === "policy" && <form onSubmit={onPolicy} className="grid gap-3 p-4 md:grid-cols-4">
         <h2 className="md:col-span-4 text-sm font-semibold">Politique</h2>
         <label className="text-sm">
           Longueur min MDP
@@ -258,41 +247,13 @@ export function SecurityManager({ title }: { title: string }) {
           2FA obligatoire WHM
         </label>
         <div className="md:col-span-4">
-          <button type="submit" className="rounded bg-cp-orange px-3 py-2 text-sm font-medium text-white">
+          <button type="submit" className="vz-btn-primary">
             Enregistrer la politique
           </button>
         </div>
-      </form>
-
-      <form onSubmit={onIp} className="vz-panel grid gap-3 p-4 md:grid-cols-4">
+      </form>}
+      {tab === "ip" && <div className="overflow-x-auto">
         <h2 className="md:col-span-4 text-sm font-semibold">Règle IP panel</h2>
-        <label className="text-sm md:col-span-2">
-          CIDR
-          <input
-            className="mt-1 w-full rounded border border-cp-border bg-transparent px-2 py-1.5 dark:border-ink-700"
-            value={ipForm.cidr}
-            onChange={(e) => setIpForm((f) => ({ ...f, cidr: e.target.value }))}
-            placeholder="203.0.113.0/24"
-            required
-          />
-        </label>
-        <label className="text-sm">
-          Type
-          <select
-            className="mt-1 w-full rounded border border-cp-border bg-transparent px-2 py-1.5 dark:border-ink-700"
-            value={ipForm.list_type}
-            onChange={(e) => setIpForm((f) => ({ ...f, list_type: e.target.value }))}
-          >
-            <option value="block">Block</option>
-            <option value="allow">Allow</option>
-          </select>
-        </label>
-        <div className="flex items-end">
-          <button type="submit" className="w-full rounded border border-cp-border px-3 py-2 text-sm dark:border-ink-700">
-            Ajouter
-          </button>
-        </div>
-        <div className="md:col-span-4 overflow-x-auto">
           <table className="min-w-full text-sm">
             <tbody>
               {ipRules.map((r) => (
@@ -300,19 +261,14 @@ export function SecurityManager({ title }: { title: string }) {
                   <td className="px-2 py-2 font-medium">{r.cidr}</td>
                   <td className="px-2 py-2">{r.list_type}</td>
                   <td className="px-2 py-2">
-                    <button type="button" className="text-xs text-red-600 hover:underline" onClick={() => removeIp.mutate(r.id)}>
-                      Supprimer
-                    </button>
+                    <IconAction label={`Supprimer ${r.cidr}`} danger onClick={() => removeIp.mutate(r.id)}><Trash2 className="h-4 w-4" /></IconAction>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
-      </form>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <div className="vz-panel overflow-x-auto">
+      </div>}
+      {tab === "lockouts" && <div className="overflow-x-auto">
           <div className="border-b border-cp-border px-4 py-3 text-sm font-semibold dark:border-ink-800">Lockouts</div>
           <table className="min-w-full text-sm">
             <tbody>
@@ -328,16 +284,14 @@ export function SecurityManager({ title }: { title: string }) {
                     <div className="text-xs text-cp-muted">{l.attempts} tentatives</div>
                   </td>
                   <td className="px-3 py-2">
-                    <button type="button" className="text-xs text-cp-orange hover:underline" onClick={() => unlock.mutate(l.key)}>
-                      Déverrouiller
-                    </button>
+                    <IconAction label={`Déverrouiller ${l.key}`} onClick={() => unlock.mutate(l.key)}><Unlock className="h-4 w-4" /></IconAction>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
-        <div className="vz-panel overflow-x-auto">
+      </div>}
+      {tab === "attempts" && <div className="overflow-x-auto">
           <div className="border-b border-cp-border px-4 py-3 text-sm font-semibold dark:border-ink-800">
             Tentatives récentes
           </div>
@@ -349,13 +303,13 @@ export function SecurityManager({ title }: { title: string }) {
                     <div className="font-medium">{a.email || "—"}</div>
                     <div className="text-xs text-cp-muted">{a.ip_address}</div>
                   </td>
-                  <td className="px-3 py-2">{a.success ? "ok" : "échec"}</td>
+                  <td className="px-3 py-2"><StatusDot status={a.success ? "ok" : "error"} label={a.success ? "Réussie" : "Échec"} /></td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
-      </div>
+      </div>}</div>
+      {ipOpen && <Modal title="Ajouter une règle IP" onClose={() => setIpOpen(false)}><form onSubmit={onIp} className="space-y-3"><input className="vz-input w-full" value={ipForm.cidr} onChange={(e) => setIpForm((f) => ({ ...f, cidr: e.target.value }))} placeholder="203.0.113.0/24" required /><select className="vz-input w-full" value={ipForm.list_type} onChange={(e) => setIpForm((f) => ({ ...f, list_type: e.target.value }))}><option value="block">Bloquer</option><option value="allow">Autoriser</option></select><input className="vz-input w-full" value={ipForm.notes} onChange={(e) => setIpForm((f) => ({ ...f, notes: e.target.value }))} placeholder="Note (optionnelle)" /><div className="flex justify-end gap-2"><button type="button" className="vz-btn-ghost" onClick={() => setIpOpen(false)}>Annuler</button><button className="vz-btn-primary" disabled={addIp.isPending}>Ajouter</button></div></form></Modal>}
     </div>
   );
 }

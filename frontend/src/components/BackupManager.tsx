@@ -1,7 +1,11 @@
 import { FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CalendarClock, Download, History, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
 import { runWithProgress } from "@/stores/operations";
+import { IconAction } from "@/components/ui/IconAction";
+import { Modal } from "@/components/ui/Modal";
+import { EmptyState, PageHeader, StatusDot, Tabs } from "@/components/ui/PageChrome";
 
 interface BackupOverview {
   archives: number;
@@ -74,6 +78,8 @@ export function BackupManager({ title }: { title: string }) {
   });
   const [downloadInfo, setDownloadInfo] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState<"archives" | "schedules">("archives");
+  const [createKind, setCreateKind] = useState<"backup" | "schedule" | null>(null);
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["backup-overview"] });
@@ -118,6 +124,7 @@ export function BackupManager({ title }: { title: string }) {
         includes_email: true,
       });
       setError(null);
+      setCreateKind(null);
       invalidate();
     },
     onError: (err: Error) => setError(err.message),
@@ -167,6 +174,7 @@ export function BackupManager({ title }: { title: string }) {
       }),
     onSuccess: () => {
       setError(null);
+      setCreateKind(null);
       invalidate();
     },
     onError: (err: Error) => setError(err.message),
@@ -189,27 +197,18 @@ export function BackupManager({ title }: { title: string }) {
 
   return (
     <div className="space-y-4 animate-fade-up">
-      <div className="vz-panel p-4">
-        <h1 className="text-xl font-semibold">{title}</h1>
-        <p className="text-sm text-cp-muted">
-          Sauvegardes compte — création, restauration, planning et quotas ({overview?.max_backups ?? "—"} max).
-        </p>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        {[
+      <PageHeader
+        title={title}
+        subtitle={`Sauvegardes du compte, restauration et planification (${overview?.max_backups ?? "—"} archives maximum).`}
+        stats={[
           { label: "Archives", value: overview?.archives ?? "—" },
           { label: "Terminées", value: overview?.completed ?? "—" },
           { label: "Restaurées", value: overview?.restored ?? "—" },
           { label: "Échouées", value: overview?.failed ?? "—" },
           { label: "Volume", value: overview ? formatBytes(overview.total_size_bytes) : "—" },
-        ].map((card) => (
-          <div key={card.label} className="vz-panel p-4">
-            <p className="text-xs font-semibold uppercase text-cp-muted">{card.label}</p>
-            <p className="mt-1 text-2xl font-semibold text-cp-orange">{card.value}</p>
-          </div>
-        ))}
-      </div>
+        ]}
+        actions={<button type="button" className="vz-btn-primary" onClick={() => setCreateKind(tab === "schedules" ? "schedule" : "backup")}><Plus className="h-4 w-4" />{tab === "schedules" ? "Créer un planning" : "Créer une sauvegarde"}</button>}
+      />
 
       {error && (
         <div className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
@@ -222,60 +221,9 @@ export function BackupManager({ title }: { title: string }) {
         </div>
       )}
 
-      <form onSubmit={onCreate} className="vz-panel grid gap-3 p-4 md:grid-cols-4">
-        <label className="text-sm">
-          Type
-          <select
-            className="mt-1 w-full rounded border border-cp-border bg-transparent px-2 py-1.5 dark:border-ink-700"
-            value={form.backup_type}
-            onChange={(e) => setForm((f) => ({ ...f, backup_type: e.target.value }))}
-          >
-            <option value="full">Complète</option>
-            <option value="home">Fichiers</option>
-            <option value="databases">Bases</option>
-            <option value="email">Email</option>
-            <option value="custom">Personnalisée</option>
-          </select>
-        </label>
-        <label className="text-sm md:col-span-2">
-          Libellé
-          <input
-            className="mt-1 w-full rounded border border-cp-border bg-transparent px-2 py-1.5 dark:border-ink-700"
-            value={form.label}
-            onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
-            placeholder="optionnel"
-          />
-        </label>
-        <div className="flex items-end">
-          <button
-            type="submit"
-            className="w-full rounded bg-cp-orange px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
-            disabled={create.isPending}
-          >
-            {create.isPending ? "Création…" : "Créer une sauvegarde"}
-          </button>
-        </div>
-        {form.backup_type === "custom" && (
-          <div className="md:col-span-4 flex flex-wrap gap-4 text-sm">
-            {[
-              ["includes_home", "Fichiers (home)"],
-              ["includes_databases", "Bases"],
-              ["includes_email", "Email"],
-            ].map(([key, label]) => (
-              <label key={key} className="inline-flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={Boolean(form[key as keyof typeof form])}
-                  onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.checked }))}
-                />
-                {label}
-              </label>
-            ))}
-          </div>
-        )}
-      </form>
-
-      <div className="vz-panel overflow-x-auto">
+      <div className="vz-panel overflow-hidden">
+        <Tabs tabs={[{ id: "archives", label: "Sauvegardes", count: overview?.archives ?? archives.length, icon: <History className="h-3.5 w-3.5" /> }, { id: "schedules", label: "Planifications", count: overview?.schedules ?? schedules.length, icon: <CalendarClock className="h-3.5 w-3.5" /> }]} active={tab} onChange={(id) => setTab(id as "archives" | "schedules")} />
+        {tab === "archives" && <div className="overflow-x-auto">
         <table className="min-w-full text-sm">
           <thead className="bg-cp-canvas text-left text-xs uppercase text-cp-muted dark:bg-ink-900">
             <tr>
@@ -296,9 +244,7 @@ export function BackupManager({ title }: { title: string }) {
             )}
             {!isLoading && archives.length === 0 && (
               <tr>
-                <td className="px-3 py-4 text-cp-muted" colSpan={5}>
-                  Aucune sauvegarde.
-                </td>
+                <td colSpan={5}><EmptyState icon={<History className="h-8 w-8" />} message="Aucune sauvegarde." action={<button type="button" className="vz-btn-primary" onClick={() => setCreateKind("backup")}><Plus className="h-4 w-4" />Créer une sauvegarde</button>} /></td>
               </tr>
             )}
             {archives.map((a) => (
@@ -309,110 +255,22 @@ export function BackupManager({ title }: { title: string }) {
                 </td>
                 <td className="px-3 py-2">{a.backup_type}</td>
                 <td className="px-3 py-2">
-                  <span className="rounded bg-cp-orange-soft px-2 py-0.5 text-xs dark:bg-ink-800">{a.status}</span>
+                  <StatusDot status={a.status} />
                   {a.last_error && <div className="mt-1 text-xs text-red-600">{a.last_error}</div>}
                 </td>
                 <td className="px-3 py-2">{formatBytes(a.size_bytes)}</td>
                 <td className="px-3 py-2">
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      className="text-xs text-cp-orange hover:underline"
-                      onClick={() => restore.mutate(a.id)}
-                    >
-                      Restaurer
-                    </button>
-                    <button
-                      type="button"
-                      className="text-xs text-cp-orange hover:underline"
-                      onClick={() => download.mutate(a.id)}
-                    >
-                      Infos DL
-                    </button>
-                    <button
-                      type="button"
-                      className="text-xs text-red-600 hover:underline"
-                      onClick={() => remove.mutate(a.id)}
-                    >
-                      Supprimer
-                    </button>
-                  </div>
+                  <div className="flex flex-wrap gap-0.5"><IconAction label="Restaurer" onClick={() => restore.mutate(a.id)}><RotateCcw className="h-4 w-4" /></IconAction><IconAction label="Afficher les informations de téléchargement" onClick={() => download.mutate(a.id)}><Download className="h-4 w-4" /></IconAction><IconAction label="Supprimer" danger onClick={() => remove.mutate(a.id)}><Trash2 className="h-4 w-4" /></IconAction></div>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
+        </div>}
+        {tab === "schedules" && <div>{schedules.length === 0 ? <EmptyState icon={<CalendarClock className="h-8 w-8" />} message="Aucune planification automatique." action={<button type="button" className="vz-btn-primary" onClick={() => setCreateKind("schedule")}><Plus className="h-4 w-4" />Créer un planning</button>} /> : <div className="divide-y divide-cp-border dark:divide-ink-800">{schedules.map((schedule) => <div key={schedule.id} className="flex items-center justify-between gap-3 px-4 py-3"><div><p className="font-medium">{schedule.frequency} à {schedule.hour} h</p><div className="mt-1 flex items-center gap-2 text-xs text-cp-muted"><StatusDot status={schedule.is_active ? "active" : "inactive"} /><span>{schedule.last_run_at ? `Dernière exécution : ${new Date(schedule.last_run_at).toLocaleString("fr-FR")}` : "Jamais exécutée"}</span></div></div><IconAction label="Supprimer la planification" danger onClick={() => deleteSchedule.mutate(schedule.id)}><Trash2 className="h-4 w-4" /></IconAction></div>)}</div>}</div>}
       </div>
-
-      <form onSubmit={onSchedule} className="vz-panel grid gap-3 p-4 md:grid-cols-5">
-        <h2 className="md:col-span-5 text-sm font-semibold">Planning automatique</h2>
-        <label className="text-sm">
-          Fréquence
-          <select
-            className="mt-1 w-full rounded border border-cp-border bg-transparent px-2 py-1.5 dark:border-ink-700"
-            value={scheduleForm.frequency}
-            onChange={(e) => setScheduleForm((f) => ({ ...f, frequency: e.target.value }))}
-          >
-            <option value="daily">Quotidien</option>
-            <option value="weekly">Hebdomadaire</option>
-            <option value="monthly">Mensuel</option>
-          </select>
-        </label>
-        <label className="text-sm">
-          Heure
-          <input
-            type="number"
-            min={0}
-            max={23}
-            className="mt-1 w-full rounded border border-cp-border bg-transparent px-2 py-1.5 dark:border-ink-700"
-            value={scheduleForm.hour}
-            onChange={(e) => setScheduleForm((f) => ({ ...f, hour: Number(e.target.value) }))}
-          />
-        </label>
-        <label className="text-sm">
-          Jour (0=lun)
-          <input
-            type="number"
-            min={0}
-            max={6}
-            className="mt-1 w-full rounded border border-cp-border bg-transparent px-2 py-1.5 dark:border-ink-700"
-            value={scheduleForm.weekday}
-            onChange={(e) => setScheduleForm((f) => ({ ...f, weekday: Number(e.target.value) }))}
-          />
-        </label>
-        <label className="text-sm inline-flex items-center gap-2 pt-6">
-          <input
-            type="checkbox"
-            checked={scheduleForm.is_active}
-            onChange={(e) => setScheduleForm((f) => ({ ...f, is_active: e.target.checked }))}
-          />
-          Actif
-        </label>
-        <div className="flex items-end">
-          <button
-            type="submit"
-            className="w-full rounded border border-cp-border px-3 py-2 text-sm font-medium dark:border-ink-700"
-            disabled={saveSchedule.isPending}
-          >
-            Enregistrer
-          </button>
-        </div>
-        {schedules.length > 0 && (
-          <div className="md:col-span-5 text-sm text-cp-muted">
-            {schedules.map((s) => (
-              <div key={s.id} className="flex items-center justify-between border-t border-cp-border py-2 dark:border-ink-800">
-                <span>
-                  {s.frequency} @ {s.hour}h — {s.is_active ? "actif" : "inactif"}
-                  {s.last_run_at ? ` — dernier: ${new Date(s.last_run_at).toLocaleString()}` : ""}
-                </span>
-                <button type="button" className="text-xs text-red-600 hover:underline" onClick={() => deleteSchedule.mutate(s.id)}>
-                  Supprimer
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </form>
+      {createKind === "backup" && <Modal title="Nouvelle sauvegarde" onClose={() => setCreateKind(null)}><form className="space-y-3" onSubmit={onCreate}><div><label className="mb-1 block text-xs font-medium text-cp-muted">Type</label><select className="vz-input" value={form.backup_type} onChange={(e) => setForm((f) => ({ ...f, backup_type: e.target.value }))}><option value="full">Complète</option><option value="home">Fichiers</option><option value="databases">Bases</option><option value="email">Email</option><option value="custom">Personnalisée</option></select></div><div><label className="mb-1 block text-xs font-medium text-cp-muted">Libellé</label><input className="vz-input" value={form.label} onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))} placeholder="Optionnel" /></div>{form.backup_type === "custom" && <div className="flex flex-wrap gap-4 text-sm">{[["includes_home", "Fichiers (home)"], ["includes_databases", "Bases"], ["includes_email", "Email"]].map(([key, label]) => <label key={key} className="inline-flex items-center gap-2"><input type="checkbox" checked={Boolean(form[key as keyof typeof form])} onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.checked }))} />{label}</label>)}</div>}<div className="flex justify-end gap-2"><button type="button" className="vz-btn-ghost" onClick={() => setCreateKind(null)}>Annuler</button><button className="vz-btn-primary" type="submit" disabled={create.isPending}>{create.isPending ? "Création…" : "Créer"}</button></div></form></Modal>}
+      {createKind === "schedule" && <Modal title="Nouvelle planification" onClose={() => setCreateKind(null)}><form className="space-y-3" onSubmit={onSchedule}><div><label className="mb-1 block text-xs font-medium text-cp-muted">Fréquence</label><select className="vz-input" value={scheduleForm.frequency} onChange={(e) => setScheduleForm((f) => ({ ...f, frequency: e.target.value }))}><option value="daily">Quotidien</option><option value="weekly">Hebdomadaire</option><option value="monthly">Mensuel</option></select></div><div className="grid grid-cols-2 gap-3"><div><label className="mb-1 block text-xs font-medium text-cp-muted">Heure</label><input className="vz-input" type="number" min={0} max={23} value={scheduleForm.hour} onChange={(e) => setScheduleForm((f) => ({ ...f, hour: Number(e.target.value) }))} /></div><div><label className="mb-1 block text-xs font-medium text-cp-muted">Jour (0 = lundi)</label><input className="vz-input" type="number" min={0} max={6} value={scheduleForm.weekday} onChange={(e) => setScheduleForm((f) => ({ ...f, weekday: Number(e.target.value) }))} /></div></div><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={scheduleForm.is_active} onChange={(e) => setScheduleForm((f) => ({ ...f, is_active: e.target.checked }))} />Actif</label><div className="flex justify-end gap-2"><button type="button" className="vz-btn-ghost" onClick={() => setCreateKind(null)}>Annuler</button><button className="vz-btn-primary" type="submit" disabled={saveSchedule.isPending}>{saveSchedule.isPending ? "Enregistrement…" : "Créer"}</button></div></form></Modal>}
     </div>
   );
 }

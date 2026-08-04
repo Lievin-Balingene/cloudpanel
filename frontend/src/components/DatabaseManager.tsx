@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ExternalLink,
@@ -8,6 +8,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
+import { IconAction } from "@/components/ui/IconAction";
 
 interface DbOverview {
   databases: number;
@@ -49,35 +50,6 @@ interface DbPrivilege {
 }
 
 type WizardStep = 1 | 2 | 3;
-
-function IconAction({
-  label,
-  onClick,
-  disabled,
-  danger,
-  children,
-}: {
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
-  danger?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      title={label}
-      aria-label={label}
-      disabled={disabled}
-      onClick={onClick}
-      className={`inline-flex h-8 w-8 items-center justify-center rounded-md border border-transparent transition
-        hover:border-cp-border hover:bg-cp-canvas disabled:cursor-not-allowed disabled:opacity-40
-        ${danger ? "text-cp-danger hover:bg-red-50" : "text-cp-link hover:text-cp-navy"}`}
-    >
-      {children}
-    </button>
-  );
-}
 
 export function DatabaseManager({ title }: { title: string }) {
   const qc = useQueryClient();

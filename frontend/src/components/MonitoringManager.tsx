@@ -1,6 +1,10 @@
 import { FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Check, Plus, RefreshCw, ToggleLeft, ToggleRight, Trash2 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
+import { IconAction } from "@/components/ui/IconAction";
+import { Modal } from "@/components/ui/Modal";
+import { PageHeader, StatusDot, Tabs } from "@/components/ui/PageChrome";
 
 interface MonitoringOverview {
   rules: number;
@@ -75,6 +79,8 @@ export function MonitoringManager({ title }: { title: string }) {
     recipients: "",
   });
   const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState("thresholds");
+  const [createOpen, setCreateOpen] = useState(false);
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["monitoring-overview"] });
@@ -102,6 +108,7 @@ export function MonitoringManager({ title }: { title: string }) {
       });
       setError(null);
       invalidate();
+      setCreateOpen(false);
     },
     onError: (err: Error) => setError(err.message),
   });
@@ -148,47 +155,12 @@ export function MonitoringManager({ title }: { title: string }) {
 
   return (
     <div className="space-y-4 animate-fade-up">
-      <div className="vz-panel flex flex-wrap items-center justify-between gap-3 p-4">
-        <div>
-          <h1 className="text-xl font-semibold">{title}</h1>
-          <p className="text-sm text-cp-muted">
-            Seuils serveur, alertes ouvertes et notifications e-mail. Complète « Ressources serveur ».
-          </p>
-        </div>
-        <button
-          className="vz-btn-primary"
-          type="button"
-          onClick={() => evaluate.mutate()}
-          disabled={evaluate.isPending}
-        >
-          {evaluate.isPending ? "Évaluation…" : "Évaluer maintenant"}
-        </button>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        {[
-          { label: "Règles actives", value: overview?.rules_active ?? "—" },
-          { label: "Alertes ouvertes", value: overview?.events_open ?? "—" },
-          { label: "CPU", value: m ? `${m.cpu_percent.toFixed(0)}%` : "—" },
-          { label: "RAM", value: m ? `${m.ram_percent.toFixed(0)}%` : "—" },
-          { label: "Disque", value: m ? `${m.disk_percent.toFixed(0)}%` : "—" },
-        ].map((card) => (
-          <div key={card.label} className="vz-panel p-4">
-            <p className="text-xs font-semibold uppercase text-cp-muted">{card.label}</p>
-            <p className="mt-1 text-2xl font-semibold text-cp-orange">{card.value}</p>
-          </div>
-        ))}
-      </div>
+      <PageHeader title={title} subtitle="Seuils serveur, alertes ouvertes et notifications e-mail." stats={[{ label: "Règles actives", value: overview?.rules_active ?? "—" }, { label: "Alertes ouvertes", value: overview?.events_open ?? "—" }, { label: "CPU", value: m ? `${m.cpu_percent.toFixed(0)}%` : "—" }, { label: "RAM", value: m ? `${m.ram_percent.toFixed(0)}%` : "—" }, { label: "Disque", value: m ? `${m.disk_percent.toFixed(0)}%` : "—" }]} actions={<><IconAction label="Évaluer maintenant" onClick={() => evaluate.mutate()} disabled={evaluate.isPending}><RefreshCw className="h-4 w-4" /></IconAction><button type="button" className="vz-btn-primary" onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" /> Ajouter un seuil</button></>} />
 
       {m?.services && (
         <div className="vz-panel flex flex-wrap gap-3 p-4 text-sm">
           {Object.entries(m.services).map(([name, active]) => (
-            <span
-              key={name}
-              className={`rounded px-2 py-1 ${active ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200" : "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200"}`}
-            >
-              {name}: {active ? "up" : "down"}
-            </span>
+            <StatusDot key={name} status={active ? "ok" : "error"} label={`${name} · ${active ? "opérationnel" : "indisponible"}`} />
           ))}
         </div>
       )}
@@ -199,7 +171,8 @@ export function MonitoringManager({ title }: { title: string }) {
         </div>
       )}
 
-      <form onSubmit={onCreate} className="vz-panel grid gap-3 p-4 md:grid-cols-4">
+      <div className="vz-panel overflow-hidden"><Tabs tabs={[{ id: "thresholds", label: "Seuils", count: rules.length }, { id: "alerts", label: "Alertes", count: events.filter((e) => e.status !== "resolved").length }]} active={tab} onChange={setTab} />
+      {tab === "thresholds" && <div className="overflow-x-auto">
         <h2 className="md:col-span-4 text-sm font-semibold">Nouvelle règle</h2>
         <label className="text-sm md:col-span-2">
           Nom
@@ -307,9 +280,6 @@ export function MonitoringManager({ title }: { title: string }) {
             Ajouter
           </button>
         </div>
-      </form>
-
-      <div className="vz-panel overflow-x-auto">
         <table className="min-w-full text-sm">
           <thead className="bg-cp-canvas text-left text-xs uppercase text-cp-muted dark:bg-ink-900">
             <tr>
@@ -347,32 +317,16 @@ export function MonitoringManager({ title }: { title: string }) {
                 <td className="px-3 py-2">{r.is_active ? "oui" : "non"}</td>
                 <td className="px-3 py-2">
                   <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      className="text-xs text-cp-orange hover:underline"
-                      onClick={() => toggle.mutate({ id: r.id, is_active: !r.is_active })}
-                    >
-                      {r.is_active ? "Désactiver" : "Activer"}
-                    </button>
-                    <button
-                      type="button"
-                      className="text-xs text-red-600 hover:underline"
-                      onClick={() => remove.mutate(r.id)}
-                    >
-                      Supprimer
-                    </button>
+                    <IconAction label={r.is_active ? `Désactiver ${r.name}` : `Activer ${r.name}`} onClick={() => toggle.mutate({ id: r.id, is_active: !r.is_active })}>{r.is_active ? <ToggleRight className="h-4 w-4" /> : <ToggleLeft className="h-4 w-4" />}</IconAction>
+                    <IconAction label={`Supprimer ${r.name}`} danger onClick={() => remove.mutate(r.id)}><Trash2 className="h-4 w-4" /></IconAction>
                   </div>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-      </div>
-
-      <div className="vz-panel overflow-x-auto">
-        <div className="border-b border-cp-border px-4 py-3 text-sm font-semibold dark:border-ink-800">
-          Événements récents
-        </div>
+      </div>}
+      {tab === "alerts" && <div className="overflow-x-auto">
         <table className="min-w-full text-sm">
           <thead className="bg-cp-canvas text-left text-xs uppercase text-cp-muted dark:bg-ink-900">
             <tr>
@@ -410,22 +364,10 @@ export function MonitoringManager({ title }: { title: string }) {
                 <td className="px-3 py-2">
                   <div className="flex flex-wrap gap-2">
                     {ev.status === "open" && (
-                      <button
-                        type="button"
-                        className="text-xs text-cp-orange hover:underline"
-                        onClick={() => ack.mutate(ev.id)}
-                      >
-                        Acquitter
-                      </button>
+                      <IconAction label={`Acquitter ${ev.rule_name}`} onClick={() => ack.mutate(ev.id)}><Check className="h-4 w-4" /></IconAction>
                     )}
                     {ev.status !== "resolved" && (
-                      <button
-                        type="button"
-                        className="text-xs text-cp-orange hover:underline"
-                        onClick={() => resolve.mutate(ev.id)}
-                      >
-                        Résoudre
-                      </button>
+                      <IconAction label={`Résoudre ${ev.rule_name}`} onClick={() => resolve.mutate(ev.id)}><Check className="h-4 w-4" /></IconAction>
                     )}
                   </div>
                 </td>
@@ -433,7 +375,8 @@ export function MonitoringManager({ title }: { title: string }) {
             ))}
           </tbody>
         </table>
-      </div>
+      </div>}</div>
+      {createOpen && <Modal title="Ajouter un seuil d’alerte" onClose={() => setCreateOpen(false)} wide><form onSubmit={onCreate} className="grid gap-3 sm:grid-cols-2"><input className="vz-input sm:col-span-2" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="Nom de la règle" required /><select className="vz-input" value={form.metric} onChange={(e) => setForm((f) => ({ ...f, metric: e.target.value }))}><option value="cpu_percent">CPU %</option><option value="ram_percent">RAM %</option><option value="disk_percent">Disque %</option><option value="load_1">Charge 1m</option><option value="service_down">Service indisponible</option></select><select className="vz-input" value={form.operator} onChange={(e) => setForm((f) => ({ ...f, operator: e.target.value }))}><option value="gte">≥</option><option value="gt">&gt;</option><option value="lte">≤</option><option value="lt">&lt;</option><option value="eq">=</option></select><input className="vz-input" type="number" value={form.threshold} onChange={(e) => setForm((f) => ({ ...f, threshold: Number(e.target.value) }))} placeholder="Seuil" />{form.metric === "service_down" && <input className="vz-input" value={form.service_name} onChange={(e) => setForm((f) => ({ ...f, service_name: e.target.value }))} placeholder="Service (nginx…)" required />}<select className="vz-input" value={form.severity} onChange={(e) => setForm((f) => ({ ...f, severity: e.target.value }))}><option value="info">Info</option><option value="warning">Avertissement</option><option value="critical">Critique</option></select><input className="vz-input" type="number" value={form.cooldown_minutes} onChange={(e) => setForm((f) => ({ ...f, cooldown_minutes: Number(e.target.value) }))} placeholder="Cooldown (min)" /><input className="vz-input sm:col-span-2" value={form.recipients} onChange={(e) => setForm((f) => ({ ...f, recipients: e.target.value }))} placeholder="Destinataires e-mail" /><label className="inline-flex items-center gap-2 text-sm sm:col-span-2"><input type="checkbox" checked={form.notify_email} onChange={(e) => setForm((f) => ({ ...f, notify_email: e.target.checked }))} /> Notifier par e-mail</label><div className="flex justify-end gap-2 sm:col-span-2"><button type="button" className="vz-btn-ghost" onClick={() => setCreateOpen(false)}>Annuler</button><button className="vz-btn-primary" disabled={create.isPending}>Ajouter</button></div></form></Modal>}
     </div>
   );
 }
