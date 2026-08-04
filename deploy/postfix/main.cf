@@ -23,6 +23,10 @@ smtpd_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
 smtp_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
 tls_preempt_cipherlist = yes
 
+# HELO sortant = FQDN serveur (doit matcher le PTR / rDNS chez l'hébergeur)
+smtp_helo_name = $myhostname
+always_add_missing_headers = yes
+
 # Auth via Dovecot SASL (submission)
 smtpd_sasl_type = dovecot
 smtpd_sasl_path = private/auth

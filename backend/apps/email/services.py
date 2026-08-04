@@ -237,19 +237,24 @@ def generate_dkim_keys() -> tuple[str, str]:
 
 
 def default_spf(domain_name: str) -> str:
-    """SPF orienté réputation : IP publique + MX, softfail (~all)."""
+    """SPF : IP d'envoi + MX + A mail.<domaine> (softfail ~all)."""
     parts = ["v=spf1"]
-    public_ip = (getattr(settings, "VZONE_MAIL_PUBLIC_IP", "") or "").strip()
+    public_ip = (
+        getattr(settings, "VZONE_MAIL_PUBLIC_IP", "")
+        or getattr(settings, "VZONE_PUBLIC_IP", "")
+        or ""
+    ).strip()
     if public_ip:
         parts.append(f"ip4:{public_ip}")
     parts.append("mx")
-    parts.append(f"a:{domain_name}")
+    parts.append(f"a:mail.{domain_name}")
     parts.append("~all")
     return " ".join(parts)
 
 
 def dmarc_record(policy: str, rua: str, domain_name: str) -> str:
     rua_part = f" rua=mailto:{rua}" if rua else f" rua=mailto:dmarc@{domain_name}"
+    # p=none au démarrage (monitoring) — passer quarantine plus tard
     return f"v=DMARC1; p={policy};{rua_part}; adkim=s; aspf=s; pct=100"
 
 
@@ -269,6 +274,29 @@ def upsert_txt(zone: DnsZone, name: str, content: str) -> None:
     )
 
 
+def upsert_spf(zone: DnsZone, content: str) -> None:
+    """Met à jour le TXT SPF apex sans écraser d'autres TXT @ non-SPF."""
+    existing = (
+        DnsRecord.objects.filter(zone=zone, record_type="TXT", name="@")
+        .filter(content__istartswith="v=spf1")
+        .first()
+    )
+    if existing:
+        existing.content = content
+        existing.ttl = 3600
+        existing.is_active = True
+        existing.save(update_fields=["content", "ttl", "is_active", "updated_at"])
+        return
+    DnsRecord.objects.create(
+        zone=zone,
+        record_type="TXT",
+        name="@",
+        content=content,
+        ttl=3600,
+        is_active=True,
+    )
+
+
 def upsert_mx(zone: DnsZone, content: str = "mail", priority: int = 10) -> None:
     DnsRecord.objects.update_or_create(
         zone=zone,
@@ -283,13 +311,67 @@ def upsert_mx(zone: DnsZone, content: str = "mail", priority: int = 10) -> None:
     )
 
 
+def upsert_a(zone: DnsZone, name: str, ipv4: str) -> None:
+    if not ipv4:
+        return
+    DnsRecord.objects.update_or_create(
+        zone=zone,
+        record_type="A",
+        name=name,
+        defaults={"content": ipv4.strip(), "ttl": 3600, "is_active": True},
+    )
+
+
+def _mail_public_ip() -> str:
+    return (
+        getattr(settings, "VZONE_MAIL_PUBLIC_IP", "")
+        or getattr(settings, "VZONE_PUBLIC_IP", "")
+        or ""
+    ).strip()
+
+
+def _secure_opendkim_path(path: Path) -> None:
+    try:
+        if path.is_file():
+            os.chmod(path, 0o640)
+        elif path.is_dir():
+            os.chmod(path, 0o750)
+    except OSError:
+        pass
+    try:
+        import grp
+
+        gid = grp.getgrnam("opendkim").gr_gid
+        os.chown(path, -1, gid)
+        if path.is_dir():
+            for child in path.rglob("*"):
+                try:
+                    os.chown(child, -1, gid)
+                    if child.is_file():
+                        os.chmod(child, 0o640)
+                except OSError:
+                    pass
+    except (ImportError, KeyError, PermissionError, OSError) as exc:
+        logger.debug("chown opendkim skip %s: %s", path, exc)
+
+
 @transaction.atomic
 def sync_mail_dns(mail_domain: MailDomain) -> dict:
+    from apps.dns.authoritative import schedule_zone_sync
+
     zone = ensure_dns_zone_for_mail(mail_domain.owner, mail_domain.name)
-    if not mail_domain.spf_record:
+    if not mail_domain.spf_record or "ip4:" not in mail_domain.spf_record:
         mail_domain.spf_record = default_spf(mail_domain.name)
-    upsert_txt(zone, "@", mail_domain.spf_record)
+    upsert_spf(zone, mail_domain.spf_record)
     upsert_mx(zone, "mail")
+    public_ip = _mail_public_ip()
+    if public_ip:
+        upsert_a(zone, "mail", public_ip)
+        # Apex A si absent (SPF/alignement)
+        if not DnsRecord.objects.filter(
+            zone=zone, record_type="A", name="@", is_active=True
+        ).exists():
+            upsert_a(zone, "@", public_ip)
 
     dkim_name = f"{mail_domain.dkim_selector}._domainkey"
     dkim_value = ""
@@ -305,11 +387,13 @@ def sync_mail_dns(mail_domain: MailDomain) -> dict:
     upsert_txt(zone, "_dmarc", dmarc_value)
     zone.bump_serial()
     mail_domain.save(update_fields=["spf_record", "updated_at"])
+    schedule_zone_sync(zone)
     return {
         "spf": mail_domain.spf_record,
         "dkim": dkim_value or None,
         "dmarc": dmarc_value,
         "mx": f"10 mail.{mail_domain.name}",
+        "mail_a": public_ip or None,
         "zone": zone.name,
     }
 
@@ -326,17 +410,51 @@ def enable_dkim(mail_domain: MailDomain, selector: str = "default") -> MailDomai
     key_dir.mkdir(parents=True, exist_ok=True)
     priv_path = key_dir / f"{mail_domain.dkim_selector}.private"
     priv_path.write_text(private_pem, encoding="utf-8")
-    try:
-        os.chmod(priv_path, 0o640)
-    except OSError:
-        pass
     (key_dir / f"{mail_domain.dkim_selector}.txt").write_text(
         f"v=DKIM1; k=rsa; p={public_b64}",
         encoding="utf-8",
     )
+    _secure_opendkim_path(key_dir)
+    _secure_opendkim_path(priv_path)
     sync_mail_dns(mail_domain)
     write_mail_maps()
     return mail_domain
+
+
+def ensure_mail_reputation(mail_domain: MailDomain) -> dict:
+    """
+    Active/répare SPF + DKIM + DMARC + A mail. + publication BIND.
+    N'écrase pas une clé DKIM existante (régénère seulement si absente).
+    """
+    mail_domain.spf_record = default_spf(mail_domain.name)
+    mail_domain.save(update_fields=["spf_record", "updated_at"])
+
+    if not mail_domain.dkim_enabled or not mail_domain.dkim_private_key:
+        enable_dkim(mail_domain)
+        mail_domain.refresh_from_db()
+        return {
+            "domain": mail_domain.name,
+            "dkim": "generated",
+            "spf": mail_domain.spf_record,
+            "dkim_dns": (
+                f"v=DKIM1; k=rsa; p={mail_domain.dkim_public_key}"
+                if mail_domain.dkim_public_key
+                else None
+            ),
+        }
+
+    # Réécrire la clé privée sur disque (permissions OpenDKIM)
+    selector = mail_domain.dkim_selector or "default"
+    key_dir = mail_storage_root() / "dkim" / mail_domain.name
+    key_dir.mkdir(parents=True, exist_ok=True)
+    priv_path = key_dir / f"{selector}.private"
+    if mail_domain.dkim_private_key:
+        priv_path.write_text(mail_domain.dkim_private_key, encoding="utf-8")
+        _secure_opendkim_path(key_dir)
+        _secure_opendkim_path(priv_path)
+    info = sync_mail_dns(mail_domain)
+    write_mail_maps()
+    return {"domain": mail_domain.name, "dkim": "kept", **info}
 
 
 def _mail_stack_live() -> bool:
@@ -365,9 +483,12 @@ def reload_mail_services() -> None:
         if src.exists() and dest.parent.is_dir():
             try:
                 shutil.copy2(src, dest)
-                os.chmod(dest, 0o640)
+                _secure_opendkim_path(dest)
             except OSError as exc:
                 logger.warning("OpenDKIM table copy failed: %s", exc)
+    dkim_root = root / "dkim"
+    if dkim_root.is_dir():
+        _secure_opendkim_path(dkim_root)
     for unit in ("opendkim", "dovecot", "postfix"):
         subprocess.run(
             ["systemctl", "reload", unit],
@@ -505,9 +626,12 @@ def create_mail_domain(
         max_quota_mb=max_quota_mb,
         spf_record=default_spf(hostname),
     )
-    if enable_dns:
-        sync_mail_dns(md)
-    write_mail_maps()
+    # DKIM dès la création — indispensable pour éviter le spam
+    enable_dkim(md)
+    if not enable_dns:
+        # enable_dkim a déjà sync DNS ; OK même si le client n'a pas demandé
+        # (records nécessaires à la délivrabilité)
+        pass
     return md
 
 

@@ -45,6 +45,9 @@ def test_create_domain_mailbox_forwarder(api: APIClient, mail_root):
     md_id = domain.json()["data"]["id"]
     assert domain.json()["data"]["spf_record"].startswith("v=spf1")
     assert "ip4:203.0.113.10" in domain.json()["data"]["spf_record"]
+    assert "a:mail.example.test" in domain.json()["data"]["spf_record"]
+    assert domain.json()["data"]["dkim_enabled"] is True
+    assert domain.json()["data"]["dkim_public_key"]
 
     box = api.post(
         reverse("email-mailbox-list"),

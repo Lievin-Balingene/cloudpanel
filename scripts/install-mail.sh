@@ -18,7 +18,13 @@ fi
 DATA_ROOT="${VZONE_DATA_ROOT:-/var/lib/vzone}"
 MAPS_DIR="${VZONE_MAIL_MAPS_DIR:-${DATA_ROOT}/mail/maps}"
 HOSTNAME_FQDN="$(hostname -f 2>/dev/null || hostname)"
-PUBLIC_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+PUBLIC_IP="$(curl -4 -fsS --max-time 5 https://ifconfig.me 2>/dev/null || true)"
+if [[ -z "$PUBLIC_IP" ]]; then
+  PUBLIC_IP="$(curl -4 -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
+fi
+if [[ -z "$PUBLIC_IP" ]]; then
+  PUBLIC_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+fi
 
 echo "[vzone] Installation stack mail (Postfix / Dovecot / OpenDKIM)"
 
@@ -124,7 +130,16 @@ if [[ -f "$ENV_FILE" ]]; then
   sed -i 's|^VZONE_MAIL_STACK=.*|VZONE_MAIL_STACK=live|' "$ENV_FILE"
   grep -q '^VZONE_MAIL_MAPS_DIR=' "$ENV_FILE" || echo "VZONE_MAIL_MAPS_DIR=${MAPS_DIR}" >> "$ENV_FILE"
   if [[ -n "${PUBLIC_IP}" ]]; then
-    grep -q '^VZONE_MAIL_PUBLIC_IP=' "$ENV_FILE" || echo "VZONE_MAIL_PUBLIC_IP=${PUBLIC_IP}" >> "$ENV_FILE"
+    if grep -q '^VZONE_MAIL_PUBLIC_IP=' "$ENV_FILE"; then
+      sed -i "s|^VZONE_MAIL_PUBLIC_IP=.*|VZONE_MAIL_PUBLIC_IP=${PUBLIC_IP}|" "$ENV_FILE"
+    else
+      echo "VZONE_MAIL_PUBLIC_IP=${PUBLIC_IP}" >> "$ENV_FILE"
+    fi
+    if grep -q '^VZONE_PUBLIC_IP=' "$ENV_FILE"; then
+      sed -i "s|^VZONE_PUBLIC_IP=.*|VZONE_PUBLIC_IP=${PUBLIC_IP}|" "$ENV_FILE"
+    else
+      echo "VZONE_PUBLIC_IP=${PUBLIC_IP}" >> "$ENV_FILE"
+    fi
   fi
 fi
 
@@ -135,6 +150,7 @@ systemctl reload opendkim || systemctl restart opendkim
 systemctl reload dovecot || systemctl restart dovecot
 systemctl reload postfix || systemctl restart postfix
 
-echo "[vzone] Stack mail active — hostname=${HOSTNAME_FQDN} maps=${MAPS_DIR}"
+echo "[vzone] Stack mail active — hostname=${HOSTNAME_FQDN} maps=${MAPS_DIR} ip=${PUBLIC_IP}"
 echo "[vzone] Ports : 25/587/465 (SMTP) · 143/993 (IMAP) · 110/995 (POP3)"
-echo "[vzone] Pensez à PTR rDNS + SPF/DKIM/DMARC pour la réputation."
+echo "[vzone] Réputation: SPF/DKIM auto à la création domaine. PTR rDNS à régler chez l'hébergeur."
+echo "[vzone] Réparer: sudo bash ${REPO_DIR}/scripts/repair-mail-reputation.sh"
