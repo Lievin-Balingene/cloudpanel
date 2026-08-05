@@ -126,7 +126,7 @@ def test_resolve_cpmove_paths_from_api():
     }
     with patch.object(client, "_request", return_value=fake):
         paths = client.resolve_cpmove_paths("alice")
-    assert paths[0] == "/home/cpmove-alice.tar.gz"
+    assert paths[0] == "/home/alice/cpmove-alice.tar.gz"
     assert "/home/cpmove-alice.tar.gz" in paths
 
 
@@ -157,6 +157,50 @@ def test_rel_to_account_home_cpmove_in_home_root():
         WhmRemoteClient._rel_to_account_home("bienve", "/home/bienve/backup-x.tar.gz")
         == "backup-x.tar.gz"
     )
+    assert (
+        WhmRemoteClient._rel_to_account_home("bienve", "/home/bienve/cpmove-bienve.tar.gz")
+        == "cpmove-bienve.tar.gz"
+    )
+
+
+def test_start_background_pkgacct_uses_account_homedir():
+    client = WhmRemoteClient("whm.test", token="abc")
+    fake = {"metadata": {"result": 1}, "data": {"session_id": "sess-1"}}
+    with patch.object(client, "account_homedir", return_value="/home2/bienve"):
+        with patch.object(client, "_request", return_value=fake) as req:
+            sid = client.start_background_pkgacct("bienve")
+    assert sid == "sess-1"
+    assert req.call_args[0][1]["tarroot"] == "/home2/bienve"
+
+
+def test_resolve_cpmove_paths_prefers_account_homedir():
+    client = WhmRemoteClient("whm.test", token="abc")
+    with patch.object(client, "account_homedir", return_value="/home2/alice"):
+        with patch.object(client, "list_cparchive_files", side_effect=VZoneAPIException(detail="x", code="x")):
+            paths = client.resolve_cpmove_paths("alice")
+    assert paths[0] == "/home2/alice/cpmove-alice.tar.gz"
+
+
+def test_download_via_public_site_copies_outside_home_first(tmp_path: Path):
+    client = WhmRemoteClient("whm.test", token="abc", insecure_ssl=True)
+    dest = tmp_path / "cpmove.tar.gz"
+    dest.write_bytes(b"\x1f\x8b" + b"x" * 128)
+
+    with patch.object(client, "account_domain", return_value="example.test"):
+        with patch.object(client, "account_homedir", return_value="/home/bienve"):
+            with patch.object(
+                client,
+                "_copy_cpmove_into_homedir",
+                return_value="/home/bienve/cpmove-bienve.tar.gz",
+            ) as copy:
+                with patch.object(client, "_cpanel_fileop") as fileop:
+                    with patch.object(client, "_http_download_file", return_value=256):
+                        size = client._download_via_public_site(
+                            "bienve", "/home/cpmove-bienve.tar.gz", dest
+                        )
+    copy.assert_called_once()
+    fileop.assert_called()
+    assert size == 256
 
 
 def test_download_cpmove_falls_back_to_public_site(tmp_path: Path):

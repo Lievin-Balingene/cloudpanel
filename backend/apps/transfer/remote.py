@@ -311,6 +311,7 @@ class WhmRemoteClient:
                     "user": a.get("user") or a.get("username") or "",
                     "domain": a.get("domain") or "",
                     "email": a.get("email") or "",
+                    "homedir": a.get("homedir") or "",
                     "plan": a.get("plan") or a.get("package") or "",
                     "diskused": a.get("diskused") or a.get("disk_used") or "",
                     "disklimit": a.get("disklimit") or a.get("disk_limit") or "",
@@ -356,6 +357,15 @@ class WhmRemoteClient:
         for raw in extra or []:
             add(raw)
 
+        home = self.account_homedir(username).rstrip("/")
+        for name in (
+            f"cpmove-{username}.tar.gz",
+            f"cpmove-{username}.tar",
+            f"{username}.tar.gz",
+            f"{username}.tar",
+        ):
+            add(f"{home}/{name}")
+
         try:
             for entry in self.list_cparchive_files():
                 if (entry.get("user") or "").lower() != username.lower():
@@ -384,6 +394,16 @@ class WhmRemoteClient:
                 return (acct.get("domain") or "").strip().lower().rstrip(".")
         return ""
 
+    def account_homedir(self, username: str) -> str:
+        """Répertoire home cPanel du compte (/home/user, /home2/user, …)."""
+        username = username.strip().lower()
+        for acct in self.list_accounts():
+            if (acct.get("user") or "").lower() == username:
+                home = (acct.get("homedir") or "").strip().rstrip("/")
+                if home:
+                    return home
+        return f"/home/{username}"
+
     @staticmethod
     def _rel_to_account_home(username: str, absolute: str) -> str:
         """Chemin relatif au home cPanel (/home/user)."""
@@ -392,6 +412,11 @@ class WhmRemoteClient:
         if abs_norm.startswith(home + "/"):
             return abs_norm[len(home) + 1 :]
         return posixpath.relpath(abs_norm, home)
+
+    def _path_inside_homedir(self, username: str, absolute: str) -> bool:
+        home = self.account_homedir(username).rstrip("/")
+        abs_norm = absolute.replace("\\", "/")
+        return abs_norm == home or abs_norm.startswith(home + "/")
 
     def _cpanel_fileop(
         self,
@@ -424,6 +449,18 @@ class WhmRemoteClient:
                     code="whm_cpanel_fileop_failed",
                     status_code=502,
                 )
+            rows = block.get("data")
+            if isinstance(rows, list):
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    if row.get("result") in {0, "0", False}:
+                        reason = row.get("error") or row.get("reason") or f"échec {op}"
+                        raise VZoneAPIException(
+                            detail=f"Fileman {op}: {reason}",
+                            code="whm_cpanel_fileop_failed",
+                            status_code=502,
+                        )
 
     def _cpanel_fileop_cleanup(self, cpanel_user: str, rel_path: str) -> None:
         for op in ("unlink", "trash"):
@@ -437,6 +474,39 @@ class WhmRemoteClient:
                 return
             except VZoneAPIException:
                 continue
+
+    def _copy_cpmove_into_homedir(self, username: str, remote_path: str) -> str:
+        """
+        Copie un cpmove situé hors du home (ex. /home/cpmove-user.tar.gz)
+        dans le répertoire du compte pour permettre Fileman / public_html.
+        """
+        home = self.account_homedir(username).rstrip("/")
+        basename = posixpath.basename(remote_path)
+        dest_rel = basename
+        dest_abs = f"{home}/{basename}"
+        if self._path_inside_homedir(username, remote_path):
+            return remote_path
+        last_err = ""
+        for op in ("copy", "link"):
+            try:
+                self._cpanel_fileop(
+                    username,
+                    op=op,
+                    sourcefiles=remote_path,
+                    destfiles=dest_rel,
+                )
+                return dest_abs
+            except VZoneAPIException as exc:
+                last_err = str(exc.detail)
+                continue
+        raise VZoneAPIException(
+            detail=(
+                f"Impossible de copier {remote_path} vers {home} "
+                f"(Fileman bloque les chemins hors home). {last_err}"
+            ),
+            code="whm_cpanel_fileop_failed",
+            status_code=502,
+        )
 
     def _download_via_public_site(
         self,
@@ -469,7 +539,22 @@ class WhmRemoteClient:
         token = secrets.token_hex(10)
         filename = f".vz-{token}.tar.gz"
         rel_dest = f"public_html/{filename}"
-        rel_src = self._rel_to_account_home(username, remote_path)
+        publish_path = remote_path
+        fileop_errors: list[str] = []
+
+        if not self._path_inside_homedir(username, remote_path):
+            if progress:
+                progress(62, f"Copie {remote_path} dans le home du compte…")
+            try:
+                publish_path = self._copy_cpmove_into_homedir(username, remote_path)
+            except VZoneAPIException as exc:
+                fileop_errors.append(str(exc.detail))
+
+        rel_src = self._rel_to_account_home(username, publish_path)
+        if rel_src.startswith("../"):
+            fileop_errors.append(
+                f"Chemin hors home ({publish_path}) — impossible via Fileman sans SSH."
+            )
 
         linked = False
         for op in ("link", "copy"):
@@ -479,11 +564,18 @@ class WhmRemoteClient:
                 self._cpanel_fileop(username, op=op, sourcefiles=rel_src, destfiles=rel_dest)
                 linked = True
                 break
-            except VZoneAPIException:
+            except VZoneAPIException as exc:
+                fileop_errors.append(f"{op}: {exc.detail}")
                 continue
         if not linked:
+            hint = fileop_errors[-1] if fileop_errors else "Fileman a refusé l'opération."
             raise VZoneAPIException(
-                detail=f"Impossible de publier {remote_path} dans public_html.",
+                detail=(
+                    f"Impossible de publier {remote_path} dans public_html ({hint}). "
+                    "Relancez le transfert après mise à jour V-zone (pkgacct dans le home du compte)"
+                    + _egress_ip_hint()
+                    + "."
+                ),
                 code="whm_download_failed",
                 status_code=502,
             )
@@ -1054,10 +1146,11 @@ class WhmRemoteClient:
             status_code=502,
         )
 
-    def start_background_pkgacct(self, username: str) -> str | None:
+    def start_background_pkgacct(self, username: str, *, tarroot: str | None = None) -> str | None:
+        dest_dir = (tarroot or self.account_homedir(username)).rstrip("/")
         data = self._request(
             "start_background_pkgacct",
-            {"user": username, "split": 0},
+            {"user": username, "split": 0, "tarroot": dest_dir},
             timeout=max(self.timeout, 180),
         )
         payload = data.get("data") or {}
@@ -1069,11 +1162,12 @@ class WhmRemoteClient:
         payload = data.get("data") or {}
         return str(payload.get("state") or "").upper()
 
-    def run_pkgacct_sync(self, username: str) -> dict:
+    def run_pkgacct_sync(self, username: str, *, tarroot: str | None = None) -> dict:
         """pkgacct synchrone (peut prendre longtemps)."""
+        dest_dir = (tarroot or self.account_homedir(username)).rstrip("/")
         return self._request(
             "pkgacct",
-            {"user": username, "homedir": 1},
+            {"user": username, "homedir": 1, "tarroot": dest_dir},
             timeout=max(self.timeout, 7200),
         )
 
@@ -1098,9 +1192,13 @@ class WhmRemoteClient:
         if progress:
             progress(10, f"Démarrage pkgacct distant pour {username}…")
 
+        homedir = self.account_homedir(username)
+        if progress:
+            progress(11, f"pkgacct distant → {homedir}…")
+
         # 1) Background (WHM moderne)
         try:
-            session_id = self.start_background_pkgacct(username)
+            session_id = self.start_background_pkgacct(username, tarroot=homedir)
         except VZoneAPIException as exc:
             if progress:
                 progress(12, f"start_background_pkgacct indisponible ({exc.detail}), repli pkgacct…")
@@ -1143,7 +1241,7 @@ class WhmRemoteClient:
             if progress:
                 progress(20, "pkgacct synchrone (peut être long)…")
             try:
-                self.run_pkgacct_sync(username)
+                self.run_pkgacct_sync(username, tarroot=homedir)
             except VZoneAPIException as exc:
                 # 3) Peut-être qu'un cpmove existe déjà
                 if progress:
