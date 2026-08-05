@@ -496,9 +496,11 @@ export function FileManager({ title }: { title: string }) {
   const folderInputRef = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["files", cwd],
     queryFn: () => apiRequest<Listing>(`/files/?path=${encodeURIComponent(cwd)}`),
+    placeholderData: (prev) => prev,
+    staleTime: 15_000,
   });
 
   const crumbs = useMemo(() => {
@@ -818,27 +820,32 @@ export function FileManager({ title }: { title: string }) {
   }
 
   return (
-    <div className="space-y-3 animate-fade-up">
-      <div className="vz-panel flex flex-wrap items-center justify-between gap-3 p-4">
+    <div className="space-y-2 animate-fade-up">
+      <div className="vz-panel flex flex-wrap items-center justify-between gap-2 px-3 py-2">
         <div>
-          <h1 className="text-xl font-semibold">{title}</h1>
-          <p className="text-sm text-cp-muted">
-            Glisser-déposer fichiers/dossiers, déplacement interne, édition — jailé dans le home.
+          <h1 className="text-base font-semibold leading-tight">{title}</h1>
+          <p className="text-[11px] text-cp-muted">
+            Glisser-déposer · édition · jailé dans le home
           </p>
         </div>
-        <button type="button" className="vz-btn-ghost" onClick={() => void refetch()}>
-          <RefreshCw className="h-4 w-4" />
+        <button
+          type="button"
+          className="vz-btn-ghost vz-btn-sm"
+          onClick={() => void refetch()}
+          disabled={isFetching}
+        >
+          <RefreshCw className={`h-3 w-3 ${isFetching ? "animate-spin" : ""}`} />
           Actualiser
         </button>
       </div>
 
-      <div className="vz-panel flex flex-wrap items-center gap-1 px-3 py-2 text-sm">
+      <div className="vz-panel flex flex-wrap items-center gap-0.5 px-2 py-1 text-xs">
         {crumbs.map((c, idx) => (
-          <span key={c.path || "root"} className="inline-flex items-center gap-1">
-            {idx > 0 && <ChevronRight className="h-3.5 w-3.5 text-cp-muted" />}
+          <span key={c.path || "root"} className="inline-flex items-center gap-0.5">
+            {idx > 0 && <ChevronRight className="h-3 w-3 text-cp-muted" />}
             <button
               type="button"
-              className="rounded px-1.5 py-0.5 hover:bg-cp-orange-soft hover:text-cp-orange-dark"
+              className="rounded px-1 py-0.5 hover:bg-cp-orange-soft hover:text-cp-orange-dark"
               onClick={() => setCwd(c.path)}
             >
               {c.label}
@@ -847,13 +854,13 @@ export function FileManager({ title }: { title: string }) {
         ))}
       </div>
 
-      <div className="vz-panel flex flex-wrap gap-2 p-3">
-        <button type="button" className="vz-btn-primary" onClick={() => fileInputRef.current?.click()}>
-          <Upload className="h-4 w-4" />
+      <div className="vz-panel flex flex-wrap items-center gap-1 px-2 py-1.5">
+        <button type="button" className="vz-btn-primary vz-btn-sm" onClick={() => fileInputRef.current?.click()}>
+          <Upload className="h-3 w-3" />
           Upload
         </button>
-        <button type="button" className="vz-btn-ghost" onClick={() => folderInputRef.current?.click()}>
-          <FolderPlus className="h-4 w-4" />
+        <button type="button" className="vz-btn-ghost vz-btn-sm" onClick={() => folderInputRef.current?.click()}>
+          <FolderPlus className="h-3 w-3" />
           Dossier
         </button>
         <input
@@ -879,25 +886,25 @@ export function FileManager({ title }: { title: string }) {
         />
         <button
           type="button"
-          className="vz-btn-ghost"
+          className="vz-btn-ghost vz-btn-sm"
           disabled={!selected.length}
           onClick={() => setClipboard({ mode: "copy", paths: selected })}
         >
-          <Copy className="h-4 w-4" />
+          <Copy className="h-3 w-3" />
           Copier
         </button>
         <button
           type="button"
-          className="vz-btn-ghost"
+          className="vz-btn-ghost vz-btn-sm"
           disabled={!selected.length}
           onClick={() => setClipboard({ mode: "cut", paths: selected })}
         >
-          <Scissors className="h-4 w-4" />
+          <Scissors className="h-3 w-3" />
           Couper
         </button>
         <button
           type="button"
-          className="vz-btn-ghost"
+          className="vz-btn-ghost vz-btn-sm"
           disabled={!clipboard.mode || !clipboard.paths.length}
           onClick={() =>
             void run(async () => {
@@ -910,16 +917,16 @@ export function FileManager({ title }: { title: string }) {
             })
           }
         >
-          <ClipboardPaste className="h-4 w-4" />
+          <ClipboardPaste className="h-3 w-3" />
           Coller
         </button>
-        <button type="button" className="vz-btn-ghost" disabled={!selected.length} onClick={requestDelete}>
-          <Trash2 className="h-4 w-4" />
+        <button type="button" className="vz-btn-ghost vz-btn-sm" disabled={!selected.length} onClick={requestDelete}>
+          <Trash2 className="h-3 w-3" />
           Supprimer
         </button>
         <button
           type="button"
-          className="vz-btn-ghost"
+          className="vz-btn-ghost vz-btn-sm"
           disabled={!selected.length}
           onClick={() =>
             void run(() =>
@@ -934,21 +941,21 @@ export function FileManager({ title }: { title: string }) {
             )
           }
         >
-          <Archive className="h-4 w-4" />
+          <Archive className="h-3 w-3" />
           Zip
         </button>
         <button
           type="button"
-          className="vz-btn-ghost"
+          className="vz-btn-ghost vz-btn-sm"
           disabled={!selected.length}
           onClick={() => void downloadSelected()}
         >
-          <Download className="h-4 w-4" />
+          <Download className="h-3 w-3" />
           Télécharger
         </button>
         <button
           type="button"
-          className="vz-btn-ghost"
+          className="vz-btn-ghost vz-btn-sm"
           disabled={selected.length !== 1}
           onClick={() => {
             const path = selected[0];
@@ -957,7 +964,7 @@ export function FileManager({ title }: { title: string }) {
             if (entry) setChmodMode(entry.mode.toString(8).padStart(3, "0"));
           }}
         >
-          <Shield className="h-4 w-4" />
+          <Shield className="h-3 w-3" />
           chmod
         </button>
         <form
@@ -968,20 +975,20 @@ export function FileManager({ title }: { title: string }) {
           }}
         >
           <input
-            className="vz-input w-40"
+            className="vz-input !px-2 !py-1 !text-xs w-36"
             placeholder="Rechercher…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <button className="vz-btn-ghost" type="submit">
-            <Search className="h-4 w-4" />
+          <button className="vz-btn-ghost vz-btn-sm" type="submit">
+            <Search className="h-3 w-3" />
           </button>
         </form>
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-[1fr_220px]">
+      <div className="grid gap-2 lg:grid-cols-[1fr_180px]">
         <div
-          className={`vz-panel relative min-h-[420px] overflow-hidden ${
+          className={`vz-panel relative min-h-[360px] overflow-auto ${
             dragOver && !internalDrag ? "ring-2 ring-cp-orange" : ""
           }`}
           onDragEnter={(e) => {
@@ -1031,19 +1038,19 @@ export function FileManager({ title }: { title: string }) {
             })();
           }}
         >
-          <table className="min-w-full text-left text-sm">
-            <thead className="bg-cp-canvas text-xs uppercase text-cp-muted dark:bg-ink-900">
+          <table className="min-w-full text-left text-xs">
+            <thead className="sticky top-0 bg-cp-canvas text-[10px] uppercase tracking-wide text-cp-muted dark:bg-ink-900">
               <tr>
-                <th className="px-3 py-2">Nom</th>
-                <th className="px-3 py-2">Taille</th>
-                <th className="px-3 py-2">Perms</th>
-                <th className="px-3 py-2">Modifié</th>
+                <th className="px-2 py-1.5 font-semibold">Nom</th>
+                <th className="w-20 px-2 py-1.5 font-semibold">Taille</th>
+                <th className="w-24 px-2 py-1.5 font-semibold">Perms</th>
+                <th className="w-36 px-2 py-1.5 font-semibold">Modifié</th>
               </tr>
             </thead>
             <tbody>
               {cwd && (
                 <tr
-                  className={`cursor-pointer border-t border-cp-border hover:bg-cp-orange-soft/40 dark:border-ink-800 ${
+                  className={`cursor-pointer border-t border-cp-border/80 hover:bg-cp-orange-soft/40 dark:border-ink-800 ${
                     dropTargetPath === ".." ? "bg-cp-orange-soft/70 ring-1 ring-inset ring-cp-orange" : ""
                   }`}
                   onDoubleClick={() => {
@@ -1076,14 +1083,14 @@ export function FileManager({ title }: { title: string }) {
                     })();
                   }}
                 >
-                  <td className="px-3 py-2 font-medium" colSpan={4}>
+                  <td className="px-2 py-1 font-medium" colSpan={4}>
                     ..
                   </td>
                 </tr>
               )}
-              {isLoading && (
+              {isLoading && !data && (
                 <tr>
-                  <td className="px-3 py-4" colSpan={4}>
+                  <td className="px-2 py-3 text-cp-muted" colSpan={4}>
                     Chargement…
                   </td>
                 </tr>
@@ -1095,7 +1102,7 @@ export function FileManager({ title }: { title: string }) {
                   <tr
                     key={entry.path}
                     draggable
-                    className={`cursor-pointer border-t border-cp-border dark:border-ink-800 ${
+                    className={`cursor-pointer border-t border-cp-border/70 dark:border-ink-800 ${
                       isDropTarget
                         ? "bg-cp-orange-soft/80 ring-1 ring-inset ring-cp-orange"
                         : active
@@ -1169,22 +1176,30 @@ export function FileManager({ title }: { title: string }) {
                       })();
                     }}
                   >
-                    <td className="px-3 py-2">
-                      <span className="inline-flex items-center gap-2">
+                    <td className="max-w-[1px] truncate px-2 py-1">
+                      <span className="inline-flex min-w-0 items-center gap-1.5">
                         {entry.is_dir ? (
-                          <Folder className="h-4 w-4 text-cp-orange" />
+                          <Folder className="h-3.5 w-3.5 shrink-0 text-cp-orange" />
                         ) : (
-                          <FileText className="h-4 w-4 text-cp-link" />
+                          <FileText className="h-3.5 w-3.5 shrink-0 text-cp-link" />
                         )}
-                        {entry.name}
+                        <span className="truncate font-medium">{entry.name}</span>
                       </span>
                     </td>
-                    <td className="px-3 py-2 text-cp-muted">
+                    <td className="whitespace-nowrap px-2 py-1 text-cp-muted">
                       {entry.is_dir ? "—" : formatBytes(entry.size)}
                     </td>
-                    <td className="px-3 py-2 font-mono text-xs">{entry.permissions}</td>
-                    <td className="px-3 py-2 text-xs text-cp-muted">
-                      {new Date(entry.modified_at).toLocaleString("fr-FR")}
+                    <td className="whitespace-nowrap px-2 py-1 font-mono text-[10px] text-cp-muted">
+                      {entry.permissions}
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-1 text-[10px] text-cp-muted">
+                      {new Date(entry.modified_at).toLocaleString("fr-FR", {
+                        day: "2-digit",
+                        month: "2-digit",
+                        year: "2-digit",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
                     </td>
                   </tr>
                 );
@@ -1197,46 +1212,46 @@ export function FileManager({ title }: { title: string }) {
             </div>
           )}
           {!isLoading && !(data?.entries?.length) && !cwd && (
-            <p className="px-3 py-6 text-center text-xs text-cp-muted">
-              Glissez-déposez des fichiers ou dossiers (comme cPanel), ou utilisez Upload / Dossier.
+            <p className="px-3 py-4 text-center text-[11px] text-cp-muted">
+              Glissez-déposez des fichiers ou dossiers, ou utilisez Upload / Dossier.
             </p>
           )}
         </div>
 
-        <div className="space-y-3">
-          <form className="vz-panel space-y-2 p-3" onSubmit={onCreateFolder}>
-            <p className="text-xs font-semibold uppercase text-cp-muted">Nouveau dossier</p>
-            <input className="vz-input" name="name" placeholder="nom" required />
-            <button className="vz-btn-ghost w-full" type="submit">
-              <FolderPlus className="h-4 w-4" />
+        <div className="space-y-2">
+          <form className="vz-panel space-y-1.5 p-2" onSubmit={onCreateFolder}>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-cp-muted">Nouveau dossier</p>
+            <input className="vz-input !px-2 !py-1 !text-xs" name="name" placeholder="nom" required />
+            <button className="vz-btn-ghost vz-btn-sm w-full" type="submit">
+              <FolderPlus className="h-3 w-3" />
               Créer
             </button>
           </form>
-          <form className="vz-panel space-y-2 p-3" onSubmit={onCreateFile}>
-            <p className="text-xs font-semibold uppercase text-cp-muted">Nouveau fichier</p>
-            <input className="vz-input" name="name" placeholder="index.html" required />
-            <button className="vz-btn-ghost w-full" type="submit">
-              <FilePlus2 className="h-4 w-4" />
+          <form className="vz-panel space-y-1.5 p-2" onSubmit={onCreateFile}>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-cp-muted">Nouveau fichier</p>
+            <input className="vz-input !px-2 !py-1 !text-xs" name="name" placeholder="index.html" required />
+            <button className="vz-btn-ghost vz-btn-sm w-full" type="submit">
+              <FilePlus2 className="h-3 w-3" />
               Créer
             </button>
           </form>
           {selected.length === 1 && (
-            <div className="vz-panel space-y-2 p-3">
-              <p className="text-xs font-semibold uppercase text-cp-muted">Actions</p>
+            <div className="vz-panel space-y-1 p-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-cp-muted">Actions</p>
               <button
                 type="button"
-                className="vz-btn-ghost w-full"
+                className="vz-btn-ghost vz-btn-sm w-full"
                 onClick={() => {
                   const entry = data?.entries.find((e) => e.path === selected[0]);
                   if (entry && !entry.is_dir) void openEditor(entry);
                 }}
               >
-                <Pencil className="h-4 w-4" />
+                <Pencil className="h-3 w-3" />
                 Éditer
               </button>
               <button
                 type="button"
-                className="vz-btn-ghost w-full"
+                className="vz-btn-ghost vz-btn-sm w-full"
                 onClick={() => {
                   const entry = data?.entries.find((e) => e.path === selected[0]);
                   if (!entry) return;
@@ -1257,10 +1272,10 @@ export function FileManager({ title }: { title: string }) {
                   }
                 }}
               >
-                <Archive className="h-4 w-4" />
+                <Archive className="h-3 w-3" />
                 Décompresser
               </button>
-              <button type="button" className="vz-btn-ghost w-full" onClick={requestRename}>
+              <button type="button" className="vz-btn-ghost vz-btn-sm w-full" onClick={requestRename}>
                 Renommer
               </button>
             </div>

@@ -166,7 +166,9 @@ def user_home(user: User) -> Path:
 
     try:
         root.mkdir(parents=True, exist_ok=True)
-        ensure_cpanel_tree(personal)
+        # Ne pas re-chmod/chown à chaque listing (très lent) — seulement si home neuf.
+        if not personal.is_dir() or not (personal / "public_html").is_dir():
+            ensure_cpanel_tree(personal)
     except OSError as exc:
         raise VZoneAPIException(
             detail=(
@@ -219,11 +221,16 @@ def _mode_string(mode: int) -> str:
     return stat.filemode(mode)
 
 
-def _is_text_file(path: Path) -> bool:
-    if path.suffix.lower() in TEXT_EXTENSIONS:
+def _is_text_name(name: str) -> bool:
+    suffix = Path(name).suffix.lower()
+    if suffix in TEXT_EXTENSIONS:
         return True
-    mime, _ = mimetypes.guess_type(str(path))
+    mime, _ = mimetypes.guess_type(name)
     return bool(mime and mime.startswith("text/"))
+
+
+def _is_text_file(path: Path) -> bool:
+    return _is_text_name(path.name)
 
 
 def entry_from_path(user: User, path: Path) -> FileEntry:
@@ -233,17 +240,9 @@ def entry_from_path(user: User, path: Path) -> FileEntry:
         st = path.stat()
     except OSError:
         st = path.lstat()
-    mime, _ = mimetypes.guess_type(str(path))
-    try:
-        is_dir = path.is_dir()
-    except OSError:
-        is_dir = False
-    is_file = False
-    if not is_dir:
-        try:
-            is_file = path.is_file()
-        except OSError:
-            is_file = False
+    mime, _ = mimetypes.guess_type(path.name)
+    is_dir = stat.S_ISDIR(st.st_mode)
+    is_file = stat.S_ISREG(st.st_mode)
     return FileEntry(
         name=path.name or "/",
         path=relative_to_home(user, path),
@@ -253,7 +252,7 @@ def entry_from_path(user: User, path: Path) -> FileEntry:
         permissions=_mode_string(st.st_mode),
         mode=stat.S_IMODE(st.st_mode),
         mime=mime,
-        is_text=_is_text_file(path) if is_file else False,
+        is_text=_is_text_name(path.name) if is_file else False,
     )
 
 
@@ -263,17 +262,47 @@ def list_directory(user: User, relative: str | None = None) -> dict:
         raise VZoneAPIException(detail="Chemin introuvable.", code="not_found", status_code=404)
     if not path.is_dir():
         raise VZoneAPIException(detail="Ce chemin n'est pas un dossier.", code="not_directory", status_code=400)
+
+    cwd_rel = relative_to_home(user, path)
+    root = user_home(user)
+    # Évite resolve() à chaque entrée : préfixe relatif stable
     entries: list[FileEntry] = []
-    for child in path.iterdir():
-        try:
-            entries.append(entry_from_path(user, child))
-        except OSError:
-            # Ne casse pas tout le listing à cause d'une entrée illisible.
-            continue
+    try:
+        with os.scandir(path) as scan:
+            for child in scan:
+                try:
+                    st = child.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                is_dir = child.is_dir(follow_symlinks=False)
+                is_file = child.is_file(follow_symlinks=False)
+                name = child.name
+                rel = f"{cwd_rel}/{name}" if cwd_rel else name
+                mime, _ = mimetypes.guess_type(name)
+                entries.append(
+                    FileEntry(
+                        name=name,
+                        path=rel,
+                        is_dir=is_dir,
+                        size=0 if is_dir else st.st_size,
+                        modified_at=datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
+                        permissions=_mode_string(st.st_mode),
+                        mode=stat.S_IMODE(st.st_mode),
+                        mime=mime,
+                        is_text=_is_text_name(name) if is_file else False,
+                    )
+                )
+    except OSError as exc:
+        raise VZoneAPIException(
+            detail=f"Lecture du dossier impossible: {exc}",
+            code="fs_read_error",
+            status_code=500,
+        ) from exc
+
     entries.sort(key=lambda e: (not e.is_dir, e.name.lower()))
     return {
-        "cwd": relative_to_home(user, path),
-        "root": str(user_home(user)),
+        "cwd": cwd_rel,
+        "root": str(root),
         "entries": [asdict(e) for e in entries],
     }
 
