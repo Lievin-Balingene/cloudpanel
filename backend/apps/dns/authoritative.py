@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
+from shutil import which
 
 from django.conf import settings
 from django.db import transaction
@@ -38,6 +39,33 @@ def dns_zones_conf() -> Path:
     return Path(raw)
 
 
+def _normalize_soa_name(value: str, *, default: str) -> str:
+    """BIND SOA MNAME/RNAME : FQDN avec point final, e-mail admin@x → admin.x."""
+    raw = (value or "").strip()
+    if not raw:
+        raw = default
+    if "@" in raw:
+        local, _, domain = raw.partition("@")
+        raw = f"{local}.{domain}" if domain else local
+    raw = raw.rstrip(".")
+    return f"{raw}." if raw else default
+
+
+def _txt_rdata(content: str) -> str:
+    """
+    TXT BIND : chaînes max 255 octets. Les clés DKIM (RSA-2048) dépassent
+    largement — sans découpage, named refuse la zone entière (SERVFAIL).
+    """
+    raw = (content or "").strip()
+    if len(raw) >= 2 and raw[0] == '"' and raw[-1] == '"':
+        raw = raw[1:-1]
+    escaped = raw.replace("\\", "\\\\").replace('"', '\\"')
+    if not escaped:
+        return '""'
+    chunks = [escaped[i : i + 255] for i in range(0, len(escaped), 255)]
+    return " ".join(f'"{chunk}"' for chunk in chunks)
+
+
 def _rdata(record: DnsRecord) -> str:
     rtype = record.record_type.upper()
     content = (record.content or "").strip()
@@ -46,11 +74,7 @@ def _rdata(record: DnsRecord) -> str:
         if "." in content:
             content = f"{content}."
     if rtype == "TXT":
-        # Escape and quote; split long strings if needed
-        escaped = content.replace("\\", "\\\\").replace('"', '\\"')
-        if not (escaped.startswith('"') and escaped.endswith('"')):
-            escaped = f'"{escaped}"'
-        return escaped
+        return _txt_rdata(content)
     if rtype == "MX":
         prio = record.priority if record.priority is not None else 10
         return f"{prio} {content}"
@@ -70,12 +94,14 @@ def _rdata(record: DnsRecord) -> str:
 def render_zone_file(zone: DnsZone) -> str:
     """Génère un fichier de zone BIND (master)."""
     origin = zone.name.rstrip(".")
+    primary_ns = _normalize_soa_name(zone.soa_primary_ns, default="ns1.vzone.local.")
+    admin = _normalize_soa_name(zone.soa_admin_email, default="hostmaster.vzone.local.")
     lines: list[str] = [
         f"; V-zone authoritative zone for {origin}",
         f"$TTL {int(zone.ttl_default or 14400)}",
         f"$ORIGIN {origin}.",
         (
-            f"@ IN SOA {zone.soa_primary_ns} {zone.soa_admin_email} ("
+            f"@ IN SOA {primary_ns} {admin} ("
             f" {int(zone.soa_serial)} {int(zone.soa_refresh)} {int(zone.soa_retry)}"
             f" {int(zone.soa_expire)} {int(zone.soa_minimum)} )"
         ),
@@ -107,12 +133,41 @@ def write_zone_file(zone: DnsZone) -> Path | None:
     content = render_zone_file(zone)
     tmp = path.with_suffix(".zone.tmp")
     tmp.write_text(content, encoding="utf-8")
+    if not _named_checkzone(zone.name, tmp):
+        tmp.unlink(missing_ok=True)
+        # Retirer l'ancienne version cassée pour éviter un SERVFAIL permanent.
+        path.unlink(missing_ok=True)
+        logger.error("Zone BIND invalide (non publiée): %s", zone.name)
+        return None
     tmp.replace(path)
     try:
         os.chmod(path, 0o644)
     except OSError:
         pass
     return path
+
+
+def _named_checkzone(zone_name: str, path: Path) -> bool:
+    """Valide le fichier avec named-checkzone si disponible (évite SERVFAIL)."""
+    helper = which("named-checkzone")
+    if not helper:
+        return True
+    try:
+        result = subprocess.run(
+            [helper, zone_name.rstrip("."), str(path)],
+            check=False,
+            timeout=30,
+            capture_output=True,
+            text=True,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("named-checkzone failed for %s", zone_name)
+        return True  # ne bloque pas si l'outil plante
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        logger.error("named-checkzone %s: %s", zone_name, detail[:2000])
+        return False
+    return True
 
 
 def remove_zone_file(zone_name: str) -> None:

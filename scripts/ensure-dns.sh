@@ -160,6 +160,25 @@ chmod -R g+rwX "${NAMED_DIR}" || true
 find "${ZONES_DIR}" -type f -name '*.zone' -exec chmod 644 {} \; 2>/dev/null || true
 chmod 644 "${ZONES_CONF}" || true
 
+echo "[vzone-dns] named-checkzone (toutes les zones)"
+check_fail=0
+if command -v named-checkzone >/dev/null 2>&1; then
+  shopt -s nullglob
+  for zf in "${ZONES_DIR}"/*.zone; do
+    zname="$(basename "${zf}" .zone)"
+    if ! named-checkzone "${zname}" "${zf}" >/tmp/vzone-checkzone.out 2>&1; then
+      echo "[vzone-dns] ERREUR zone ${zname}:" >&2
+      head -n 20 /tmp/vzone-checkzone.out >&2 || true
+      check_fail=1
+    else
+      echo "[vzone-dns] OK ${zname}"
+    fi
+  done
+  shopt -u nullglob
+else
+  echo "[vzone-dns] named-checkzone absent — skip"
+fi
+
 echo "[vzone-dns] named-checkconf"
 if ! named-checkconf; then
   echo "[vzone-dns] ERREUR named-checkconf" >&2
@@ -173,6 +192,11 @@ echo "[vzone-dns] statut named:"
 systemctl is-active named 2>/dev/null || systemctl is-active bind9 2>/dev/null || true
 systemctl --no-pager -l status named 2>/dev/null | head -n 20 || \
   systemctl --no-pager -l status bind9 2>/dev/null | head -n 20 || true
+
+if [[ "${check_fail}" -ne 0 ]]; then
+  echo "[vzone-dns] ALERTE: au moins une zone invalide (SERVFAIL public)" >&2
+  journalctl -u named -u bind9 -n 30 --no-pager 2>/dev/null || true
+fi
 
 echo "[vzone-dns] écoute :53"
 ss -ulnp | grep ':53' || true
