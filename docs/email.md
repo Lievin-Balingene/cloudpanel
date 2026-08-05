@@ -2,15 +2,16 @@
 
 ## Stack MTA
 
-Production : **Postfix** (SMTP 25/587/465) + **Dovecot** (IMAP/POP3 143/993/110/995) + **OpenDKIM**.
-
-Installation / mise à jour :
+## Délivrabilité (anti-spam)
 
 ```bash
-sudo bash scripts/install-mail.sh
-sudo bash scripts/install-roundcube.sh
-# ou via update.sh (appelé automatiquement)
+sudo bash /opt/vzone-src/scripts/repair-mail-reputation.sh
 ```
+
+- OpenDKIM signe les mails Roundcube (SMTP :587)
+- SPF / DKIM / DMARC publiés dans BIND à la création du domaine mail
+- Vérifiez `DKIM-Signature` dans les en-têtes du message reçu
+- PTR (rDNS) de l’IP publique → à régler chez l’hébergeur VPS
 
 ## Webmail Roundcube
 

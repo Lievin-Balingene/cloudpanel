@@ -96,6 +96,27 @@ systemctl enable --now opendkim postfix 2>/dev/null || true
 systemctl reload opendkim 2>/dev/null || systemctl restart opendkim
 systemctl reload postfix 2>/dev/null || systemctl restart postfix
 
+# Agent reload (si pas encore installé)
+if [[ -f "${REPO_DIR}/scripts/vzone-mail-reload.sh" ]]; then
+  install -m 755 "${REPO_DIR}/scripts/vzone-mail-reload.sh" /usr/local/sbin/vzone-mail-reload
+  install -m 644 "${REPO_DIR}/deploy/systemd/vzone-mail-reload.service" /etc/systemd/system/vzone-mail-reload.service
+  install -m 644 "${REPO_DIR}/deploy/systemd/vzone-mail-reload.path" /etc/systemd/system/vzone-mail-reload.path
+  systemctl daemon-reload
+  systemctl enable --now vzone-mail-reload.path
+  /usr/local/sbin/vzone-mail-reload || true
+fi
+
+# OpenDKIM conf → maps panel
+if [[ -f "${REPO_DIR}/deploy/opendkim/opendkim.conf" ]]; then
+  install -m 644 "${REPO_DIR}/deploy/opendkim/opendkim.conf" /etc/opendkim.conf
+  sed -i "s|__MAPS_DIR__|${MAPS_DIR}|g" /etc/opendkim.conf
+  systemctl restart opendkim 2>/dev/null || true
+fi
+if [[ -f "${REPO_DIR}/deploy/postfix/master.cf" ]]; then
+  install -m 644 "${REPO_DIR}/deploy/postfix/master.cf" /etc/postfix/master.cf
+  systemctl reload postfix 2>/dev/null || true
+fi
+
 echo
 echo "[DNS public]"
 for d in $( "${VZONE_ROOT}/backend/.venv/bin/python" -c \

@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
@@ -468,7 +469,7 @@ def _mail_stack_live() -> bool:
 
 
 def reload_mail_services() -> None:
-    """postmap + reload Postfix / Dovecot / OpenDKIM si stack live."""
+    """postmap + reload Postfix / Dovecot / OpenDKIM via agent root si besoin."""
     if not _mail_stack_live():
         return
     root = mail_storage_root()
@@ -486,10 +487,32 @@ def reload_mail_services() -> None:
                 shutil.copy2(src, dest)
                 _secure_opendkim_path(dest)
             except OSError as exc:
-                logger.warning("OpenDKIM table copy failed: %s", exc)
+                logger.debug("OpenDKIM table copy (non-root OK): %s", exc)
     dkim_root = root / "dkim"
     if dkim_root.is_dir():
         _secure_opendkim_path(dkim_root)
+
+    # Agent root (API a souvent NoNewPrivileges)
+    helper = Path("/usr/local/sbin/vzone-mail-reload")
+    flag = root / "reload.requested"
+    try:
+        flag.parent.mkdir(parents=True, exist_ok=True)
+        flag.write_text(str(int(time.time())), encoding="utf-8")
+    except OSError:
+        pass
+    try:
+        subprocess.run(
+            ["systemctl", "start", "vzone-mail-reload.service"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=20,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+    if helper.is_file() and os.geteuid() == 0:
+        subprocess.run([str(helper)], check=False, capture_output=True)
+        return
     for unit in ("opendkim", "dovecot", "postfix"):
         subprocess.run(
             ["systemctl", "reload", unit],
@@ -521,7 +544,16 @@ def write_mail_maps() -> Path:
         domain_lines.append(f"{md.name} OK")
         if md.dkim_enabled and md.dkim_private_key:
             selector = md.dkim_selector or "default"
-            key_path = root / "dkim" / md.name / f"{selector}.private"
+            key_dir = root / "dkim" / md.name
+            key_path = key_dir / f"{selector}.private"
+            if not key_path.exists():
+                try:
+                    key_dir.mkdir(parents=True, exist_ok=True)
+                    key_path.write_text(md.dkim_private_key, encoding="utf-8")
+                    _secure_opendkim_path(key_dir)
+                    _secure_opendkim_path(key_path)
+                except OSError as exc:
+                    logger.warning("DKIM key write %s: %s", key_path, exc)
             if key_path.exists():
                 key_id = f"{selector}._domainkey.{md.name}"
                 key_lines.append(f"{key_id} {md.name}:{selector}:{key_path}")

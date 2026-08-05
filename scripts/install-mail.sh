@@ -94,15 +94,21 @@ fi
 
 # --- OpenDKIM ---
 install -m 644 "${REPO_DIR}/deploy/opendkim/opendkim.conf" /etc/opendkim.conf
+sed -i "s|__MAPS_DIR__|${MAPS_DIR}|g" /etc/opendkim.conf
 install -m 644 "${REPO_DIR}/deploy/opendkim/TrustedHosts" /etc/opendkim/TrustedHosts
+grep -qxF "127.0.0.1" /etc/opendkim/TrustedHosts || echo "127.0.0.1" >> /etc/opendkim/TrustedHosts
+grep -qxF "localhost" /etc/opendkim/TrustedHosts || echo "localhost" >> /etc/opendkim/TrustedHosts
+grep -qxF "::1" /etc/opendkim/TrustedHosts || echo "::1" >> /etc/opendkim/TrustedHosts
 grep -qxF "$HOSTNAME_FQDN" /etc/opendkim/TrustedHosts || echo "$HOSTNAME_FQDN" >> /etc/opendkim/TrustedHosts
 [[ -n "${PUBLIC_IP}" ]] && { grep -qxF "$PUBLIC_IP" /etc/opendkim/TrustedHosts || echo "$PUBLIC_IP" >> /etc/opendkim/TrustedHosts; }
+touch "${MAPS_DIR}/opendkim-KeyTable" "${MAPS_DIR}/opendkim-SigningTable"
 touch /etc/opendkim/KeyTable /etc/opendkim/SigningTable
 chown -R opendkim:opendkim /etc/opendkim /etc/opendkim.conf
-chmod 640 /etc/opendkim/KeyTable /etc/opendkim/SigningTable
-# Lien vers maps générées par le panel
+chgrp opendkim "${MAPS_DIR}/opendkim-KeyTable" "${MAPS_DIR}/opendkim-SigningTable" 2>/dev/null || true
+chmod 640 "${MAPS_DIR}/opendkim-KeyTable" "${MAPS_DIR}/opendkim-SigningTable" /etc/opendkim/KeyTable /etc/opendkim/SigningTable
+usermod -aG opendkim "${VZONE_USER}" 2>/dev/null || true
 ln -sfn "$MAPS_DIR/dkim" /etc/opendkim/keys/vzone
-if [[ -f "$MAPS_DIR/opendkim-KeyTable" ]]; then
+if [[ -s "$MAPS_DIR/opendkim-KeyTable" ]]; then
   cp -f "$MAPS_DIR/opendkim-KeyTable" /etc/opendkim/KeyTable
   cp -f "$MAPS_DIR/opendkim-SigningTable" /etc/opendkim/SigningTable
   chown opendkim:opendkim /etc/opendkim/KeyTable /etc/opendkim/SigningTable
@@ -112,6 +118,13 @@ fi
 mkdir -p /var/spool/postfix/opendkim
 chown opendkim:postfix /var/spool/postfix/opendkim
 chmod 750 /var/spool/postfix/opendkim
+
+# Agent reload mail (API non-root → flag → systemd)
+install -m 755 "${REPO_DIR}/scripts/vzone-mail-reload.sh" /usr/local/sbin/vzone-mail-reload
+install -m 644 "${REPO_DIR}/deploy/systemd/vzone-mail-reload.service" /etc/systemd/system/vzone-mail-reload.service
+install -m 644 "${REPO_DIR}/deploy/systemd/vzone-mail-reload.path" /etc/systemd/system/vzone-mail-reload.path
+systemctl daemon-reload
+systemctl enable --now vzone-mail-reload.path
 
 # Firewall mail
 if command -v ufw >/dev/null 2>&1; then

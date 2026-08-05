@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch V-zone mail/OpenDKIM reload requests
+
+[Path]
+PathExists=/var/lib/vzone/mail/maps/reload.requested
+MakeDirectory=true
+Unit=vzone-mail-reload.service
+
+[Install]
+WantedBy=multi-user.target
