@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch V-zone cron job sync requests
+
+[Path]
+PathExistsGlob=/var/lib/vzone/cron/jobs/*.request
+MakeDirectory=true
+Unit=vzone-cron-job.service
+
+[Install]
+WantedBy=multi-user.target

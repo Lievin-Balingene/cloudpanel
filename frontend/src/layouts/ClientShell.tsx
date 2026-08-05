@@ -25,6 +25,7 @@ import {
   Shield,
   ChevronDown,
   Activity,
+  Clock,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { apiRequest } from "@/lib/api";
@@ -65,6 +66,11 @@ const sections: NavSection[] = [
     id: "email",
     label: "Email",
     items: [{ to: "/panel/email", label: "Email Accounts", icon: Mail }],
+  },
+  {
+    id: "advanced",
+    label: "Advanced",
+    items: [{ to: "/panel/cron", label: "Cron Jobs", icon: Clock }],
   },
   {
     id: "metrics",

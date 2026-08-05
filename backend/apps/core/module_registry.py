@@ -90,6 +90,7 @@ class ModuleRegistry:
             "apps.domains.module",
             "apps.files.module",
             "apps.ftp.module",
+            "apps.cron.module",
             "apps.email.module",
             "apps.databases.module",
             "apps.python_apps.module",

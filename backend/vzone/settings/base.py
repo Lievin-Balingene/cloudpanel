@@ -75,6 +75,7 @@ INSTALLED_APPS = [
     "apps.domains",
     "apps.files",
     "apps.ftp",
+    "apps.cron",
     "apps.email",
     "apps.databases",
     "apps.python_apps",
@@ -300,7 +301,7 @@ VZONE_WEB_STACK = env("VZONE_WEB_STACK", "auto")  # auto | live | mock
 # Modules activés (extensible à l'installation)
 VZONE_ENABLED_MODULES = env_list(
     "VZONE_ENABLED_MODULES",
-    "core,accounts,packages,dns,dashboard,domains,files,ftp,email,databases,python_apps,node_apps,php,git_deploy,docker_mgmt,backups,monitoring,firewall,security,wordpress,kubernetes,server_setup,transfer",
+    "core,accounts,packages,dns,dashboard,domains,files,ftp,cron,email,databases,python_apps,node_apps,php,git_deploy,docker_mgmt,backups,monitoring,firewall,security,wordpress,kubernetes,server_setup,transfer",
 )
 
 # Email / webmail
@@ -407,6 +408,9 @@ VZONE_FTP_VIRTUAL_USERS_FILE = env(
     str(VZONE_DATA_ROOT / "ftp" / "virtual_users"),
 )
 VZONE_FTP_AUTH_SECRET = env("VZONE_FTP_AUTH_SECRET", "")
+VZONE_CRON_JOBS_DIR = env("VZONE_CRON_JOBS_DIR", str(VZONE_DATA_ROOT / "cron" / "jobs"))
+VZONE_CRON_PROVISION_MODE = env("VZONE_CRON_PROVISION_MODE", "auto")  # auto|live|mock
+VZONE_CRON_RUN_USER = env("VZONE_CRON_RUN_USER", "vzone")
 
 
 # Uploads File Manager (multipart + chunks)

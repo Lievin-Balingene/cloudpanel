@@ -158,6 +158,11 @@ else
   sleep 2
 fi
 
+# Cron Jobs (agent root → /etc/cron.d)
+if [[ -f "${REPO_DIR}/scripts/install-cron.sh" ]]; then
+  bash "${REPO_DIR}/scripts/install-cron.sh" || echo "[vzone] Avertissement: install-cron.sh a échoué"
+fi
+
 # Apps Python : relancer les process morts (502 nginx → port app)
 if [[ -x "${VZONE_ROOT}/backend/.venv/bin/python" ]]; then
   echo "[vzone] Réconciliation apps Python…"

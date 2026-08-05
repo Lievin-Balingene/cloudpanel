@@ -23,6 +23,7 @@ urlpatterns = [
     path("api/v1/domains/", include("apps.domains.urls")),
     path("api/v1/files/", include("apps.files.urls")),
     path("api/v1/ftp/", include("apps.ftp.urls")),
+    path("api/v1/cron/", include("apps.cron.urls")),
     path("api/v1/email/", include("apps.email.urls")),
     path("api/v1/databases/", include("apps.databases.urls")),
     path("api/v1/python/", include("apps.python_apps.urls")),

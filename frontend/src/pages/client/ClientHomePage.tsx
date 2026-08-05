@@ -101,7 +101,7 @@ const sections: Section[] = [
   {
     title: "Advanced",
     tools: [
-      { to: "/panel/cron", label: "Cron Jobs", icon: Activity, disabled: true },
+      { to: "/panel/cron", label: "Cron Jobs", icon: Activity },
     ],
   },
   {

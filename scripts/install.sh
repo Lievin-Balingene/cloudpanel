@@ -209,6 +209,9 @@ PY
   if [[ -f "${SCRIPT_DIR}/install-certbot.sh" ]]; then
     bash "${SCRIPT_DIR}/install-certbot.sh" || log "Avertissement: certbot non installé"
   fi
+  if [[ -f "${SCRIPT_DIR}/install-cron.sh" ]]; then
+    bash "${SCRIPT_DIR}/install-cron.sh" || log "Avertissement: agent cron non installé"
+  fi
   if [[ -f "${SCRIPT_DIR}/install-hostname-agent.sh" ]]; then
     bash "${SCRIPT_DIR}/install-hostname-agent.sh" || log "Avertissement: agent hostname non installé"
   fi

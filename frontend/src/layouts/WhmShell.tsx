@@ -27,6 +27,7 @@ import {
   KeyRound,
   ArrowRightLeft,
   UserPlus,
+  Clock,
 } from "lucide-react";
 import { useAuthStore } from "@/stores/auth";
 import { useThemeStore } from "@/stores/theme";
@@ -57,6 +58,7 @@ const navSections = [
       { to: "/whm/email", label: "Email", icon: Mail },
       { to: "/whm/databases", label: "Databases", icon: Database },
       { to: "/whm/ftp", label: "FTP", icon: Upload },
+      { to: "/whm/cron", label: "Cron Jobs", icon: Clock },
       { to: "/whm/files", label: "File Manager", icon: FolderOpen },
     ],
   },

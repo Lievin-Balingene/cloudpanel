@@ -15,6 +15,7 @@ import { WhmDomainsPage } from "./pages/whm/WhmDomainsPage";
 import { WhmFilesPage } from "./pages/whm/WhmFilesPage";
 import { WhmFilesUploadPage } from "./pages/whm/WhmFilesUploadPage";
 import { WhmFtpPage } from "./pages/whm/WhmFtpPage";
+import { WhmCronPage } from "./pages/whm/WhmCronPage";
 import { WhmEmailPage } from "./pages/whm/WhmEmailPage";
 import { WhmDatabasesPage } from "./pages/whm/WhmDatabasesPage";
 import { WhmPythonPage } from "./pages/whm/WhmPythonPage";
@@ -38,6 +39,7 @@ import { ClientDomainsPage } from "./pages/client/ClientDomainsPage";
 import { ClientFilesPage } from "./pages/client/ClientFilesPage";
 import { ClientFilesUploadPage } from "./pages/client/ClientFilesUploadPage";
 import { ClientFtpPage } from "./pages/client/ClientFtpPage";
+import { ClientCronPage } from "./pages/client/ClientCronPage";
 import { ClientEmailPage } from "./pages/client/ClientEmailPage";
 import { ClientDatabasesPage } from "./pages/client/ClientDatabasesPage";
 import { ClientPythonPage } from "./pages/client/ClientPythonPage";
@@ -117,6 +119,7 @@ export default function App() {
         <Route path="files" element={<WhmFilesPage />} />
         <Route path="files/upload" element={<WhmFilesUploadPage />} />
         <Route path="ftp" element={<WhmFtpPage />} />
+        <Route path="cron" element={<WhmCronPage />} />
         <Route path="email" element={<WhmEmailPage />} />
         <Route path="databases" element={<WhmDatabasesPage />} />
         <Route path="python" element={<WhmPythonPage />} />
@@ -150,6 +153,7 @@ export default function App() {
         <Route path="files" element={<ClientFilesPage />} />
         <Route path="files/upload" element={<ClientFilesUploadPage />} />
         <Route path="ftp" element={<ClientFtpPage />} />
+        <Route path="cron" element={<ClientCronPage />} />
         <Route path="email" element={<ClientEmailPage />} />
         <Route path="databases" element={<ClientDatabasesPage />} />
         <Route path="python" element={<ClientPythonPage />} />
