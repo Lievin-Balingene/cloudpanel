@@ -638,7 +638,7 @@ def start_python_app(app: PythonApp) -> PythonApp:
             raise VZoneAPIException(
                 detail=f"Virtualenv introuvable : {venv_dir}. Recréez l'application ou le venv.",
                 code="venv_missing",
-                status_code=502,
+                status_code=400,
                 extra={"venv": str(venv_dir)},
             )
         fake_pid = 10000 + (app.pk or 1)
@@ -649,6 +649,7 @@ def start_python_app(app: PythonApp) -> PythonApp:
         app.last_started_at = timezone.now()
         app.save()
         write_app_config(app)
+        _refresh_domain_routing()
         return app
 
     # Arrêter une instance précédente sur le même pid
@@ -715,7 +716,7 @@ def start_python_app(app: PythonApp) -> PythonApp:
         raise VZoneAPIException(
             detail=f"Impossible de démarrer l'application : {detail[:300]}",
             code="start_failed",
-            status_code=502,
+            status_code=400,
             extra=extra,
         ) from exc
     app.save()

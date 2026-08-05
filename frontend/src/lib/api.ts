@@ -52,7 +52,9 @@ export async function apiRequest<T>(
       lastError = err;
       const retryable =
         err instanceof ApiClientError &&
-        (err.status === 502 || err.status === 503 || err.status === 0);
+        (err.status === 502 || err.status === 503 || err.status === 0) &&
+        // Ne pas réessayer une erreur métier renvoyée en 502 (start Python, etc.)
+        !(err.payload?.error?.message);
       if (!retryable || attempt === maxAttempts) {
         throw err;
       }
@@ -115,7 +117,9 @@ async function apiRequestOnce<T>(
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 400) || `Erreur HTTP ${response.status}`;
-    if (response.status === 502 || response.status === 503) {
+    // 502/503 nginx (HTML/vide) ≠ erreur métier JSON de l'API (ex. start Python échoué).
+    const hasApiError = Boolean(err?.error?.message || err?.success === false);
+    if ((response.status === 502 || response.status === 503) && !hasApiError) {
       message =
         "API indisponible (502). Le service vzone-api est probablement arrêté ou en redémarrage. " +
         "Sur le serveur : sudo bash /opt/vzone-src/scripts/repair-api-502.sh — puis réessayez.";
