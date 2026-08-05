@@ -469,6 +469,59 @@ def _safe_filename(uploaded_name: str) -> str:
     return safe_name
 
 
+_NAME_PART_RE = re.compile(r'^[^\\/:*?"<>|\x00-\x1f]+$')
+
+
+def _safe_upload_relpath(uploaded_name: str) -> str:
+    """
+    Chemin relatif d'upload (fichier ou arborescence dossier).
+    Ex. « mon-site/css/app.css » — crée les parents à l'écriture.
+    """
+    raw = (uploaded_name or "").replace("\\", "/").strip("/")
+    if not raw:
+        raise VZoneAPIException(detail="Nom de fichier invalide.", code="invalid_name", status_code=400)
+    parts = raw.split("/")
+    if ".." in parts or any(p in {".", ""} for p in parts):
+        raise VZoneAPIException(
+            detail="Chemin d'upload invalide.",
+            code="invalid_path",
+            status_code=400,
+        )
+    for part in parts:
+        if not _NAME_PART_RE.match(part) or len(part) > 255:
+            raise VZoneAPIException(
+                detail=f"Segment de chemin invalide: {part[:64]}",
+                code="invalid_name",
+                status_code=400,
+            )
+    if len(raw) > 1024:
+        raise VZoneAPIException(detail="Chemin d'upload trop long.", code="invalid_path", status_code=400)
+    return "/".join(parts)
+
+
+def ensure_directory(user: User, relative: str) -> FileEntry:
+    """Crée un dossier (et parents) sous le home — upload de dossier vide / arborescence."""
+    rel = (relative or "").replace("\\", "/").strip("/")
+    if not rel:
+        return entry_from_path(user, user_home(user))
+    parts = rel.split("/")
+    if ".." in parts or any(p in {".", ""} for p in parts):
+        raise VZoneAPIException(detail="Chemin invalide.", code="invalid_path", status_code=400)
+    for part in parts:
+        if not _NAME_PART_RE.match(part) or len(part) > 255:
+            raise VZoneAPIException(detail="Nom de dossier invalide.", code="invalid_name", status_code=400)
+    if len(rel) > 1024:
+        raise VZoneAPIException(detail="Chemin trop long.", code="invalid_path", status_code=400)
+    target = resolve_path(user, rel)
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise _fs_write_error(exc) from exc
+    if not target.is_dir():
+        raise VZoneAPIException(detail="Le chemin n'est pas un dossier.", code="not_directory", status_code=400)
+    return entry_from_path(user, target)
+
+
 def _uploads_root(user: User) -> Path:
     root = user_home(user) / "tmp" / ".vzone-uploads"
     root.mkdir(parents=True, exist_ok=True)
@@ -515,11 +568,23 @@ def _write_session_meta(session: Path, meta: dict) -> None:
 def save_upload(user: User, relative_dir: str, uploaded_name: str, stream: BinaryIO, size: int | None) -> FileEntry:
     if size is not None and size > MAX_UPLOAD_BYTES:
         raise VZoneAPIException(detail="Fichier trop volumineux.", code="file_too_large", status_code=400)
-    safe_name = _safe_filename(uploaded_name)
+    rel_name = _safe_upload_relpath(uploaded_name)
     dest_dir = resolve_path(user, relative_dir)
     if not dest_dir.is_dir():
         raise VZoneAPIException(detail="Dossier destination invalide.", code="not_directory", status_code=400)
-    target = dest_dir / safe_name
+    target = (dest_dir / rel_name).resolve()
+    try:
+        target.relative_to(dest_dir.resolve())
+    except ValueError as exc:
+        raise VZoneAPIException(
+            detail="Accès hors de l'espace autorisé.",
+            code="path_forbidden",
+            status_code=403,
+        ) from exc
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise _fs_write_error(exc) from exc
     written = 0
     try:
         with target.open("wb") as out:
@@ -550,10 +615,17 @@ def init_chunked_upload(
 ) -> dict:
     if size < 0 or size > MAX_UPLOAD_BYTES:
         raise VZoneAPIException(detail="Fichier trop volumineux.", code="file_too_large", status_code=400)
-    safe_name = _safe_filename(uploaded_name)
+    rel_name = _safe_upload_relpath(uploaded_name)
     dest_dir = resolve_path(user, relative_dir)
     if not dest_dir.is_dir():
         raise VZoneAPIException(detail="Dossier destination invalide.", code="not_directory", status_code=400)
+    # Pré-crée les dossiers parents (upload dossier)
+    parent_rel = str(Path(rel_name).parent).replace("\\", "/")
+    if parent_rel and parent_rel != ".":
+        ensure_directory(
+            user,
+            f"{(relative_dir or '').rstrip('/')}/{parent_rel}".strip("/"),
+        )
 
     resolved_chunk = int(chunk_size or DEFAULT_CHUNK_BYTES)
     resolved_chunk = max(MIN_CHUNK_BYTES, min(MAX_CHUNK_BYTES, resolved_chunk))
@@ -566,7 +638,7 @@ def init_chunked_upload(
 
     meta = {
         "upload_id": upload_id,
-        "name": safe_name,
+        "name": rel_name,
         "path": relative_dir or "",
         "size": size,
         "chunk_size": resolved_chunk,
@@ -668,7 +740,20 @@ def complete_chunked_upload(user: User, upload_id: str) -> FileEntry:
     dest_dir = resolve_path(user, meta.get("path") or "")
     if not dest_dir.is_dir():
         raise VZoneAPIException(detail="Dossier destination invalide.", code="not_directory", status_code=400)
-    target = dest_dir / str(meta["name"])
+    rel_name = _safe_upload_relpath(str(meta["name"]))
+    target = (dest_dir / rel_name).resolve()
+    try:
+        target.relative_to(dest_dir.resolve())
+    except ValueError as exc:
+        raise VZoneAPIException(
+            detail="Accès hors de l'espace autorisé.",
+            code="path_forbidden",
+            status_code=403,
+        ) from exc
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise _fs_write_error(exc) from exc
     expected_size = int(meta["size"])
     written = 0
     try:

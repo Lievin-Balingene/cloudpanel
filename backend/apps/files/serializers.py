@@ -9,7 +9,8 @@ class PathSerializer(serializers.Serializer):
 
 class MkdirSerializer(serializers.Serializer):
     path = serializers.CharField(required=False, allow_blank=True, default="")
-    name = serializers.CharField(max_length=255)
+    name = serializers.CharField(max_length=1024)
+    recursive = serializers.BooleanField(required=False, default=False)
 
 
 class CreateFileSerializer(serializers.Serializer):
@@ -61,7 +62,7 @@ class SearchSerializer(serializers.Serializer):
 
 class UploadInitSerializer(serializers.Serializer):
     path = serializers.CharField(required=False, allow_blank=True, default="")
-    name = serializers.CharField(max_length=255)
+    name = serializers.CharField(max_length=1024)
     size = serializers.IntegerField(min_value=0)
     chunk_size = serializers.IntegerField(required=False, min_value=1024, max_value=16 * 1024 * 1024)
 

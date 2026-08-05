@@ -139,10 +139,13 @@ async function uploadSimple(
   cwd: string,
   token: string | null,
   onProgress: (percent: number) => void,
+  relativePath?: string,
 ): Promise<void> {
   const body = new FormData();
   body.append("path", cwd);
-  body.append("file", file);
+  const rel = (relativePath || file.webkitRelativePath || file.name).replace(/\\/g, "/");
+  body.append("relative_path", rel);
+  body.append("file", file, file.name);
   await xhrSend("POST", "/api/v1/files/upload/", token, body, {
     timeoutMs: 15 * 60 * 1000,
     onProgress: (loaded, total) => {
@@ -190,14 +193,16 @@ async function uploadChunked(
   cwd: string,
   token: string | null,
   onProgress: (percent: number) => void,
+  relativePath?: string,
 ): Promise<void> {
+  const rel = (relativePath || file.webkitRelativePath || file.name).replace(/\\/g, "/");
   const initRaw = await xhrSend(
     "POST",
     "/api/v1/files/upload/init/",
     token,
     JSON.stringify({
       path: cwd,
-      name: file.name,
+      name: rel,
       size: file.size,
       chunk_size: CHUNK_BYTES,
     }),
@@ -256,6 +261,7 @@ async function uploadWithProgress(
   cwd: string,
   token: string | null,
   onProgress: (percent: number) => void,
+  relativePath?: string,
 ): Promise<void> {
   // Archives / gros fichiers : toujours chunké (évite coupure nginx sur un seul POST).
   const forceChunked =
@@ -263,7 +269,7 @@ async function uploadWithProgress(
 
   if (!forceChunked) {
     try {
-      await uploadSimple(file, cwd, token, onProgress);
+      await uploadSimple(file, cwd, token, onProgress, relativePath);
       return;
     } catch (err) {
       if (!(err instanceof ApiClientError) || (err.status !== 0 && err.status !== 413 && err.status !== 502)) {
@@ -271,7 +277,89 @@ async function uploadWithProgress(
       }
     }
   }
-  await uploadChunked(file, cwd, token, onProgress);
+  await uploadChunked(file, cwd, token, onProgress, relativePath);
+}
+
+/** Job d'upload : fichier ou dossier vide (mkdir). */
+type DropJob =
+  | { kind: "file"; file: File; relativePath: string }
+  | { kind: "dir"; relativePath: string };
+
+function readAllDirectoryEntries(reader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> {
+  return new Promise((resolve, reject) => {
+    const all: FileSystemEntry[] = [];
+    const readBatch = () => {
+      reader.readEntries(
+        (batch) => {
+          if (!batch.length) {
+            resolve(all);
+            return;
+          }
+          all.push(...batch);
+          readBatch();
+        },
+        (err) => reject(err),
+      );
+    };
+    readBatch();
+  });
+}
+
+function entryToFile(entry: FileSystemFileEntry): Promise<File> {
+  return new Promise((resolve, reject) => {
+    entry.file(resolve, reject);
+  });
+}
+
+async function walkFsEntry(entry: FileSystemEntry, prefix: string, out: DropJob[]): Promise<void> {
+  if (entry.isFile) {
+    const file = await entryToFile(entry as FileSystemFileEntry);
+    const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+    out.push({ kind: "file", file, relativePath });
+    return;
+  }
+  if (entry.isDirectory) {
+    const dir = entry as FileSystemDirectoryEntry;
+    const nextPrefix = prefix ? `${prefix}/${entry.name}` : entry.name;
+    const children = await readAllDirectoryEntries(dir.createReader());
+    if (!children.length) {
+      out.push({ kind: "dir", relativePath: nextPrefix });
+      return;
+    }
+    for (const child of children) {
+      await walkFsEntry(child, nextPrefix, out);
+    }
+  }
+}
+
+async function collectDataTransferJobs(dt: DataTransfer): Promise<DropJob[]> {
+  const jobs: DropJob[] = [];
+  const items = dt.items ? Array.from(dt.items) : [];
+  const entries = items
+    .map((item) => (item.webkitGetAsEntry ? item.webkitGetAsEntry() : null))
+    .filter((e): e is FileSystemEntry => Boolean(e));
+
+  if (entries.length) {
+    for (const entry of entries) {
+      await walkFsEntry(entry, "", jobs);
+    }
+    return jobs;
+  }
+
+  // Fallback : fichiers plats (sans arborescence)
+  for (const file of Array.from(dt.files || [])) {
+    const rel = (file.webkitRelativePath || file.name).replace(/\\/g, "/");
+    jobs.push({ kind: "file", file, relativePath: rel });
+  }
+  return jobs;
+}
+
+function collectFileListJobs(files: FileList | File[]): DropJob[] {
+  return Array.from(files).map((file) => ({
+    kind: "file" as const,
+    file,
+    relativePath: (file.webkitRelativePath || file.name).replace(/\\/g, "/"),
+  }));
 }
 
 function ConfirmDialog({
@@ -402,7 +490,11 @@ export function FileManager({ title }: { title: string }) {
   const [uploads, setUploads] = useState<UploadItem[] | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [renameOpen, setRenameOpen] = useState(false);
+  const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
+  const [internalDrag, setInternalDrag] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+  const dragDepth = useRef(0);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ["files", cwd],
@@ -458,21 +550,20 @@ export function FileManager({ title }: { title: string }) {
     }
   }, [confirm]);
 
-  const uploadFiles = async (files: FileList | File[]) => {
-    const list = Array.from(files);
-    if (!list.length) return;
+  const uploadJobs = async (jobs: DropJob[], destCwd: string = cwd) => {
+    if (!jobs.length) return;
     setError(null);
-    const items: UploadItem[] = list.map((f) => ({
-      name: f.name,
-      size: f.size,
+    const items: UploadItem[] = jobs.map((job) => ({
+      name: job.relativePath,
+      size: job.kind === "file" ? job.file.size : 0,
       percent: 0,
       status: "pending",
     }));
     setUploads(items);
 
     let failed = false;
-    for (let i = 0; i < list.length; i++) {
-      const file = list[i];
+    for (let i = 0; i < jobs.length; i++) {
+      const job = jobs[i];
       setUploads((prev) =>
         prev
           ? prev.map((it, idx) =>
@@ -481,11 +572,22 @@ export function FileManager({ title }: { title: string }) {
           : prev,
       );
       try {
-        await uploadWithProgress(file, cwd, token, (percent) => {
-          setUploads((prev) =>
-            prev ? prev.map((it, idx) => (idx === i ? { ...it, percent } : it)) : prev,
-          );
-        });
+        if (job.kind === "dir") {
+          await apiRequest("/files/mkdir/", {
+            method: "POST",
+            body: JSON.stringify({
+              path: destCwd,
+              name: job.relativePath,
+              recursive: true,
+            }),
+          });
+        } else {
+          await uploadWithProgress(job.file, destCwd, token, (percent) => {
+            setUploads((prev) =>
+              prev ? prev.map((it, idx) => (idx === i ? { ...it, percent } : it)) : prev,
+            );
+          }, job.relativePath);
+        }
         setUploads((prev) =>
           prev
             ? prev.map((it, idx) =>
@@ -513,6 +615,25 @@ export function FileManager({ title }: { title: string }) {
     }
     await qc.invalidateQueries({ queryKey: ["files"] });
     if (!failed) setSelected([]);
+  };
+
+  const uploadFiles = async (files: FileList | File[], destCwd: string = cwd) => {
+    await uploadJobs(collectFileListJobs(files), destCwd);
+  };
+
+  const movePathsTo = async (paths: string[], destination: string) => {
+    const filtered = paths.filter((p) => {
+      if (p === destination) return false;
+      if (destination.startsWith(`${p}/`)) return false;
+      return true;
+    });
+    if (!filtered.length) return;
+    await run(async () => {
+      await apiRequest("/files/move/", {
+        method: "POST",
+        body: JSON.stringify({ paths: filtered, destination }),
+      });
+    });
   };
 
   async function openEditor(entry: FileEntry) {
@@ -702,7 +823,7 @@ export function FileManager({ title }: { title: string }) {
         <div>
           <h1 className="text-xl font-semibold">{title}</h1>
           <p className="text-sm text-cp-muted">
-            Upload, édition, compression, permissions — jailé dans le home du compte.
+            Glisser-déposer fichiers/dossiers, déplacement interne, édition — jailé dans le home.
           </p>
         </div>
         <button type="button" className="vz-btn-ghost" onClick={() => void refetch()}>
@@ -731,11 +852,26 @@ export function FileManager({ title }: { title: string }) {
           <Upload className="h-4 w-4" />
           Upload
         </button>
+        <button type="button" className="vz-btn-ghost" onClick={() => folderInputRef.current?.click()}>
+          <FolderPlus className="h-4 w-4" />
+          Dossier
+        </button>
         <input
           ref={fileInputRef}
           type="file"
           multiple
           className="hidden"
+          onChange={(e) => {
+            if (e.target.files?.length) void uploadFiles(e.target.files);
+            e.target.value = "";
+          }}
+        />
+        <input
+          ref={folderInputRef}
+          type="file"
+          className="hidden"
+          multiple
+          {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
           onChange={(e) => {
             if (e.target.files?.length) void uploadFiles(e.target.files);
             e.target.value = "";
@@ -845,16 +981,54 @@ export function FileManager({ title }: { title: string }) {
 
       <div className="grid gap-3 lg:grid-cols-[1fr_220px]">
         <div
-          className={`vz-panel relative min-h-[420px] overflow-hidden ${dragOver ? "ring-2 ring-cp-orange" : ""}`}
+          className={`vz-panel relative min-h-[420px] overflow-hidden ${
+            dragOver && !internalDrag ? "ring-2 ring-cp-orange" : ""
+          }`}
+          onDragEnter={(e) => {
+            e.preventDefault();
+            dragDepth.current += 1;
+            if (e.dataTransfer.types.includes("Files")) {
+              setInternalDrag(false);
+              setDragOver(true);
+            }
+          }}
           onDragOver={(e) => {
             e.preventDefault();
-            setDragOver(true);
+            e.dataTransfer.dropEffect = internalDrag ? "move" : "copy";
           }}
-          onDragLeave={() => setDragOver(false)}
+          onDragLeave={() => {
+            dragDepth.current = Math.max(0, dragDepth.current - 1);
+            if (dragDepth.current === 0) {
+              setDragOver(false);
+              setDropTargetPath(null);
+            }
+          }}
           onDrop={(e) => {
             e.preventDefault();
+            dragDepth.current = 0;
             setDragOver(false);
-            if (e.dataTransfer.files?.length) void uploadFiles(e.dataTransfer.files);
+            setDropTargetPath(null);
+            const internal = e.dataTransfer.getData("application/x-vzone-paths");
+            if (internal) {
+              try {
+                const paths = JSON.parse(internal) as string[];
+                void movePathsTo(paths, cwd);
+              } catch {
+                /* ignore */
+              }
+              setInternalDrag(false);
+              return;
+            }
+            void (async () => {
+              try {
+                const jobs = await collectDataTransferJobs(e.dataTransfer);
+                await uploadJobs(jobs, cwd);
+              } catch (err) {
+                setError(
+                  err instanceof Error ? err.message : "Impossible de lire le dépôt.",
+                );
+              }
+            })();
           }}
         >
           <table className="min-w-full text-left text-sm">
@@ -869,10 +1043,37 @@ export function FileManager({ title }: { title: string }) {
             <tbody>
               {cwd && (
                 <tr
-                  className="cursor-pointer border-t border-cp-border hover:bg-cp-orange-soft/40 dark:border-ink-800"
+                  className={`cursor-pointer border-t border-cp-border hover:bg-cp-orange-soft/40 dark:border-ink-800 ${
+                    dropTargetPath === ".." ? "bg-cp-orange-soft/70 ring-1 ring-inset ring-cp-orange" : ""
+                  }`}
                   onDoubleClick={() => {
                     const parent = cwd.split("/").slice(0, -1).join("/");
                     setCwd(parent);
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setDropTargetPath("..");
+                  }}
+                  onDragLeave={() => setDropTargetPath((p) => (p === ".." ? null : p))}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setDropTargetPath(null);
+                    const parent = cwd.split("/").slice(0, -1).join("/");
+                    const internal = e.dataTransfer.getData("application/x-vzone-paths");
+                    if (internal) {
+                      try {
+                        void movePathsTo(JSON.parse(internal) as string[], parent);
+                      } catch {
+                        /* ignore */
+                      }
+                      return;
+                    }
+                    void (async () => {
+                      const jobs = await collectDataTransferJobs(e.dataTransfer);
+                      await uploadJobs(jobs, parent);
+                    })();
                   }}
                 >
                   <td className="px-3 py-2 font-medium" colSpan={4}>
@@ -889,11 +1090,17 @@ export function FileManager({ title }: { title: string }) {
               )}
               {(data?.entries ?? []).map((entry) => {
                 const active = selected.includes(entry.path);
+                const isDropTarget = dropTargetPath === entry.path && entry.is_dir;
                 return (
                   <tr
                     key={entry.path}
+                    draggable
                     className={`cursor-pointer border-t border-cp-border dark:border-ink-800 ${
-                      active ? "bg-cp-orange-soft/60" : "hover:bg-cp-canvas dark:hover:bg-ink-900"
+                      isDropTarget
+                        ? "bg-cp-orange-soft/80 ring-1 ring-inset ring-cp-orange"
+                        : active
+                          ? "bg-cp-orange-soft/60"
+                          : "hover:bg-cp-canvas dark:hover:bg-ink-900"
                     }`}
                     onClick={(e) => toggleSelect(entry.path, e.ctrlKey || e.metaKey)}
                     onDoubleClick={() => {
@@ -903,6 +1110,63 @@ export function FileManager({ title }: { title: string }) {
                       } else {
                         void openEditor(entry);
                       }
+                    }}
+                    onDragStart={(e) => {
+                      setInternalDrag(true);
+                      const paths =
+                        selected.includes(entry.path) && selected.length > 0
+                          ? selected
+                          : [entry.path];
+                      e.dataTransfer.setData(
+                        "application/x-vzone-paths",
+                        JSON.stringify(paths),
+                      );
+                      e.dataTransfer.effectAllowed = "move";
+                    }}
+                    onDragEnd={() => {
+                      setInternalDrag(false);
+                      setDropTargetPath(null);
+                      setDragOver(false);
+                      dragDepth.current = 0;
+                    }}
+                    onDragOver={(e) => {
+                      if (!entry.is_dir) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setDropTargetPath(entry.path);
+                    }}
+                    onDragLeave={() =>
+                      setDropTargetPath((p) => (p === entry.path ? null : p))
+                    }
+                    onDrop={(e) => {
+                      if (!entry.is_dir) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setDropTargetPath(null);
+                      setDragOver(false);
+                      dragDepth.current = 0;
+                      const internal = e.dataTransfer.getData("application/x-vzone-paths");
+                      if (internal) {
+                        try {
+                          void movePathsTo(JSON.parse(internal) as string[], entry.path);
+                        } catch {
+                          /* ignore */
+                        }
+                        setInternalDrag(false);
+                        return;
+                      }
+                      void (async () => {
+                        try {
+                          const jobs = await collectDataTransferJobs(e.dataTransfer);
+                          await uploadJobs(jobs, entry.path);
+                        } catch (err) {
+                          setError(
+                            err instanceof Error
+                              ? err.message
+                              : "Impossible de lire le dépôt.",
+                          );
+                        }
+                      })();
                     }}
                   >
                     <td className="px-3 py-2">
@@ -927,10 +1191,15 @@ export function FileManager({ title }: { title: string }) {
               })}
             </tbody>
           </table>
-          {dragOver && (
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-cp-orange/10 text-sm font-semibold text-cp-orange-dark">
-              Déposez les fichiers ici
+          {dragOver && !internalDrag && (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-cp-orange/15 text-sm font-semibold text-cp-orange-dark">
+              Déposez fichiers ou dossiers ici
             </div>
+          )}
+          {!isLoading && !(data?.entries?.length) && !cwd && (
+            <p className="px-3 py-6 text-center text-xs text-cp-muted">
+              Glissez-déposez des fichiers ou dossiers (comme cPanel), ou utilisez Upload / Dossier.
+            </p>
           )}
         </div>
 

@@ -63,6 +63,39 @@ def test_list_mkdir_upload_download(api: APIClient, user_home):
 
 @pytest.mark.integration
 @pytest.mark.django_db
+def test_upload_preserves_folder_tree(api: APIClient, user_home):
+    """Drag-drop dossier : relative_path crée l'arborescence (style cPanel)."""
+    user = UserFactory(username="fmtree", password="TestPassword123!")
+    api.force_authenticate(user=user)
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    upload = api.post(
+        reverse("files-upload"),
+        {
+            "path": "",
+            "relative_path": "mysite/css/app.css",
+            "file": SimpleUploadedFile("app.css", b"body{}", content_type="text/css"),
+        },
+        format="multipart",
+    )
+    assert upload.status_code == 201
+    assert upload.json()["data"]["path"] == "mysite/css/app.css"
+
+    empty = api.post(
+        reverse("files-mkdir"),
+        {"path": "", "name": "mysite/empty-dir", "recursive": True},
+        format="json",
+    )
+    assert empty.status_code == 201
+
+    listing = api.get(reverse("files-list"), {"path": "mysite/css"})
+    assert listing.status_code == 200
+    names = {e["name"] for e in listing.json()["data"]["entries"]}
+    assert "app.css" in names
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
 def test_chunked_upload(api: APIClient, user_home):
     user = UserFactory(username="fmchunk", password="TestPassword123!")
     api.force_authenticate(user=user)

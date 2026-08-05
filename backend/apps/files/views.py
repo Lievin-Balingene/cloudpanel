@@ -66,11 +66,13 @@ class FileMkdirView(APIView):
     def post(self, request: Request) -> Response:
         serializer = MkdirSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        entry = services.mkdir(
-            request.user,
-            serializer.validated_data["path"],
-            serializer.validated_data["name"],
-        )
+        parent = serializer.validated_data["path"]
+        name = serializer.validated_data["name"]
+        if serializer.validated_data.get("recursive"):
+            rel = f"{(parent or '').rstrip('/')}/{name}".strip("/")
+            entry = services.ensure_directory(request.user, rel)
+        else:
+            entry = services.mkdir(request.user, parent, name)
         return Response({"success": True, "data": asdict(entry)}, status=status.HTTP_201_CREATED)
 
 
@@ -240,10 +242,11 @@ class FileUploadView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         path = request.data.get("path", "")
+        relative_path = (request.data.get("relative_path") or "").strip() or upload.name
         entry = services.save_upload(
             request.user,
             path,
-            upload.name,
+            relative_path,
             upload.file,
             getattr(upload, "size", None),
         )
