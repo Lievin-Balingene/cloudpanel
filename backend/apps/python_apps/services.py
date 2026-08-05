@@ -500,6 +500,7 @@ def update_python_app(
     notes: str | None = None,
     is_active: bool | None = None,
 ) -> PythonApp:
+    old_domain = app.domain_name
     if label is not None:
         app.label = label
     if entrypoint is not None:
@@ -514,6 +515,9 @@ def update_python_app(
         app.is_active = is_active
     app.save()
     write_app_config(app)
+    # Re-proxifier l'ancien domaine (retour public_html) + le nouveau (vers l'app).
+    if domain_name is not None and old_domain and old_domain != app.domain_name:
+        _refresh_domain_routing(old_domain)
     _refresh_domain_routing(app.domain_name)
     return app
 

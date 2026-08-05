@@ -2,8 +2,8 @@ import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
-  ChevronRight,
   Copy,
+  ExternalLink,
   FileText,
   FolderOpen,
   Globe2,
@@ -22,6 +22,7 @@ import {
 import { apiRequest } from "@/lib/api";
 import { runWithProgress } from "@/stores/operations";
 import { Modal } from "@/components/ui/Modal";
+import { IconAction } from "@/components/ui/IconAction";
 import { EmptyState, PageHeader, Tabs } from "@/components/ui/PageChrome";
 
 interface PyOverview {
@@ -180,12 +181,12 @@ function CopyBlock({
 }) {
   const [copied, setCopied] = useState(false);
   return (
-    <div className="space-y-1">
+    <div className="space-y-0.5">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-cp-muted">{label}</p>
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-cp-muted">{label}</p>
         <button
           type="button"
-          className="inline-flex items-center gap-1 text-xs text-cp-link hover:underline"
+          className="inline-flex items-center gap-0.5 text-[10px] text-cp-link hover:underline"
           onClick={() => {
             void copyText(value).then(() => {
               setCopied(true);
@@ -193,12 +194,12 @@ function CopyBlock({
             });
           }}
         >
-          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
           {copied ? "Copié" : "Copier"}
         </button>
       </div>
       <pre
-        className={`overflow-x-auto rounded-md px-3 py-2.5 font-mono text-xs leading-relaxed whitespace-pre-wrap ${
+        className={`overflow-x-auto rounded px-2 py-1.5 font-mono text-[11px] leading-snug whitespace-pre-wrap ${
           dark
             ? "bg-[#0f172a] text-slate-200"
             : "border border-cp-border/80 bg-white text-cp-text dark:border-ink-700 dark:bg-ink-950 dark:text-ink-100"
@@ -212,151 +213,122 @@ function CopyBlock({
 
 function DeployPanel({ app, onClose }: { app: PythonApp; onClose?: () => void }) {
   return (
-    <div className="space-y-4 rounded-lg border border-cp-border/80 bg-cp-canvas/40 p-4 dark:border-ink-700 dark:bg-ink-900/40">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="flex items-center gap-2 text-sm font-semibold text-cp-navy dark:text-ink-50">
-            <Terminal className="h-4 w-4 text-cp-orange" />
-            Déploiement — {app.name}
-          </h3>
-          <ol className="mt-2 space-y-1 text-xs text-cp-muted">
-            <li className="flex items-center gap-1.5">
-              <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-cp-navy text-[10px] font-bold text-white">
-                1
-              </span>
-              Copiez la commande SSH ci‑dessous
-            </li>
-            <li className="flex items-center gap-1.5">
-              <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-cp-navy text-[10px] font-bold text-white">
-                2
-              </span>
-              Exécutez‑la dans un terminal, puis cliquez Start
-            </li>
-          </ol>
-        </div>
+    <div className="space-y-2.5 rounded-md border border-cp-border/70 bg-cp-canvas/50 p-3 dark:border-ink-700 dark:bg-ink-900/40">
+      <div className="flex items-center justify-between gap-2">
+        <p className="flex items-center gap-1.5 text-xs font-semibold text-cp-navy dark:text-ink-50">
+          <Terminal className="h-3.5 w-3.5 text-cp-orange" />
+          SSH · {app.name}
+        </p>
         {onClose && (
-          <button type="button" className="vz-btn-ghost !px-2.5 !py-1 text-xs" onClick={onClose}>
+          <button type="button" className="text-[11px] text-cp-muted hover:text-cp-text" onClick={onClose}>
             Fermer
           </button>
         )}
       </div>
-
-      <CopyBlock label="Application root" value={app.absolute_root || app.relative_root} />
-      <CopyBlock label="Commande à coller (SSH)" value={app.enter_command} dark />
-      <CopyBlock
-        label={`Script ${frameworkLabel(app.framework)}`}
-        value={app.deploy_command}
-        dark
-      />
-
-      <div className="grid gap-2 text-[11px] text-cp-muted sm:grid-cols-2">
-        {app.passenger_wsgi && (
-          <p>
-            <span className="font-medium text-cp-text">Entrée</span>{" "}
-            <code className="font-mono">{app.passenger_wsgi}</code>
-          </p>
-        )}
-        {app.venv_path && (
-          <p>
-            <span className="font-medium text-cp-text">Venv</span>{" "}
-            <code className="font-mono">{app.venv_path}</code>
-          </p>
-        )}
-        {app.framework === "django" && (
-          <p className="sm:col-span-2">
-            <span className="font-medium text-cp-text">Django</span>{" "}
-            <code className="font-mono">
-              DJANGO_SETTINGS_MODULE={app.django_project || "config"}.settings
-            </code>
-          </p>
-        )}
-      </div>
+      <p className="text-[11px] text-cp-muted">
+        1. Copiez la commande · 2. Exécutez-la en SSH · 3. Démarrez l&apos;app
+      </p>
+      <CopyBlock label="Root" value={app.absolute_root || app.relative_root} />
+      <CopyBlock label="Commande SSH" value={app.enter_command} dark />
+      <CopyBlock label={`Script ${frameworkLabel(app.framework)}`} value={app.deploy_command} dark />
     </div>
   );
 }
 
 function AppCard({
   app,
+  domains,
   expanded,
   busy,
+  domainBusy,
   onToggleDeploy,
   onAction,
   onLogs,
   onRemove,
+  onDomainChange,
 }: {
   app: PythonApp;
+  domains: DomainRow[];
   expanded: boolean;
   busy: boolean;
+  domainBusy: boolean;
   onToggleDeploy: () => void;
   onAction: (op: string) => void;
   onLogs: () => void;
   onRemove: () => void;
+  onDomainChange: (domainName: string) => void;
 }) {
   const st = statusMeta(app.status);
   const running = app.status === "running";
+  const domainInList = !app.domain_name || domains.some((d) => d.name === app.domain_name);
 
   return (
     <article
-      className={`vz-panel overflow-hidden transition duration-200 ${
-        expanded ? "ring-2 ring-cp-link/30 border-cp-link/40" : "hover:border-cp-link/25"
+      className={`overflow-hidden rounded-lg border border-cp-border bg-white transition dark:border-ink-800 dark:bg-ink-950 ${
+        expanded ? "border-cp-link/50 ring-1 ring-cp-link/25" : "hover:border-cp-link/30"
       }`}
     >
-      <div className={`h-1 w-full ${st.bar}`} />
-      <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 flex-1 space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="truncate text-base font-semibold text-cp-navy dark:text-ink-50">
+      <div className={`h-0.5 w-full ${st.bar}`} />
+      <div className="flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <h3 className="truncate text-sm font-semibold text-cp-navy dark:text-ink-50">
               {app.label || app.name}
             </h3>
-            <span className="rounded-md bg-cp-navy/5 px-2 py-0.5 font-mono text-[11px] text-cp-muted dark:bg-ink-900">
-              {app.name}
-            </span>
+            {app.label && app.label !== app.name && (
+              <span className="font-mono text-[10px] text-cp-muted">{app.name}</span>
+            )}
             <span
-              className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${st.badge}`}
+              className={`inline-flex items-center rounded px-1.5 py-px text-[10px] font-medium ring-1 ring-inset ${st.badge}`}
             >
               {st.label}
             </span>
-          </div>
-
-          <div className="flex flex-wrap gap-1.5">
-            <span className="inline-flex items-center gap-1 rounded-md border border-cp-border/80 bg-cp-canvas/80 px-2 py-1 text-[11px] font-medium dark:border-ink-700 dark:bg-ink-900">
-              <Package className="h-3 w-3 text-cp-orange" />
+            <span className="inline-flex items-center gap-0.5 rounded bg-cp-canvas px-1.5 py-px text-[10px] text-cp-muted dark:bg-ink-900">
+              <Package className="h-2.5 w-2.5 text-cp-orange" />
               {frameworkLabel(app.framework)}
             </span>
-            <span className="inline-flex items-center rounded-md border border-cp-border/80 bg-cp-canvas/80 px-2 py-1 text-[11px] text-cp-muted dark:border-ink-700 dark:bg-ink-900">
-              Python {app.python_version} · {app.mode.toUpperCase()}
+            <span className="rounded bg-cp-canvas px-1.5 py-px font-mono text-[10px] text-cp-muted dark:bg-ink-900">
+              {app.python_version} · {app.mode.toUpperCase()} · :{app.port}
             </span>
-            <span className="inline-flex items-center rounded-md border border-cp-border/80 bg-cp-canvas/80 px-2 py-1 font-mono text-[11px] text-cp-muted dark:border-ink-700 dark:bg-ink-900">
-              :{app.port}
-            </span>
-            {app.domain_name ? (
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Globe2 className="h-3 w-3 shrink-0 text-cp-muted" />
+            <select
+              className="vz-input !min-h-0 max-w-[min(100%,16rem)] !rounded-md !py-0.5 !pl-1.5 !pr-6 text-[11px]"
+              value={app.domain_name}
+              disabled={domainBusy}
+              onChange={(e) => onDomainChange(e.target.value)}
+              title="Domaine proxifié vers cette app"
+            >
+              <option value="">— Aucun domaine —</option>
+              {!domainInList && app.domain_name && (
+                <option value={app.domain_name}>{app.domain_name} (actuel)</option>
+              )}
+              {domains.map((d) => (
+                <option key={d.id} value={d.name}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+            {app.domain_name && (
               <a
                 href={`http://${app.domain_name}`}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1 rounded-md border border-cp-link/30 bg-cp-link-soft/40 px-2 py-1 text-[11px] text-cp-link hover:underline dark:border-ink-700"
+                className="inline-flex h-6 w-6 items-center justify-center rounded-md text-cp-link hover:bg-cp-link-soft"
+                title="Ouvrir le site"
               >
-                <Globe2 className="h-3 w-3" />
-                {app.domain_name}
+                <ExternalLink className="h-3 w-3" />
               </a>
-            ) : (
-              <span className="inline-flex items-center gap-1 rounded-md border border-dashed border-cp-border px-2 py-1 text-[11px] text-cp-muted">
-                <Globe2 className="h-3 w-3" />
-                Aucun domaine
-              </span>
             )}
-          </div>
-
-          <div className="flex items-start gap-2 text-xs text-cp-muted">
-            <FolderOpen className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cp-orange" />
-            <div className="min-w-0">
-              <p className="font-mono text-cp-text dark:text-ink-200">{app.relative_root}</p>
-              {app.absolute_root && (
-                <p className="mt-0.5 truncate font-mono text-[11px] opacity-75" title={app.absolute_root}>
-                  {app.absolute_root}
-                </p>
-              )}
-            </div>
+            <span
+              className="inline-flex min-w-0 max-w-full items-center gap-1 truncate font-mono text-[10px] text-cp-muted"
+              title={app.absolute_root || app.relative_root}
+            >
+              <FolderOpen className="h-3 w-3 shrink-0 text-cp-orange" />
+              {app.relative_root}
+            </span>
           </div>
 
           {app.last_error && app.status === "error" && (
@@ -364,82 +336,57 @@ function AppCard({
           )}
         </div>
 
-        <div className="flex shrink-0 flex-col gap-2 sm:items-end">
-          <div className="flex flex-wrap gap-1.5 sm:justify-end">
-            {!running ? (
-              <button
-                type="button"
-                className="vz-btn-primary !px-3 !py-1.5 text-xs"
-                disabled={busy}
-                onClick={() => onAction("start")}
-              >
-                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                Start
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="vz-btn-ghost !px-3 !py-1.5 text-xs"
-                disabled={busy}
-                onClick={() => onAction("stop")}
-              >
-                <Square className="h-3.5 w-3.5" />
-                Stop
-              </button>
-            )}
-            <button
-              type="button"
-              className={`vz-btn-ghost !px-3 !py-1.5 text-xs ${expanded ? "!border-cp-link !bg-cp-link-soft" : ""}`}
-              onClick={onToggleDeploy}
-            >
-              <Terminal className="h-3.5 w-3.5" />
-              SSH
-              <ChevronRight className={`h-3 w-3 transition ${expanded ? "rotate-90" : ""}`} />
-            </button>
-          </div>
-          <div className="flex flex-wrap gap-1 sm:justify-end">
-            <button
-              type="button"
-              className="vz-btn-ghost !px-2 !py-1 text-[11px]"
-              disabled={busy}
-              onClick={() => onAction("restart")}
-              title="Restart"
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              className="vz-btn-ghost !px-2 !py-1 text-[11px]"
-              disabled={busy}
-              onClick={() => onAction("install")}
-              title="pip install -r requirements.txt"
-            >
-              <Download className="h-3.5 w-3.5" />
-              pip
-            </button>
-            <button
-              type="button"
-              className="vz-btn-ghost !px-2 !py-1 text-[11px]"
-              onClick={onLogs}
-              title="Logs"
-            >
-              <FileText className="h-3.5 w-3.5" />
-              Logs
-            </button>
-            <button
-              type="button"
-              className="vz-btn-ghost !px-2 !py-1 text-[11px] text-cp-danger hover:!border-red-300 hover:!bg-red-50 dark:hover:!bg-red-950/30"
-              onClick={onRemove}
-              title="Supprimer"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          </div>
+        <div className="flex shrink-0 items-center gap-0.5 self-start sm:self-center">
+          {busy ? (
+            <span className="inline-flex h-7 w-7 items-center justify-center">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-cp-orange" />
+            </span>
+          ) : running ? (
+            <IconAction label="Arrêter" tone="warning" size="sm" onClick={() => onAction("stop")}>
+              <Square className="h-3.5 w-3.5 fill-current" />
+            </IconAction>
+          ) : (
+            <IconAction label="Démarrer" tone="success" size="sm" onClick={() => onAction("start")}>
+              <Play className="h-3.5 w-3.5 fill-current" />
+            </IconAction>
+          )}
+          <IconAction
+            label="Redémarrer"
+            tone="info"
+            size="sm"
+            disabled={busy}
+            onClick={() => onAction("restart")}
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+          </IconAction>
+          <IconAction
+            label="Commande SSH"
+            tone="accent"
+            size="sm"
+            active={expanded}
+            onClick={onToggleDeploy}
+          >
+            <Terminal className="h-3.5 w-3.5" />
+          </IconAction>
+          <IconAction
+            label="pip install -r requirements.txt"
+            size="sm"
+            disabled={busy}
+            onClick={() => onAction("install")}
+          >
+            <Download className="h-3.5 w-3.5" />
+          </IconAction>
+          <IconAction label="Logs" size="sm" onClick={onLogs}>
+            <FileText className="h-3.5 w-3.5" />
+          </IconAction>
+          <IconAction label="Supprimer" danger size="sm" onClick={onRemove}>
+            <Trash2 className="h-3.5 w-3.5" />
+          </IconAction>
         </div>
       </div>
 
       {expanded && (
-        <div className="border-t border-cp-border/80 px-4 pb-4 pt-3 dark:border-ink-800">
+        <div className="border-t border-cp-border/80 px-3 pb-3 pt-2 dark:border-ink-800">
           <DeployPanel app={app} onClose={onToggleDeploy} />
         </div>
       )}
@@ -567,6 +514,21 @@ export function PythonAppsManager({ title }: { title: string }) {
     onError: (err: Error) => setError(err.message),
   });
 
+  const updateDomain = useMutation({
+    mutationFn: ({ id, domain_name, name }: { id: number; domain_name: string; name: string }) =>
+      runWithProgress(`Domaine · ${name}`, () =>
+        apiRequest<PythonApp>(`/python/apps/${id}/`, {
+          method: "PATCH",
+          body: JSON.stringify({ domain_name }),
+        }),
+      ),
+    onSuccess: () => {
+      setError(null);
+      invalidate();
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
   function onCreate(e: FormEvent) {
     e.preventDefault();
     create.mutate();
@@ -576,50 +538,34 @@ export function PythonAppsManager({ title }: { title: string }) {
     focusId ?? (createdApp && apps.some((a) => a.id === createdApp.id) ? createdApp.id : null);
 
   return (
-    <div className="space-y-4 animate-fade-up">
+    <div className="space-y-3 animate-fade-up">
       <PageHeader
         title={title}
-        subtitle="Créez une app (Django, Flask, FastAPI), déployez via SSH, puis démarrez-la — comme cPanel."
+        subtitle="Créez, déployez via SSH, liez un domaine, puis démarrez."
         actions={
-          <button type="button" className="vz-btn-primary" onClick={() => setCreateOpen(true)}>
-            <Plus className="h-4 w-4" />
-            Nouvelle application
+          <button type="button" className="vz-btn-primary !px-3 !py-1.5 text-xs" onClick={() => setCreateOpen(true)}>
+            <Plus className="h-3.5 w-3.5" />
+            Nouvelle app
           </button>
         }
-        stats={[
-          { label: "Apps", value: overview?.apps ?? "—" },
-          { label: "En cours", value: overview?.running ?? "—" },
-          { label: "Arrêtées", value: overview?.stopped ?? "—" },
-          { label: "Erreurs", value: overview?.error ?? "—" },
-        ]}
       />
 
       {createdApp && apps.some((a) => a.id === createdApp.id) && (
-        <div className="vz-panel flex flex-wrap items-start justify-between gap-3 border-cp-link/30 bg-cp-link-soft/30 p-4 dark:bg-ink-900/50">
-          <div>
-            <p className="text-sm font-semibold text-cp-navy dark:text-ink-50">
-              Application « {createdApp.name} » créée
-            </p>
-            <p className="mt-1 text-xs text-cp-muted">
-              Ouvrez SSH pour coller la commande de déploiement, puis cliquez Start.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-cp-link/30 bg-cp-link-soft/30 px-3 py-2 text-xs dark:bg-ink-900/50">
+          <p className="font-medium text-cp-navy dark:text-ink-50">
+            « {createdApp.name} » créée — ouvrez SSH puis démarrez.
+          </p>
+          <div className="flex gap-1">
             <button
               type="button"
-              className="vz-btn-primary !py-1.5 text-xs"
+              className="vz-btn-primary !px-2 !py-1 text-[11px]"
               onClick={() => setFocusId(createdApp.id)}
             >
-              <Terminal className="h-3.5 w-3.5" />
-              Voir la commande SSH
+              <Terminal className="h-3 w-3" />
+              SSH
             </button>
-            <button
-              type="button"
-              className="vz-btn-ghost !py-1.5 text-xs"
-              onClick={() => setCreatedApp(null)}
-            >
-              <X className="h-3.5 w-3.5" />
-              Masquer
+            <button type="button" className="vz-btn-ghost !px-2 !py-1 text-[11px]" onClick={() => setCreatedApp(null)}>
+              <X className="h-3 w-3" />
             </button>
           </div>
         </div>
@@ -627,8 +573,8 @@ export function PythonAppsManager({ title }: { title: string }) {
 
       {error && <CopyableError text={error} title="Python · vzone" />}
 
-      <div className="vz-panel overflow-hidden">
-        <div className="flex flex-col gap-3 border-b border-cp-border px-4 py-3 dark:border-ink-800 sm:flex-row sm:items-center sm:justify-between">
+      <div className="overflow-hidden rounded-lg border border-cp-border bg-white dark:border-ink-800 dark:bg-ink-950">
+        <div className="flex flex-col gap-2 border-b border-cp-border px-3 py-2 dark:border-ink-800 sm:flex-row sm:items-center sm:justify-between">
           <Tabs
             tabs={[
               { id: "all", label: "Toutes", count: apps.length },
@@ -651,33 +597,33 @@ export function PythonAppsManager({ title }: { title: string }) {
             active={statusFilter}
             onChange={(id) => setStatusFilter(id as StatusFilter)}
           />
-          <div className="relative min-w-[200px] flex-1 sm:max-w-xs">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-cp-muted" />
+          <div className="relative min-w-[160px] flex-1 sm:max-w-[14rem]">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-cp-muted" />
             <input
-              className="vz-input !py-1.5 pl-8 text-sm"
-              placeholder="Rechercher une app…"
+              className="vz-input !py-1 pl-7 text-xs"
+              placeholder="Rechercher…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
         </div>
 
-        <div className="space-y-3 p-4">
+        <div className="space-y-2 p-2.5">
           {isLoading && (
-            <div className="flex items-center gap-2 py-8 text-sm text-cp-muted">
-              <Loader2 className="h-4 w-4 animate-spin text-cp-orange" />
-              Chargement des applications…
+            <div className="flex items-center gap-2 py-6 text-xs text-cp-muted">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-cp-orange" />
+              Chargement…
             </div>
           )}
 
           {!isLoading && apps.length === 0 && (
             <EmptyState
-              icon={<Package className="h-8 w-8" />}
-              message="Aucune application Python. Créez-en une pour commencer."
+              icon={<Package className="h-7 w-7" />}
+              message="Aucune application Python."
               action={
-                <button type="button" className="vz-btn-primary" onClick={() => setCreateOpen(true)}>
-                  <Plus className="h-4 w-4" />
-                  Nouvelle application
+                <button type="button" className="vz-btn-primary !px-3 !py-1.5 text-xs" onClick={() => setCreateOpen(true)}>
+                  <Plus className="h-3.5 w-3.5" />
+                  Créer
                 </button>
               }
             />
@@ -685,12 +631,12 @@ export function PythonAppsManager({ title }: { title: string }) {
 
           {!isLoading && apps.length > 0 && filteredApps.length === 0 && (
             <EmptyState
-              icon={<Search className="h-8 w-8" />}
-              message="Aucun résultat pour ce filtre."
+              icon={<Search className="h-7 w-7" />}
+              message="Aucun résultat."
               action={
                 <button
                   type="button"
-                  className="vz-btn-ghost"
+                  className="vz-btn-ghost !py-1 text-xs"
                   onClick={() => {
                     setQuery("");
                     setStatusFilter("all");
@@ -706,8 +652,10 @@ export function PythonAppsManager({ title }: { title: string }) {
             <AppCard
               key={app.id}
               app={app}
+              domains={domainOptions}
               expanded={focusedId === app.id}
-              busy={action.isPending}
+              busy={action.isPending && action.variables?.id === app.id}
+              domainBusy={updateDomain.isPending && updateDomain.variables?.id === app.id}
               onToggleDeploy={() => {
                 if (focusedId === app.id) {
                   setFocusId(null);
@@ -719,6 +667,9 @@ export function PythonAppsManager({ title }: { title: string }) {
               }}
               onAction={(op) => action.mutate({ id: app.id, op, name: app.name })}
               onLogs={() => loadLogs.mutate(app.id)}
+              onDomainChange={(domain_name) =>
+                updateDomain.mutate({ id: app.id, domain_name, name: app.name })
+              }
               onRemove={() => {
                 if (window.confirm(`Supprimer ${app.name} ? Les fichiers du projet sont conservés.`)) {
                   remove.mutate(app.id);
