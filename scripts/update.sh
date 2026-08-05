@@ -12,8 +12,7 @@ VERSION="$(tr -d '[:space:]' < "${REPO_DIR}/VERSION")"
 
 echo "[vzone] Mise à jour vers ${VERSION}"
 # Ne pas couper l'API pendant tout le build frontend (sinon login = 502).
-# On redémarre seulement après les migrations backend.
-KEEP_API_UP=1
+# Court stop uniquement autour des migrations (voir plus bas).
 
 # Ne jamais supprimer frontend/dist via --delete : il n'est pas dans le dépôt git.
 # Sinon un échec migrate/pip laisse le panel en 404 (index.html absent).
@@ -40,7 +39,6 @@ python manage.py migrate --noinput || BACKEND_OK=0
 python manage.py collectstatic --noinput || true
 deactivate
 systemctl start vzone-api vzone-worker vzone-beat 2>/dev/null || true
-KEEP_API_UP=1
 
 # Frontend : toujours reconstruire (évite 404 nginx sur toutes les pages)
 cd "${VZONE_ROOT}/frontend"
