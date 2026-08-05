@@ -1,4 +1,5 @@
-import { FormEvent, useCallback, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Folder,
@@ -22,6 +23,13 @@ import {
 import { apiRequest, ApiClientError } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
 import { formatBytes } from "@/lib/format";
+import {
+  collectDataTransferJobs,
+  FILES_BROADCAST,
+  openUploadTab,
+  resolvePanelBase,
+  UPLOAD_MSG,
+} from "@/lib/fileUpload";
 
 interface FileEntry {
   name: string;
@@ -50,317 +58,6 @@ type ConfirmState = {
   danger?: boolean;
   onConfirm: () => void | Promise<void>;
 };
-
-type UploadItem = {
-  name: string;
-  size: number;
-  percent: number;
-  status: "pending" | "uploading" | "done" | "error";
-  error?: string;
-};
-
-const SIMPLE_UPLOAD_MAX = 1024 * 1024; // 1 Mo — au-delà / en secours : upload chunké binaire
-const CHUNK_BYTES = 2 * 1024 * 1024; // 2 Mo (plus robuste derrière nginx/proxy)
-const CHUNK_RETRIES = 5;
-
-function parseUploadError(xhr: XMLHttpRequest, fallback: string): string {
-  try {
-    const payload = JSON.parse(xhr.responseText);
-    if (payload?.error?.message) return String(payload.error.message);
-  } catch {
-    /* ignore */
-  }
-  if (xhr.status === 0) {
-    return "Connexion interrompue pendant l'upload (réseau, proxy ou limite serveur). Réessayez.";
-  }
-  if (xhr.status === 401) return "Session expirée. Reconnectez-vous puis réessayez l'upload.";
-  if (xhr.status === 413) return "Fichier trop volumineux pour le serveur (limite nginx/API).";
-  if (xhr.status === 502 || xhr.status === 504) {
-    return "Le serveur a coupé la connexion pendant l'upload. Réessayez.";
-  }
-  return `${fallback} (HTTP ${xhr.status})`;
-}
-
-function xhrSend(
-  method: string,
-  url: string,
-  token: string | null,
-  body: FormData | string | Blob,
-  options?: {
-    onProgress?: (loaded: number, total: number) => void;
-    timeoutMs?: number;
-    contentType?: string | null;
-  },
-): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open(method, url);
-    xhr.timeout = options?.timeoutMs ?? 10 * 60 * 1000;
-    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
-    if (options?.contentType) {
-      xhr.setRequestHeader("Content-Type", options.contentType);
-    }
-
-    xhr.upload.onprogress = (event) => {
-      if (options?.onProgress && event.lengthComputable && event.total > 0) {
-        options.onProgress(event.loaded, event.total);
-      }
-    };
-
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          resolve(xhr.responseText ? JSON.parse(xhr.responseText) : {});
-        } catch {
-          resolve({});
-        }
-        return;
-      }
-      reject(new ApiClientError(parseUploadError(xhr, "Upload échoué"), xhr.status));
-    };
-
-    xhr.onerror = () =>
-      reject(
-        new ApiClientError(
-          "Connexion interrompue pendant l'upload (réseau, proxy ou limite serveur). Réessayez.",
-          0,
-        ),
-      );
-    xhr.ontimeout = () =>
-      reject(new ApiClientError("Délai dépassé pendant l'upload. Réessayez.", 0));
-    xhr.onabort = () => reject(new ApiClientError("Upload annulé.", 0));
-
-    xhr.send(body);
-  });
-}
-
-async function uploadSimple(
-  file: File,
-  cwd: string,
-  token: string | null,
-  onProgress: (percent: number) => void,
-  relativePath?: string,
-): Promise<void> {
-  const body = new FormData();
-  body.append("path", cwd);
-  const rel = (relativePath || file.webkitRelativePath || file.name).replace(/\\/g, "/");
-  body.append("relative_path", rel);
-  body.append("file", file, file.name);
-  await xhrSend("POST", "/api/v1/files/upload/", token, body, {
-    timeoutMs: 15 * 60 * 1000,
-    onProgress: (loaded, total) => {
-      onProgress(Math.min(99, Math.round((loaded / total) * 100)));
-    },
-  });
-  onProgress(100);
-}
-
-async function uploadChunkWithRetry(
-  uploadId: string,
-  index: number,
-  blob: Blob,
-  token: string | null,
-  onChunkProgress: (ratio: number) => void,
-): Promise<void> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < CHUNK_RETRIES; attempt++) {
-    try {
-      const url =
-        `/api/v1/files/upload/chunk/?upload_id=${encodeURIComponent(uploadId)}` +
-        `&index=${encodeURIComponent(String(index))}`;
-      await xhrSend("POST", url, token, blob, {
-        contentType: "application/octet-stream",
-        timeoutMs: 10 * 60 * 1000,
-        onProgress: (loaded, total) => onChunkProgress(total > 0 ? loaded / total : 0),
-      });
-      return;
-    } catch (err) {
-      lastError = err;
-      // Ne pas retenter indéfiniment sur erreurs métier (4xx sauf timeout/réseau)
-      if (err instanceof ApiClientError && err.status >= 400 && err.status < 500 && err.status !== 408) {
-        throw err;
-      }
-      await new Promise((r) => setTimeout(r, 500 * (attempt + 1) ** 2));
-    }
-  }
-  throw lastError instanceof Error
-    ? lastError
-    : new ApiClientError("Échec envoi du chunk après plusieurs tentatives.", 0);
-}
-
-async function uploadChunked(
-  file: File,
-  cwd: string,
-  token: string | null,
-  onProgress: (percent: number) => void,
-  relativePath?: string,
-): Promise<void> {
-  const rel = (relativePath || file.webkitRelativePath || file.name).replace(/\\/g, "/");
-  const initRaw = await xhrSend(
-    "POST",
-    "/api/v1/files/upload/init/",
-    token,
-    JSON.stringify({
-      path: cwd,
-      name: rel,
-      size: file.size,
-      chunk_size: CHUNK_BYTES,
-    }),
-    { contentType: "application/json", timeoutMs: 60_000 },
-  );
-  const init = (initRaw as { data?: { upload_id: string; chunk_size: number; total_chunks: number } })
-    ?.data;
-  if (!init?.upload_id) {
-    throw new ApiClientError("Réponse init upload invalide.", 0);
-  }
-
-  const chunkSize = init.chunk_size || CHUNK_BYTES;
-  const totalChunks = init.total_chunks || Math.max(1, Math.ceil(file.size / chunkSize) || 1);
-
-  try {
-    for (let index = 0; index < totalChunks; index++) {
-      const start = index * chunkSize;
-      const end = Math.min(file.size, start + chunkSize);
-      const blob = file.slice(start, end);
-      await uploadChunkWithRetry(init.upload_id, index, blob, token, (ratio) => {
-        const doneBytes = start + ratio * (end - start);
-        const pct = file.size > 0 ? Math.min(99, Math.round((doneBytes / file.size) * 100)) : 99;
-        onProgress(pct);
-      });
-      onProgress(
-        file.size > 0 ? Math.min(99, Math.round(((index + 1) / totalChunks) * 100)) : 99,
-      );
-    }
-
-    await xhrSend(
-      "POST",
-      "/api/v1/files/upload/complete/",
-      token,
-      JSON.stringify({ upload_id: init.upload_id }),
-      { contentType: "application/json", timeoutMs: 15 * 60 * 1000 },
-    );
-    onProgress(100);
-  } catch (err) {
-    try {
-      await xhrSend(
-        "POST",
-        "/api/v1/files/upload/abort/",
-        token,
-        JSON.stringify({ upload_id: init.upload_id }),
-        { contentType: "application/json", timeoutMs: 30_000 },
-      );
-    } catch {
-      /* ignore abort errors */
-    }
-    throw err;
-  }
-}
-
-async function uploadWithProgress(
-  file: File,
-  cwd: string,
-  token: string | null,
-  onProgress: (percent: number) => void,
-  relativePath?: string,
-): Promise<void> {
-  // Archives / gros fichiers : toujours chunké (évite coupure nginx sur un seul POST).
-  const forceChunked =
-    file.size > SIMPLE_UPLOAD_MAX || /\.(zip|tar|gz|tgz|rar|7z|iso|img|sql|bak)$/i.test(file.name);
-
-  if (!forceChunked) {
-    try {
-      await uploadSimple(file, cwd, token, onProgress, relativePath);
-      return;
-    } catch (err) {
-      if (!(err instanceof ApiClientError) || (err.status !== 0 && err.status !== 413 && err.status !== 502)) {
-        throw err;
-      }
-    }
-  }
-  await uploadChunked(file, cwd, token, onProgress, relativePath);
-}
-
-/** Job d'upload : fichier ou dossier vide (mkdir). */
-type DropJob =
-  | { kind: "file"; file: File; relativePath: string }
-  | { kind: "dir"; relativePath: string };
-
-function readAllDirectoryEntries(reader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> {
-  return new Promise((resolve, reject) => {
-    const all: FileSystemEntry[] = [];
-    const readBatch = () => {
-      reader.readEntries(
-        (batch) => {
-          if (!batch.length) {
-            resolve(all);
-            return;
-          }
-          all.push(...batch);
-          readBatch();
-        },
-        (err) => reject(err),
-      );
-    };
-    readBatch();
-  });
-}
-
-function entryToFile(entry: FileSystemFileEntry): Promise<File> {
-  return new Promise((resolve, reject) => {
-    entry.file(resolve, reject);
-  });
-}
-
-async function walkFsEntry(entry: FileSystemEntry, prefix: string, out: DropJob[]): Promise<void> {
-  if (entry.isFile) {
-    const file = await entryToFile(entry as FileSystemFileEntry);
-    const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
-    out.push({ kind: "file", file, relativePath });
-    return;
-  }
-  if (entry.isDirectory) {
-    const dir = entry as FileSystemDirectoryEntry;
-    const nextPrefix = prefix ? `${prefix}/${entry.name}` : entry.name;
-    const children = await readAllDirectoryEntries(dir.createReader());
-    if (!children.length) {
-      out.push({ kind: "dir", relativePath: nextPrefix });
-      return;
-    }
-    for (const child of children) {
-      await walkFsEntry(child, nextPrefix, out);
-    }
-  }
-}
-
-async function collectDataTransferJobs(dt: DataTransfer): Promise<DropJob[]> {
-  const jobs: DropJob[] = [];
-  const items = dt.items ? Array.from(dt.items) : [];
-  const entries = items
-    .map((item) => (item.webkitGetAsEntry ? item.webkitGetAsEntry() : null))
-    .filter((e): e is FileSystemEntry => Boolean(e));
-
-  if (entries.length) {
-    for (const entry of entries) {
-      await walkFsEntry(entry, "", jobs);
-    }
-    return jobs;
-  }
-
-  // Fallback : fichiers plats (sans arborescence)
-  for (const file of Array.from(dt.files || [])) {
-    const rel = (file.webkitRelativePath || file.name).replace(/\\/g, "/");
-    jobs.push({ kind: "file", file, relativePath: rel });
-  }
-  return jobs;
-}
-
-function collectFileListJobs(files: FileList | File[]): DropJob[] {
-  return Array.from(files).map((file) => ({
-    kind: "file" as const,
-    file,
-    relativePath: (file.webkitRelativePath || file.name).replace(/\\/g, "/"),
-  }));
-}
 
 function ConfirmDialog({
   state,
@@ -401,74 +98,10 @@ function ConfirmDialog({
   );
 }
 
-function UploadProgressPanel({
-  items,
-  onDismiss,
-}: {
-  items: UploadItem[];
-  onDismiss: () => void;
-}) {
-  const done = items.every((i) => i.status === "done" || i.status === "error");
-  const overall =
-    items.length === 0
-      ? 0
-      : Math.round(items.reduce((sum, i) => sum + i.percent, 0) / items.length);
-
-  return (
-    <div className="fixed bottom-4 right-4 z-[55] w-full max-w-sm rounded border border-cp-border bg-white shadow-xl dark:border-ink-700 dark:bg-ink-950">
-      <div className="flex items-center justify-between border-b border-cp-border px-3 py-2 dark:border-ink-800">
-        <p className="text-sm font-semibold">
-          {done ? "Upload terminé" : `Upload en cours… ${overall}%`}
-        </p>
-        {done && (
-          <button type="button" className="rounded p-1 hover:bg-cp-canvas" onClick={onDismiss} aria-label="Fermer">
-            <X className="h-4 w-4" />
-          </button>
-        )}
-      </div>
-      <div className="space-y-3 p-3">
-        <div className="h-2 overflow-hidden rounded bg-cp-canvas">
-          <div
-            className={`h-full rounded transition-all duration-200 ${
-              items.some((i) => i.status === "error") ? "bg-cp-danger" : "bg-cp-orange"
-            }`}
-            style={{ width: `${overall}%` }}
-          />
-        </div>
-        <ul className="max-h-40 space-y-2 overflow-y-auto text-xs">
-          {items.map((item) => (
-            <li key={item.name + item.size}>
-              <div className="mb-1 flex justify-between gap-2">
-                <span className="truncate font-medium text-cp-text" title={item.name}>
-                  {item.name}
-                </span>
-                <span className="shrink-0 text-cp-muted">
-                  {item.status === "error"
-                    ? "Erreur"
-                    : item.status === "done"
-                      ? "OK"
-                      : `${item.percent}%`}
-                </span>
-              </div>
-              <div className="h-1.5 overflow-hidden rounded bg-cp-canvas">
-                <div
-                  className={`h-full rounded transition-all ${
-                    item.status === "error" ? "bg-cp-danger" : "bg-cp-link"
-                  }`}
-                  style={{ width: `${item.percent}%` }}
-                />
-              </div>
-              {item.error && <p className="mt-0.5 text-cp-danger">{item.error}</p>}
-            </li>
-          ))}
-        </ul>
-      </div>
-    </div>
-  );
-}
-
 export function FileManager({ title }: { title: string }) {
   const qc = useQueryClient();
+  const location = useLocation();
+  const panelBase = resolvePanelBase(location.pathname);
   const token = useAuthStore((s) => s.accessToken);
   const role = useAuthStore((s) => s.user?.role);
   const [cwd, setCwd] = useState(() => (role === "administrator" ? "admin" : ""));
@@ -487,14 +120,12 @@ export function FileManager({ title }: { title: string }) {
   const [dragOver, setDragOver] = useState(false);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
-  const [uploads, setUploads] = useState<UploadItem[] | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [renameOpen, setRenameOpen] = useState(false);
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [internalDrag, setInternalDrag] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const folderInputRef = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
+  const lastClickedRef = useRef<string | null>(null);
 
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["files", cwd],
@@ -503,6 +134,71 @@ export function FileManager({ title }: { title: string }) {
     staleTime: 15_000,
   });
 
+  const entryPaths = useMemo(
+    () => (data?.entries ?? []).map((e) => e.path),
+    [data?.entries],
+  );
+  const allSelected =
+    entryPaths.length > 0 && entryPaths.every((p) => selected.includes(p));
+  const someSelected = selected.some((p) => entryPaths.includes(p));
+
+  useEffect(() => {
+    setSelected([]);
+    lastClickedRef.current = null;
+  }, [cwd]);
+
+  useEffect(() => {
+    const onDone = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type === UPLOAD_MSG.DONE) {
+        void qc.invalidateQueries({ queryKey: ["files"] });
+      }
+    };
+    window.addEventListener("message", onDone);
+    let bc: BroadcastChannel | null = null;
+    try {
+      bc = new BroadcastChannel(FILES_BROADCAST);
+      bc.onmessage = (event) => {
+        if (event.data?.type === "invalidate") {
+          void qc.invalidateQueries({ queryKey: ["files"] });
+        }
+      };
+    } catch {
+      /* ignore */
+    }
+    return () => {
+      window.removeEventListener("message", onDone);
+      bc?.close();
+    };
+  }, [qc]);
+
+  const launchUpload = useCallback(
+    (
+      dest: string,
+      options?: { jobs?: import("@/lib/fileUpload").DropJob[]; preferFolder?: boolean },
+    ) => {
+      const win = openUploadTab(panelBase, dest, options);
+      if (!win) {
+        setError(
+          "Impossible d'ouvrir l'onglet d'upload. Autorisez les pop-ups pour ce site, puis réessayez.",
+        );
+      }
+    },
+    [panelBase],
+  );
+
+  const launchUploadJobs = useCallback(
+    async (dest: string, collect: () => ReturnType<typeof collectDataTransferJobs>) => {
+      try {
+        const jobs = await collect();
+        if (!jobs.length) return;
+        launchUpload(dest, { jobs });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Impossible de lire le dépôt.");
+      }
+    },
+    [launchUpload],
+  );
   const crumbs = useMemo(() => {
     const parts = cwd ? cwd.split("/").filter(Boolean) : [];
     const items = [{ label: "home", path: "" }];
@@ -551,77 +247,6 @@ export function FileManager({ title }: { title: string }) {
       setConfirmBusy(false);
     }
   }, [confirm]);
-
-  const uploadJobs = async (jobs: DropJob[], destCwd: string = cwd) => {
-    if (!jobs.length) return;
-    setError(null);
-    const items: UploadItem[] = jobs.map((job) => ({
-      name: job.relativePath,
-      size: job.kind === "file" ? job.file.size : 0,
-      percent: 0,
-      status: "pending",
-    }));
-    setUploads(items);
-
-    let failed = false;
-    for (let i = 0; i < jobs.length; i++) {
-      const job = jobs[i];
-      setUploads((prev) =>
-        prev
-          ? prev.map((it, idx) =>
-              idx === i ? { ...it, status: "uploading", percent: 0 } : it,
-            )
-          : prev,
-      );
-      try {
-        if (job.kind === "dir") {
-          await apiRequest("/files/mkdir/", {
-            method: "POST",
-            body: JSON.stringify({
-              path: destCwd,
-              name: job.relativePath,
-              recursive: true,
-            }),
-          });
-        } else {
-          await uploadWithProgress(job.file, destCwd, token, (percent) => {
-            setUploads((prev) =>
-              prev ? prev.map((it, idx) => (idx === i ? { ...it, percent } : it)) : prev,
-            );
-          }, job.relativePath);
-        }
-        setUploads((prev) =>
-          prev
-            ? prev.map((it, idx) =>
-                idx === i ? { ...it, status: "done", percent: 100 } : it,
-              )
-            : prev,
-        );
-      } catch (err) {
-        failed = true;
-        const message =
-          err instanceof ApiClientError
-            ? err.message
-            : err instanceof Error
-              ? err.message
-              : "Upload échoué.";
-        setUploads((prev) =>
-          prev
-            ? prev.map((it, idx) =>
-                idx === i ? { ...it, status: "error", error: message } : it,
-              )
-            : prev,
-        );
-        setError(message);
-      }
-    }
-    await qc.invalidateQueries({ queryKey: ["files"] });
-    if (!failed) setSelected([]);
-  };
-
-  const uploadFiles = async (files: FileList | File[], destCwd: string = cwd) => {
-    await uploadJobs(collectFileListJobs(files), destCwd);
-  };
 
   const movePathsTo = async (paths: string[], destination: string) => {
     const filtered = paths.filter((p) => {
@@ -760,11 +385,46 @@ export function FileManager({ title }: { title: string }) {
     });
   }
 
-  function toggleSelect(path: string, multi: boolean) {
+  function toggleSelect(path: string, e: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) {
+    const multi = e.ctrlKey || e.metaKey;
+    const paths = entryPaths;
+    const idx = paths.indexOf(path);
+
+    if (e.shiftKey && lastClickedRef.current) {
+      const start = paths.indexOf(lastClickedRef.current);
+      if (start >= 0 && idx >= 0) {
+        const lo = Math.min(start, idx);
+        const hi = Math.max(start, idx);
+        const range = paths.slice(lo, hi + 1);
+        setSelected((prev) =>
+          multi ? Array.from(new Set([...prev, ...range])) : range,
+        );
+        return;
+      }
+    }
+
+    lastClickedRef.current = path;
     setSelected((prev) => {
-      if (!multi) return prev.includes(path) && prev.length === 1 ? [] : [path];
-      return prev.includes(path) ? prev.filter((p) => p !== path) : [...prev, path];
+      if (multi) {
+        return prev.includes(path) ? prev.filter((p) => p !== path) : [...prev, path];
+      }
+      return prev.includes(path) && prev.length === 1 ? [] : [path];
     });
+  }
+
+  function toggleCheckbox(path: string) {
+    lastClickedRef.current = path;
+    setSelected((prev) =>
+      prev.includes(path) ? prev.filter((p) => p !== path) : [...prev, path],
+    );
+  }
+
+  function toggleSelectAll() {
+    if (allSelected) {
+      setSelected((prev) => prev.filter((p) => !entryPaths.includes(p)));
+      return;
+    }
+    setSelected((prev) => Array.from(new Set([...prev, ...entryPaths])));
   }
 
   async function downloadSelected() {
@@ -855,35 +515,29 @@ export function FileManager({ title }: { title: string }) {
       </div>
 
       <div className="vz-panel flex flex-wrap items-center gap-1 px-2 py-1.5">
-        <button type="button" className="vz-btn-primary vz-btn-sm" onClick={() => fileInputRef.current?.click()}>
+        <button
+          type="button"
+          className="vz-btn-primary vz-btn-sm"
+          onClick={() => launchUpload(cwd)}
+          title="Ouvre un nouvel onglet pour suivre l'upload"
+        >
           <Upload className="h-3 w-3" />
           Upload
         </button>
-        <button type="button" className="vz-btn-ghost vz-btn-sm" onClick={() => folderInputRef.current?.click()}>
+        <button
+          type="button"
+          className="vz-btn-ghost vz-btn-sm"
+          onClick={() => launchUpload(cwd, { preferFolder: true })}
+          title="Ouvre un nouvel onglet pour envoyer un dossier"
+        >
           <FolderPlus className="h-3 w-3" />
           Dossier
         </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          className="hidden"
-          onChange={(e) => {
-            if (e.target.files?.length) void uploadFiles(e.target.files);
-            e.target.value = "";
-          }}
-        />
-        <input
-          ref={folderInputRef}
-          type="file"
-          className="hidden"
-          multiple
-          {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
-          onChange={(e) => {
-            if (e.target.files?.length) void uploadFiles(e.target.files);
-            e.target.value = "";
-          }}
-        />
+        {selected.length > 0 && (
+          <span className="ml-1 mr-1 text-[11px] font-medium text-cp-muted">
+            {selected.length} sélectionné{selected.length > 1 ? "s" : ""}
+          </span>
+        )}
         <button
           type="button"
           className="vz-btn-ghost vz-btn-sm"
@@ -1026,21 +680,25 @@ export function FileManager({ title }: { title: string }) {
               setInternalDrag(false);
               return;
             }
-            void (async () => {
-              try {
-                const jobs = await collectDataTransferJobs(e.dataTransfer);
-                await uploadJobs(jobs, cwd);
-              } catch (err) {
-                setError(
-                  err instanceof Error ? err.message : "Impossible de lire le dépôt.",
-                );
-              }
-            })();
+            void launchUploadJobs(cwd, () => collectDataTransferJobs(e.dataTransfer));
           }}
         >
           <table className="min-w-full text-left text-xs">
             <thead className="sticky top-0 bg-cp-canvas text-[10px] uppercase tracking-wide text-cp-muted dark:bg-ink-900">
               <tr>
+                <th className="w-8 px-1.5 py-1.5">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 accent-cp-orange"
+                    checked={allSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = someSelected && !allSelected;
+                    }}
+                    onChange={toggleSelectAll}
+                    title="Tout sélectionner"
+                    aria-label="Tout sélectionner"
+                  />
+                </th>
                 <th className="px-2 py-1.5 font-semibold">Nom</th>
                 <th className="w-20 px-2 py-1.5 font-semibold">Taille</th>
                 <th className="w-24 px-2 py-1.5 font-semibold">Perms</th>
@@ -1077,20 +735,17 @@ export function FileManager({ title }: { title: string }) {
                       }
                       return;
                     }
-                    void (async () => {
-                      const jobs = await collectDataTransferJobs(e.dataTransfer);
-                      await uploadJobs(jobs, parent);
-                    })();
+                    void launchUploadJobs(parent, () => collectDataTransferJobs(e.dataTransfer));
                   }}
                 >
-                  <td className="px-2 py-1 font-medium" colSpan={4}>
+                  <td className="px-2 py-1 font-medium" colSpan={5}>
                     ..
                   </td>
                 </tr>
               )}
               {isLoading && !data && (
                 <tr>
-                  <td className="px-2 py-3 text-cp-muted" colSpan={4}>
+                  <td className="px-2 py-3 text-cp-muted" colSpan={5}>
                     Chargement…
                   </td>
                 </tr>
@@ -1109,7 +764,7 @@ export function FileManager({ title }: { title: string }) {
                           ? "bg-cp-orange-soft/60"
                           : "hover:bg-cp-canvas dark:hover:bg-ink-900"
                     }`}
-                    onClick={(e) => toggleSelect(entry.path, e.ctrlKey || e.metaKey)}
+                    onClick={(e) => toggleSelect(entry.path, e)}
                     onDoubleClick={() => {
                       if (entry.is_dir) {
                         setCwd(entry.path);
@@ -1162,20 +817,24 @@ export function FileManager({ title }: { title: string }) {
                         setInternalDrag(false);
                         return;
                       }
-                      void (async () => {
-                        try {
-                          const jobs = await collectDataTransferJobs(e.dataTransfer);
-                          await uploadJobs(jobs, entry.path);
-                        } catch (err) {
-                          setError(
-                            err instanceof Error
-                              ? err.message
-                              : "Impossible de lire le dépôt.",
-                          );
-                        }
-                      })();
+                      void launchUploadJobs(entry.path, () =>
+                        collectDataTransferJobs(e.dataTransfer),
+                      );
                     }}
                   >
+                    <td
+                      className="px-1.5 py-1"
+                      onClick={(e) => e.stopPropagation()}
+                      onDoubleClick={(e) => e.stopPropagation()}
+                    >
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5 accent-cp-orange"
+                        checked={active}
+                        onChange={() => toggleCheckbox(entry.path)}
+                        aria-label={`Sélectionner ${entry.name}`}
+                      />
+                    </td>
                     <td className="max-w-[1px] truncate px-2 py-1">
                       <span className="inline-flex min-w-0 items-center gap-1.5">
                         {entry.is_dir ? (
@@ -1213,7 +872,7 @@ export function FileManager({ title }: { title: string }) {
           )}
           {!isLoading && !(data?.entries?.length) && !cwd && (
             <p className="px-3 py-4 text-center text-[11px] text-cp-muted">
-              Glissez-déposez des fichiers ou dossiers, ou utilisez Upload / Dossier.
+              Glissez-déposez des fichiers ou dossiers (nouvel onglet), ou utilisez Upload / Dossier.
             </p>
           )}
         </div>
@@ -1410,8 +1069,6 @@ export function FileManager({ title }: { title: string }) {
           }}
         />
       )}
-
-      {uploads && <UploadProgressPanel items={uploads} onDismiss={() => setUploads(null)} />}
     </div>
   );
 }

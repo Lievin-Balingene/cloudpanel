@@ -272,6 +272,13 @@ class SuspendUserView(APIView):
         target.is_suspended = bool(suspended)
         target.is_active = not bool(suspended)
         target.save(update_fields=["is_suspended", "is_active", "updated_at"])
+        # Tous les domaines du compte → page suspension (ou site normal si unsuspend)
+        try:
+            from apps.domains.vhosts import sync_owner_domain_vhosts
+
+            sync_owner_domain_vhosts(target)
+        except Exception:  # noqa: BLE001
+            pass
         return Response({"success": True, "data": UserSerializer(target).data})
 
 

@@ -13,6 +13,7 @@ import { WhmCreateAccountPage } from "./pages/whm/WhmCreateAccountPage";
 import { WhmAccountCreatedPage } from "./pages/whm/WhmAccountCreatedPage";
 import { WhmDomainsPage } from "./pages/whm/WhmDomainsPage";
 import { WhmFilesPage } from "./pages/whm/WhmFilesPage";
+import { WhmFilesUploadPage } from "./pages/whm/WhmFilesUploadPage";
 import { WhmFtpPage } from "./pages/whm/WhmFtpPage";
 import { WhmEmailPage } from "./pages/whm/WhmEmailPage";
 import { WhmDatabasesPage } from "./pages/whm/WhmDatabasesPage";
@@ -35,6 +36,7 @@ import { ClientDnsPage } from "./pages/client/ClientDnsPage";
 import { ClientPackagePage } from "./pages/client/ClientPackagePage";
 import { ClientDomainsPage } from "./pages/client/ClientDomainsPage";
 import { ClientFilesPage } from "./pages/client/ClientFilesPage";
+import { ClientFilesUploadPage } from "./pages/client/ClientFilesUploadPage";
 import { ClientFtpPage } from "./pages/client/ClientFtpPage";
 import { ClientEmailPage } from "./pages/client/ClientEmailPage";
 import { ClientDatabasesPage } from "./pages/client/ClientDatabasesPage";
@@ -113,6 +115,7 @@ export default function App() {
         <Route path="server-setup" element={<WhmServerSetupPage />} />
         <Route path="domains" element={<WhmDomainsPage />} />
         <Route path="files" element={<WhmFilesPage />} />
+        <Route path="files/upload" element={<WhmFilesUploadPage />} />
         <Route path="ftp" element={<WhmFtpPage />} />
         <Route path="email" element={<WhmEmailPage />} />
         <Route path="databases" element={<WhmDatabasesPage />} />
@@ -145,6 +148,7 @@ export default function App() {
         <Route index element={<ClientHomePage />} />
         <Route path="domains" element={<ClientDomainsPage />} />
         <Route path="files" element={<ClientFilesPage />} />
+        <Route path="files/upload" element={<ClientFilesUploadPage />} />
         <Route path="ftp" element={<ClientFtpPage />} />
         <Route path="email" element={<ClientEmailPage />} />
         <Route path="databases" element={<ClientDatabasesPage />} />

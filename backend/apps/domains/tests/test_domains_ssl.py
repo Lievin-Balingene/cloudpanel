@@ -226,3 +226,36 @@ def test_addon_docroot_and_app_priority(tmp_path, settings):
     conf2 = render_vhost(addon, backend2)
     assert "proxy_pass http://127.0.0.1:8123" in conf2
     assert app.name in backend2.app_label
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_owner_suspended_serves_suspension_page(tmp_path, settings):
+    """Compte suspendu → tous les domaines renvoient la page 503 style cPanel."""
+    settings.VZONE_HOME_ROOT = tmp_path / "homes"
+    settings.VZONE_HOME_ROOT.mkdir(parents=True, exist_ok=True)
+    settings.VZONE_DATA_ROOT = tmp_path / "data"
+    settings.VZONE_NGINX_DOMAINS_DIR = str(tmp_path / "nginx")
+    settings.VZONE_WEB_STACK = "mock"
+
+    owner = UserFactory(username="suspendeduser")
+    primary = create_domain(
+        name="suspended-site.test", owner=owner, domain_type=Domain.DomainType.PRIMARY
+    )
+    addon = create_domain(
+        name="addon-suspended.test", owner=owner, domain_type=Domain.DomainType.ADDON
+    )
+
+    owner.is_suspended = True
+    owner.is_active = False
+    owner.save(update_fields=["is_suspended", "is_active"])
+
+    for domain_id in (primary.pk, addon.pk):
+        domain = Domain.objects.select_related("owner", "parent").get(pk=domain_id)
+        backend = resolve_domain_backend(domain)
+        assert backend.mode == "suspended"
+        assert backend.docroot == "/var/lib/vzone/suspended"
+        conf = render_vhost(domain, backend)
+        assert "return 503" in conf
+        assert "/var/lib/vzone/suspended" in conf
+        assert "error_page 503" in conf

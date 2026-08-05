@@ -76,8 +76,21 @@ def resolve_domain_backend(domain: Domain) -> DomainBackend:
     if domain.domain_type in {Domain.DomainType.ALIAS, Domain.DomainType.PARKED} and domain.parent_id:
         target = domain.parent
 
-    if domain.is_suspended or not domain.is_active or target.is_suspended or not target.is_active:
-        return DomainBackend(mode="suspended", docroot=target.document_root or "/var/empty")
+    owner = getattr(domain, "owner", None)
+    if owner is None:
+        owner = getattr(target, "owner", None)
+    owner_suspended = bool(
+        owner is not None
+        and (getattr(owner, "is_suspended", False) or not getattr(owner, "is_active", True))
+    )
+    if (
+        domain.is_suspended
+        or not domain.is_active
+        or target.is_suspended
+        or not target.is_active
+        or owner_suspended
+    ):
+        return DomainBackend(mode="suspended", docroot="/var/lib/vzone/suspended")
 
     if is_panel_hostname(domain.name) or is_panel_hostname(target.name):
         panel_root = Path(getattr(settings, "VZONE_ROOT", "/opt/vzone")) / "frontend" / "dist"
@@ -197,11 +210,23 @@ def _ssl_cert_paths(domain: Domain) -> tuple[str, str] | None:
 
 def _location_body(backend: DomainBackend) -> str:
     if backend.mode == "suspended":
-        return """
-    location / {
-        default_type text/html;
-        return 503 '<html><body><h1>Account suspended</h1></body></html>';
-    }
+        # Page style cPanel — tous les domaines du compte suspendu
+        root = (backend.docroot or "/var/lib/vzone/suspended").rstrip("/")
+        return f"""
+    root {root};
+    index index.html;
+
+    error_page 503 =503 /index.html;
+
+    location = /index.html {{
+        root {root};
+        add_header Retry-After 3600 always;
+        add_header Cache-Control "no-store" always;
+    }}
+
+    location / {{
+        return 503;
+    }}
 """
 
     if backend.mode == "panel":
@@ -526,6 +551,18 @@ def sync_domain_vhost(domain: Domain) -> Path:
         write_domain_vhost(child)
     reload_nginx()
     return path
+
+
+def sync_owner_domain_vhosts(owner) -> int:
+    """Régénère tous les vhosts des domaines d'un compte (ex. après suspension)."""
+    count = 0
+    qs = Domain.objects.filter(owner=owner).select_related("owner", "parent")
+    for domain in qs:
+        write_domain_vhost(domain)
+        count += 1
+    if count:
+        reload_nginx()
+    return count
 
 
 def _request_ensure_nginx() -> None:

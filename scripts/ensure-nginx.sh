@@ -4,6 +4,7 @@ set -euo pipefail
 
 [[ ${EUID:-0} -eq 0 ]] || { echo "Root requis"; exit 1; }
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VZONE_ROOT="${VZONE_ROOT:-/opt/vzone}"
 SRC="${1:-${VZONE_ROOT}/deploy/nginx/vzone.conf}"
 ENV_FILE="${ENV_FILE:-/etc/vzone/vzone.env}"
@@ -46,7 +47,34 @@ chmod 644 /etc/ssl/certs/ssl-cert-snakeoil.pem 2>/dev/null || true
 chmod 640 /etc/ssl/private/ssl-cert-snakeoil.key 2>/dev/null || true
 chown root:ssl-cert /etc/ssl/private/ssl-cert-snakeoil.key 2>/dev/null || true
 
-mkdir -p /etc/nginx/snippets /var/lib/vzone/acme /var/lib/vzone/ssl /var/lib/vzone/nginx/domains
+mkdir -p /etc/nginx/snippets /var/lib/vzone/acme /var/lib/vzone/ssl /var/lib/vzone/nginx/domains /var/lib/vzone/suspended
+
+# Page « Account Suspended » (style cPanel) pour les domaines des comptes suspendus
+SUSPENDED_SRC=""
+for candidate in \
+  "${SCRIPT_DIR}/../deploy/nginx/suspended/index.html" \
+  "${VZONE_ROOT}/deploy/nginx/suspended/index.html"; do
+  if [[ -f "$candidate" ]]; then
+    SUSPENDED_SRC="$candidate"
+    break
+  fi
+done
+if [[ -n "$SUSPENDED_SRC" ]]; then
+  cp -a "$SUSPENDED_SRC" /var/lib/vzone/suspended/index.html
+  chmod 644 /var/lib/vzone/suspended/index.html
+  chmod 755 /var/lib/vzone/suspended
+  echo "[vzone] Page suspension installée → /var/lib/vzone/suspended/index.html"
+else
+  cat > /var/lib/vzone/suspended/index.html <<'HTML'
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Account Suspended</title></head>
+<body style="font-family:system-ui;padding:2rem;text-align:center">
+<h1>This Account Has Been Suspended</h1>
+<p>Contact your hosting provider.</p>
+<p lang="fr">Ce compte a été suspendu. Contactez votre hébergeur.</p>
+</body></html>
+HTML
+  chmod 644 /var/lib/vzone/suspended/index.html
+fi
 
 install_stub() {
   local path="$1"
