@@ -1,7 +1,7 @@
 """Management : republier toutes les zones DNS vers BIND."""
 from __future__ import annotations
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
 from apps.dns.authoritative import sync_all_zones_to_named
 
@@ -20,7 +20,14 @@ class Command(BaseCommand):
         from apps.domains.services import heal_all_subdomain_dns
 
         healed = heal_all_subdomain_dns()
-        count = sync_all_zones_to_named(ensure_glue=not options["no_glue"])
+        result = sync_all_zones_to_named(ensure_glue=not options["no_glue"])
         self.stdout.write(
-            self.style.SUCCESS(f"Sous-domaines DNS réparés: {healed}; zones publiées: {count}")
+            self.style.SUCCESS(
+                f"Sous-domaines DNS réparés: {healed}; "
+                f"zones publiées: {result.published}"
+            )
         )
+        if result.failed:
+            raise CommandError(
+                "Zones non publiées (validation BIND): " + ", ".join(result.failed)
+            )

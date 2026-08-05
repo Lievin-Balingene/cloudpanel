@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
 from shutil import which
 
@@ -16,6 +17,20 @@ from apps.dns.models import DnsRecord, DnsZone
 logger = logging.getLogger(__name__)
 
 _SAFE_ZONE = re.compile(r"^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$", re.I)
+# RFC 1035 : une chaîne TXT fait au plus 255 octets (wire). Au-delà = zone refusée (SERVFAIL).
+TXT_MAX_OCTETS = 255
+_QUOTED_STRING = re.compile(r'"((?:\\.|[^"\\])*)"')
+
+
+@dataclass
+class ZoneSyncResult:
+    published: int = 0
+    failed: list[str] = field(default_factory=list)
+    skipped_inactive: int = 0
+
+    @property
+    def ok(self) -> bool:
+        return not self.failed
 
 
 def dns_zones_dir() -> Path:
@@ -51,6 +66,29 @@ def _normalize_soa_name(value: str, *, default: str) -> str:
     return f"{raw}." if raw else default
 
 
+def _chunk_octets(text: str, max_octets: int = TXT_MAX_OCTETS) -> list[str]:
+    """Découpe une chaîne UTF-8 en morceaux ≤ max_octets (sans couper un codepoint)."""
+    data = text.encode("utf-8")
+    if not data:
+        return [""]
+    chunks: list[str] = []
+    i = 0
+    while i < len(data):
+        end = min(i + max_octets, len(data))
+        while end > i:
+            try:
+                chunks.append(data[i:end].decode("utf-8"))
+                break
+            except UnicodeDecodeError:
+                end -= 1
+        else:
+            # octet isolé invalide — avance d'1 pour ne pas boucler
+            end = i + 1
+            chunks.append(data[i:end].decode("utf-8", errors="replace"))
+        i = end
+    return chunks
+
+
 def _txt_rdata(content: str) -> str:
     """
     TXT BIND : chaînes max 255 octets. Les clés DKIM (RSA-2048) dépassent
@@ -62,7 +100,7 @@ def _txt_rdata(content: str) -> str:
     escaped = raw.replace("\\", "\\\\").replace('"', '\\"')
     if not escaped:
         return '""'
-    chunks = [escaped[i : i + 255] for i in range(0, len(escaped), 255)]
+    chunks = _chunk_octets(escaped, TXT_MAX_OCTETS)
     return " ".join(f'"{chunk}"' for chunk in chunks)
 
 
@@ -70,7 +108,6 @@ def _rdata(record: DnsRecord) -> str:
     rtype = record.record_type.upper()
     content = (record.content or "").strip()
     if rtype in {"NS", "CNAME", "MX", "SRV"} and content and not content.endswith("."):
-        # Absolute target preferred; relative names get trailing dot as FQDN-ish
         if "." in content:
             content = f"{content}."
     if rtype == "TXT":
@@ -117,6 +154,40 @@ def render_zone_file(zone: DnsZone) -> str:
     return "\n".join(lines)
 
 
+def validate_zone_export(content: str, *, zone_name: str = "") -> list[str]:
+    """
+    Garde-fou pur Python (indépendant de named-checkzone).
+    Interdit toute publication qui provoquerait un SERVFAIL BIND.
+    """
+    errors: list[str] = []
+    label = zone_name or "?"
+    if "IN SOA" not in content:
+        errors.append(f"{label}: SOA manquant")
+    if re.search(r"IN\s+SOA\s+\S*@", content):
+        errors.append(f"{label}: SOA contient '@' (utiliser hostmaster.domaine.)")
+    for match in _QUOTED_STRING.finditer(content):
+        inner = match.group(1)
+        # Longueur wire ≈ octets UTF-8 de la chaîne échappée telle qu'émise
+        if len(inner.encode("utf-8")) > TXT_MAX_OCTETS:
+            preview = inner[:48].replace("\n", " ")
+            errors.append(
+                f"{label}: chaîne TXT > {TXT_MAX_OCTETS} octets "
+                f"({len(inner.encode('utf-8'))}): {preview}…"
+            )
+    # Lignes TXT : au moins une paire de guillemets
+    for line in content.splitlines():
+        if "\tIN\tTXT\t" in line or " IN TXT " in line.replace("\t", " "):
+            if '"' not in line:
+                errors.append(f"{label}: TXT sans guillemets: {line[:80]}")
+    return errors
+
+
+def assert_zone_export_safe(content: str, *, zone_name: str = "") -> None:
+    errors = validate_zone_export(content, zone_name=zone_name)
+    if errors:
+        raise ValueError("; ".join(errors))
+
+
 def _zone_path(zone_name: str) -> Path:
     safe = zone_name.lower().rstrip(".")
     if not _SAFE_ZONE.match(safe) or ".." in safe:
@@ -131,14 +202,25 @@ def write_zone_file(zone: DnsZone) -> Path | None:
     path = _zone_path(zone.name)
     path.parent.mkdir(parents=True, exist_ok=True)
     content = render_zone_file(zone)
+
+    # 1) Garde-fou interne (toujours) — empêche le retour du bug DKIM/TXT
+    try:
+        assert_zone_export_safe(content, zone_name=zone.name)
+    except ValueError as exc:
+        logger.error("Zone BIND refusée (validation interne): %s", exc)
+        path.unlink(missing_ok=True)
+        return None
+
     tmp = path.with_suffix(".zone.tmp")
     tmp.write_text(content, encoding="utf-8")
+
+    # 2) named-checkzone si présent (deuxième barrière)
     if not _named_checkzone(zone.name, tmp):
         tmp.unlink(missing_ok=True)
-        # Retirer l'ancienne version cassée pour éviter un SERVFAIL permanent.
         path.unlink(missing_ok=True)
-        logger.error("Zone BIND invalide (non publiée): %s", zone.name)
+        logger.error("Zone BIND invalide named-checkzone (non publiée): %s", zone.name)
         return None
+
     tmp.replace(path)
     try:
         os.chmod(path, 0o644)
@@ -148,7 +230,7 @@ def write_zone_file(zone: DnsZone) -> Path | None:
 
 
 def _named_checkzone(zone_name: str, path: Path) -> bool:
-    """Valide le fichier avec named-checkzone si disponible (évite SERVFAIL)."""
+    """Valide le fichier avec named-checkzone si disponible."""
     helper = which("named-checkzone")
     if not helper:
         return True
@@ -161,8 +243,8 @@ def _named_checkzone(zone_name: str, path: Path) -> bool:
             text=True,
         )
     except Exception:  # noqa: BLE001
-        logger.exception("named-checkzone failed for %s", zone_name)
-        return True  # ne bloque pas si l'outil plante
+        logger.exception("named-checkzone exception for %s — publication bloquée", zone_name)
+        return False
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         logger.error("named-checkzone %s: %s", zone_name, detail[:2000])
@@ -196,6 +278,13 @@ def write_zones_conf(zones: list[DnsZone] | None = None) -> Path:
         except ValueError:
             continue
         if not zpath.exists():
+            continue
+        # Ne jamais référencer une zone encore invalide sur disque
+        try:
+            assert_zone_export_safe(zpath.read_text(encoding="utf-8"), zone_name=name)
+        except (ValueError, OSError) as exc:
+            logger.error("zones.conf: ignore %s (%s)", name, exc)
+            zpath.unlink(missing_ok=True)
             continue
         blocks.append(
             "\n".join(
@@ -278,24 +367,26 @@ def ensure_ns_glue_records(*, public_ip: str | None = None) -> int:
     return created
 
 
-def sync_zone_to_named(zone: DnsZone | None = None, *, zone_name: str | None = None) -> None:
-    """Écrit une zone (ou la retire) puis régénère zones.conf + reload."""
+def sync_zone_to_named(zone: DnsZone | None = None, *, zone_name: str | None = None) -> bool:
+    """Écrit une zone (ou la retire) puis régénère zones.conf + reload. True si OK."""
     if zone is None and zone_name:
         zone = DnsZone.objects.filter(name=zone_name.rstrip(".")).first()
         if zone is None:
             remove_zone_file(zone_name)
             write_zones_conf()
             request_named_reload()
-            return
+            return True
     if zone is None:
-        return
-    write_zone_file(zone)
+        return False
+    path = write_zone_file(zone)
     write_zones_conf()
     request_named_reload()
+    return path is not None or not zone.is_active
 
 
-def sync_all_zones_to_named(*, ensure_glue: bool = True) -> int:
-    """Exporte toutes les zones actives vers BIND."""
+def sync_all_zones_to_named(*, ensure_glue: bool = True) -> ZoneSyncResult:
+    """Exporte toutes les zones actives vers BIND (jamais de fichier TXT illégal)."""
+    result = ZoneSyncResult()
     if ensure_glue:
         try:
             ensure_ns_glue_records()
@@ -308,18 +399,34 @@ def sync_all_zones_to_named(*, ensure_glue: bool = True) -> int:
     except Exception:  # noqa: BLE001
         logger.exception("Heal subdomain DNS")
     zones = list(DnsZone.objects.filter(is_active=True).prefetch_related("records"))
-    # Clean orphan zone files
     zdir = dns_zones_dir()
     zdir.mkdir(parents=True, exist_ok=True)
     expected = {f"{z.name.rstrip('.').lower()}.zone" for z in zones}
     for path in zdir.glob("*.zone"):
         if path.name not in expected:
             path.unlink(missing_ok=True)
+    published_zones: list[DnsZone] = []
     for zone in zones:
-        write_zone_file(zone)
-    write_zones_conf(zones)
+        path = write_zone_file(zone)
+        if path is None:
+            result.failed.append(zone.name)
+        else:
+            result.published += 1
+            published_zones.append(zone)
+    write_zones_conf(published_zones)
     request_named_reload()
-    return len(zones)
+    if result.failed:
+        logger.error("Zones DNS non publiées: %s", ", ".join(result.failed))
+    return result
+
+
+def audit_zone_records() -> list[str]:
+    """Liste les problèmes potentiels avant export (TXT trop longs côté rendu)."""
+    issues: list[str] = []
+    for zone in DnsZone.objects.filter(is_active=True).prefetch_related("records"):
+        content = render_zone_file(zone)
+        issues.extend(validate_zone_export(content, zone_name=zone.name))
+    return issues
 
 
 def schedule_zone_sync(zone: DnsZone | None = None, *, zone_name: str | None = None) -> None:
@@ -328,7 +435,6 @@ def schedule_zone_sync(zone: DnsZone | None = None, *, zone_name: str | None = N
     def _run() -> None:
         try:
             if zone is not None:
-                # Re-fetch to get latest serial/records
                 z = DnsZone.objects.filter(pk=zone.pk).prefetch_related("records").first()
                 if z:
                     sync_zone_to_named(z)

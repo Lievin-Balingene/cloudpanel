@@ -91,9 +91,15 @@ install -m 755 "${REPO_DIR}/scripts/vzone-named-reload.sh" /usr/local/sbin/vzone
 install -m 644 "${REPO_DIR}/deploy/systemd/vzone-named-reload.service" /etc/systemd/system/vzone-named-reload.service
 install -m 644 "${REPO_DIR}/deploy/systemd/vzone-named-reload.path" /etc/systemd/system/vzone-named-reload.path
 
+# Santé DNS périodique (anti-SERVFAIL)
+install -m 755 "${REPO_DIR}/scripts/vzone-dns-health.sh" /usr/local/sbin/vzone-dns-health
+install -m 644 "${REPO_DIR}/deploy/systemd/vzone-dns-health.service" /etc/systemd/system/vzone-dns-health.service
+install -m 644 "${REPO_DIR}/deploy/systemd/vzone-dns-health.timer" /etc/systemd/system/vzone-dns-health.timer
+
 systemctl daemon-reload
 systemctl enable named 2>/dev/null || systemctl enable bind9 2>/dev/null || true
 systemctl enable --now vzone-named-reload.path
+systemctl enable --now vzone-dns-health.timer
 
 # Firewall DNS
 if command -v ufw >/dev/null 2>&1; then
@@ -139,6 +145,8 @@ if [[ -x "${VZONE_ROOT}/backend/.venv/bin/python" && -f /etc/vzone/vzone.env ]];
   export VZONE_DNS_RELOAD_FLAG="${NAMED_DIR}/reload.requested"
   if "${VZONE_ROOT}/backend/.venv/bin/python" "${VZONE_ROOT}/backend/manage.py" sync_dns_zones; then
     sync_ok=1
+    "${VZONE_ROOT}/backend/.venv/bin/python" "${VZONE_ROOT}/backend/manage.py" check_dns_zones --disk-files \
+      || echo "[vzone-dns] ALERTE: check_dns_zones a signalé des problèmes"
   else
     echo "[vzone-dns] ERREUR: sync_dns_zones a échoué — lancez: sudo bash ${REPO_DIR}/scripts/update.sh"
   fi

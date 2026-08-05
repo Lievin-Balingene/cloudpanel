@@ -1,0 +1,8 @@
+[Unit]
+Description=V-zone DNS health check (anti-SERVFAIL)
+After=network.target named.service bind9.service vzone-api.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/vzone-dns-health
+Nice=10
