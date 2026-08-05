@@ -669,6 +669,156 @@ class WhmRemoteClient:
         _ = rest_start
         return written
 
+    def _http_download_urls(self, remote_path: str, cp_token: str = "") -> list[str]:
+        """URLs WHM possibles pour télécharger un fichier (session ou auth directe)."""
+        enc = urllib.parse.quote(remote_path, safe="")
+        token = cp_token.strip("/")
+        prefix = f"https://{self.host}:{self.port}"
+        urls = []
+        if token:
+            urls.extend(
+                [
+                    f"{prefix}/{token}/download?file={enc}",
+                    f"{prefix}/{token}/scripts/download?file={enc}",
+                    f"{prefix}/{token}/cgi/getfile.cgi?file={enc}",
+                ]
+            )
+        urls.extend(
+            [
+                f"{prefix}/download?file={enc}",
+                f"{prefix}/scripts/download?file={enc}",
+                f"{prefix}/cgi/getfile.cgi?file={enc}",
+                f"{prefix}/cgi/downloadcpmove.cgi?file={enc.rsplit('/', 1)[-1]}",
+            ]
+        )
+        return urls
+
+    def _open_whm_http_session(self):
+        """Session HTTP avec cookies WHM (create_user_session)."""
+        try:
+            import requests
+        except ImportError as exc:
+            raise VZoneAPIException(
+                detail="Bibliothèque requests manquante.",
+                code="whm_http_unavailable",
+                status_code=500,
+            ) from exc
+
+        sess = requests.Session()
+        sess.verify = not self.insecure_ssl
+        sess.headers.update({"Authorization": self._auth_header()})
+        data = self._request("create_user_session", {"user": self.user, "service": "whostmgrd"})
+        payload = data.get("data") or {}
+        session_url = payload.get("url") or ""
+        cp_token = str(payload.get("cp_security_token") or "").strip("/")
+        if not session_url:
+            raise VZoneAPIException(
+                detail="WHM create_user_session n'a pas renvoyé d'URL.",
+                code="whm_session_failed",
+                status_code=502,
+            )
+        try:
+            resp = sess.get(session_url, timeout=60, allow_redirects=True)
+            resp.raise_for_status()
+        except Exception as exc:  # noqa: BLE001
+            raise VZoneAPIException(
+                detail=f"Activation session WHM impossible: {exc}",
+                code="whm_session_failed",
+                status_code=502,
+            ) from exc
+        # Les requêtes de download utilisent les cookies, pas Authorization
+        sess.headers.pop("Authorization", None)
+        return sess, cp_token
+
+    def _http_download_file(
+        self,
+        sess: Any,
+        url: str,
+        dest: Path,
+        *,
+        timeout: int = 7200,
+    ) -> int:
+        import requests
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with sess.get(url, stream=True, timeout=(60, timeout)) as resp:
+                resp.raise_for_status()
+                ctype = (resp.headers.get("Content-Type") or "").lower()
+                peek = resp.raw.read(4, decode_content=False)
+                if peek.startswith(b"{") or peek.startswith(b"["):
+                    body = peek + resp.content[:4000]
+                    try:
+                        err = json.loads(body.decode("utf-8", errors="replace"))
+                        reason = (err.get("metadata") or {}).get("reason") or body[:200]
+                    except Exception:  # noqa: BLE001
+                        reason = body[:200]
+                    raise VZoneAPIException(
+                        detail=f"Téléchargement WHM refusé: {reason}",
+                        code="whm_download_failed",
+                        status_code=502,
+                    )
+                if "text/html" in ctype and len(peek) < 256:
+                    # Probable page d'erreur WHM
+                    rest = resp.raw.read(2000, decode_content=False)
+                    if b"<html" in (peek + rest).lower():
+                        raise VZoneAPIException(
+                            detail="WHM a renvoyé une page HTML au lieu de l'archive.",
+                            code="whm_download_failed",
+                            status_code=502,
+                        )
+                written = 0
+                with dest.open("wb") as out:
+                    if peek:
+                        out.write(peek)
+                        written += len(peek)
+                    for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            out.write(chunk)
+                            written += len(chunk)
+        except VZoneAPIException:
+            dest.unlink(missing_ok=True)
+            raise
+        except requests.RequestException as exc:
+            dest.unlink(missing_ok=True)
+            raise VZoneAPIException(
+                detail=f"HTTP {url.split('?')[0]}: {exc}",
+                code="whm_download_failed",
+                status_code=502,
+            ) from exc
+        return self._validate_downloaded_archive(dest, url)
+
+    def _http_download_candidates(
+        self,
+        username: str,
+        dest: Path,
+        *,
+        progress: ProgressCb | None = None,
+        extra_paths: list[str] | None = None,
+    ) -> int:
+        """Télécharge via session WHM (port 2087) — sans SSH."""
+        paths = self.resolve_cpmove_paths(username, extra=extra_paths)
+        if progress:
+            progress(60, "Téléchargement HTTP WHM (session 2087)…")
+        sess, cp_token = self._open_whm_http_session()
+        errors: list[str] = []
+        for remote_path in paths[:8]:
+            for url in self._http_download_urls(remote_path, cp_token):
+                short = url.split("?")[0].rsplit("/", 1)[-1]
+                try:
+                    if progress:
+                        progress(62, f"HTTP {short} — {remote_path}…")
+                    return self._http_download_file(sess, url, dest)
+                except VZoneAPIException as exc:
+                    errors.append(f"{short}: {exc.detail}")
+                    dest.unlink(missing_ok=True)
+                    continue
+        raise VZoneAPIException(
+            detail="Téléchargement HTTP WHM impossible. " + " ; ".join(errors[:4]),
+            code="whm_download_failed",
+            status_code=502,
+        )
+
     def download_cpmove(
         self,
         username: str,
@@ -678,78 +828,76 @@ class WhmRemoteClient:
         wait_seconds: int = 180,
         extra_paths: list[str] | None = None,
     ) -> Path:
-        """Télécharge cpmove-USER depuis le WHM distant (SCP puis repli HTTP)."""
+        """Télécharge cpmove-USER (SCP si SSH OK, sinon session HTTP WHM 2087)."""
         username = username.strip()
         dest.parent.mkdir(parents=True, exist_ok=True)
 
-        if progress:
-            progress(58, f"Test SSH {self.host}:{self.ssh_port}…")
         ssh_probe = self.check_ssh_access()
-        if not ssh_probe.get("ok"):
-            raise VZoneAPIException(
-                detail=str(ssh_probe.get("message") or "SSH inaccessible"),
-                code="whm_ssh_unreachable",
-                status_code=502,
-            )
-
-        deadline = time.time() + wait_seconds
-        last_scp_error: VZoneAPIException | None = None
-        while time.time() < deadline:
-            try:
-                size = self._scp_download_candidates(
-                    username,
-                    dest,
-                    progress=progress,
-                    extra_paths=extra_paths,
-                )
-                if progress:
-                    progress(90, f"Archive téléchargée via SCP ({size} octets)")
-                return dest
-            except VZoneAPIException as exc:
-                last_scp_error = exc
-                code = getattr(exc, "default_code", "") or ""
-                if code in {"whm_scp_password_required", "whm_ssh_unreachable", "whm_ssh_auth_failed"}:
-                    raise
-                if code != "whm_archive_not_ready":
-                    raise
-                if progress:
-                    progress(61, "Archive pas encore prête — nouvelle tentative SCP…")
-                time.sleep(8)
-
-        if last_scp_error:
-            raise last_scp_error
-
-        # Repli HTTP (rare)
-        paths = self.resolve_cpmove_paths(username, extra=extra_paths)
-        http_candidates: list[str] = []
-        for remote_path in paths[:6]:
-            http_candidates.append(
-                f"https://{self.host}:{self.port}/download?"
-                + urllib.parse.urlencode({"file": remote_path})
-            )
+        ssh_ok = bool(ssh_probe.get("ok"))
         errors: list[str] = []
-        for idx, url in enumerate(http_candidates):
-            try:
-                if progress:
-                    progress(65 + idx, f"Téléchargement HTTP (essai {idx + 1})…")
-                size = self._stream_download(url, dest, timeout=max(self.timeout, 3600))
-                if progress:
-                    progress(90, f"Archive téléchargée ({size} octets)")
-                return dest
-            except Exception as exc:  # noqa: BLE001
-                short = url.split("?")[0].rsplit("/", 1)[-1]
-                errors.append(f"{short}: {exc}")
-                dest.unlink(missing_ok=True)
-        raise VZoneAPIException(
-            detail=(
-                "Impossible de télécharger le cpmove distant. "
-                + " ; ".join(errors[:3])
-                + f". SSH requis sur le port {self.ssh_port}."
-                + _egress_ip_hint()
-            ),
-            code="whm_download_failed",
-            status_code=502,
-        )
+
+        if ssh_ok:
+            if progress:
+                progress(58, f"SSH {self.host}:{self.ssh_port}…")
+            deadline = time.time() + wait_seconds
+            last_scp_error: VZoneAPIException | None = None
+            while time.time() < deadline:
+                try:
+                    size = self._scp_download_candidates(
+                        username,
+                        dest,
+                        progress=progress,
+                        extra_paths=extra_paths,
+                    )
+                    if progress:
+                        progress(90, f"Archive téléchargée via SCP ({size} octets)")
+                    return dest
+                except VZoneAPIException as exc:
+                    last_scp_error = exc
+                    code = getattr(exc, "default_code", "") or ""
+                    if code in {"whm_scp_password_required", "whm_ssh_auth_failed"}:
+                        errors.append(str(exc.detail))
+                        break
+                    if code != "whm_archive_not_ready":
+                        errors.append(str(exc.detail))
+                        break
+                    if progress:
+                        progress(61, "Archive pas encore prête — nouvelle tentative SCP…")
+                    time.sleep(8)
+            if last_scp_error and getattr(last_scp_error, "default_code", "") == "whm_archive_not_ready":
+                errors.append(str(last_scp_error.detail))
+        else:
+            msg = str(ssh_probe.get("message") or "SSH inaccessible")
+            errors.append(msg)
+            if progress:
+                progress(58, "SSH indisponible — repli HTTP WHM…")
+
+        try:
+            size = self._http_download_candidates(
+                username,
+                dest,
+                progress=progress,
+                extra_paths=extra_paths,
+            )
+            if progress:
+                progress(90, f"Archive téléchargée via HTTP ({size} octets)")
+            return dest
+        except VZoneAPIException as exc:
+            errors.append(str(exc.detail))
+            hint = _egress_ip_hint()
+            raise VZoneAPIException(
+                detail=(
+                    "Impossible de télécharger le cpmove distant. "
+                    + " | ".join(errors[:4])
+                    + ". Solutions : (1) ouvrir le port SSH "
+                    + str(self.ssh_port)
+                    + " depuis le serveur V-zone"
+                    + _egress_ip_hint()
+                    + " ; (2) uploader l'archive dans l'onglet « Archive cPanel »."
+                ),
+                code="whm_download_failed",
+                status_code=502,
+            ) from exc
 
     def start_background_pkgacct(self, username: str) -> str | None:
         data = self._request(

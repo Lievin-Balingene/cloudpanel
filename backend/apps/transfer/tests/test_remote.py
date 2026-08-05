@@ -151,6 +151,18 @@ def test_download_cpmove_uses_scp_when_password_auth(tmp_path: Path):
     assert out == dest
 
 
+def test_download_cpmove_falls_back_to_http_when_ssh_down(tmp_path: Path):
+    client = WhmRemoteClient("whm.test", token="secret", insecure_ssl=True)
+    client.auth_method = "basic-password"
+    dest = tmp_path / "cpmove.tar.gz"
+
+    with patch.object(client, "check_ssh_access", return_value={"ok": False, "message": "SSH down"}):
+        with patch.object(client, "_http_download_candidates", return_value=128) as http:
+            out = client.download_cpmove("u", dest)
+    http.assert_called_once()
+    assert out == dest
+
+
 def test_check_ssh_access_reports_timeout():
     client = WhmRemoteClient("whm.test", token="secret")
     client.auth_method = "basic-password"
