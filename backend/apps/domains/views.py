@@ -66,6 +66,7 @@ class DomainListCreateView(APIView):
             create_dns_zone=data.get("create_dns_zone", True),
             document_root=data.get("document_root") or "",
             notes=data.get("notes") or "",
+            web_engine=data.get("web_engine") or Domain.WebEngine.NGINX,
         )
         return Response(
             {"success": True, "data": DomainSerializer(domain).data},
@@ -84,8 +85,43 @@ class DomainDetailView(APIView):
         domain = get_object_or_404(domains_queryset_for(request.user), pk=pk)
         serializer = DomainSerializer(domain, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        if "web_engine" in data and data["web_engine"] == Domain.WebEngine.OLS:
+            from apps.domains.ols_vhosts import ols_enabled, ols_installed
+
+            if not ols_enabled() or not ols_installed():
+                return Response(
+                    {
+                        "success": False,
+                        "error": {
+                            "code": "ols_unavailable",
+                            "message": (
+                                "OpenLiteSpeed non disponible. "
+                                "VZONE_OLS_ENABLED=1 + install-openlitespeed.sh"
+                            ),
+                        },
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
         serializer.save()
-        return Response({"success": True, "data": serializer.data})
+        domain.refresh_from_db()
+        # Sync PHP handler hint + vhosts
+        if domain.web_engine == Domain.WebEngine.OLS:
+            try:
+                from apps.php.models import PhpSelector
+
+                PhpSelector.objects.filter(
+                    domain_name__iexact=domain.name, is_active=True
+                ).update(handler=PhpSelector.Handler.LSAPI)
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            from apps.domains.vhosts import sync_domain_vhost
+
+            sync_domain_vhost(domain)
+        except Exception:  # noqa: BLE001
+            pass
+        return Response({"success": True, "data": DomainSerializer(domain).data})
 
     def delete(self, request: Request, pk: int) -> Response:
         domain = get_object_or_404(domains_queryset_for(request.user), pk=pk)

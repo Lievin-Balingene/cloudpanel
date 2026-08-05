@@ -67,3 +67,39 @@ class PanelUpdateJobView(APIView):
 
     def get(self, request: Request, job_id: str) -> Response:
         return Response({"success": True, "data": get_job_status(job_id)})
+
+
+class OlsOverviewView(APIView):
+    permission_classes = [IsAuthenticated, IsAdministrator]
+
+    def get(self, request: Request) -> Response:
+        from apps.domains.ols_vhosts import ols_overview
+
+        return Response({"success": True, "data": ols_overview()})
+
+
+class OlsReloadView(APIView):
+    permission_classes = [IsAuthenticated, IsAdministrator]
+
+    def post(self, request: Request) -> Response:
+        from apps.domains.ols_vhosts import ols_enabled, ols_installed, rebuild_ols_maps, reload_ols
+
+        if not ols_enabled() or not ols_installed():
+            return Response(
+                {
+                    "success": False,
+                    "error": {
+                        "code": "ols_unavailable",
+                        "message": "OpenLiteSpeed non installé ou désactivé.",
+                    },
+                },
+                status=400,
+            )
+        count = rebuild_ols_maps()
+        reload_ols()
+        return Response(
+            {
+                "success": True,
+                "data": {"reloaded": True, "vhosts": count},
+            }
+        )

@@ -77,6 +77,7 @@ class DomainSerializer(serializers.ModelSerializer):
             "dns_zone_name",
             "ipv4_address",
             "ipv6_address",
+            "web_engine",
             "notes",
             "ssl",
             "redirects",
@@ -120,6 +121,11 @@ class DomainCreateSerializer(serializers.Serializer):
     create_dns_zone = serializers.BooleanField(default=True)
     document_root = serializers.CharField(required=False, allow_blank=True, default="")
     notes = serializers.CharField(required=False, allow_blank=True, default="")
+    web_engine = serializers.ChoiceField(
+        choices=Domain.WebEngine.choices,
+        default=Domain.WebEngine.NGINX,
+        required=False,
+    )
 
     def validate_ipv4_address(self, value: str | None) -> str | None:
         if value in ("", None):

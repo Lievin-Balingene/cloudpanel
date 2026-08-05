@@ -215,6 +215,9 @@ PY
   if [[ -f "${SCRIPT_DIR}/install-hostname-agent.sh" ]]; then
     bash "${SCRIPT_DIR}/install-hostname-agent.sh" || log "Avertissement: agent hostname non installé"
   fi
+  if [[ "${VZONE_OLS_ENABLED:-0}" =~ ^(1|true|TRUE|yes|YES)$ ]] && [[ -f "${SCRIPT_DIR}/install-openlitespeed.sh" ]]; then
+    bash "${SCRIPT_DIR}/install-openlitespeed.sh" || log "Avertissement: OpenLiteSpeed non installé"
+  fi
   # WP-CLI / WordPress
   if [[ -f "${SCRIPT_DIR}/install-wp-cli.sh" ]]; then
     bash "${SCRIPT_DIR}/install-wp-cli.sh" || log "Avertissement: wp-cli non installé"

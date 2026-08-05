@@ -21,6 +21,7 @@ export function DomainsManager({ title }: { title: string }) {
     domain_type: "primary",
     ipv4_address: "",
     parent_id: "",
+    web_engine: "nginx",
   });
   const [subLabel, setSubLabel] = useState("www");
   const [createOpen, setCreateOpen] = useState(false);
@@ -31,6 +32,17 @@ export function DomainsManager({ title }: { title: string }) {
     destination_url: "https://",
     redirect_type: "301",
   });
+
+  const { data: olsInfo } = useQuery({
+    queryKey: ["ols-overview"],
+    queryFn: () =>
+      apiRequest<{ enabled: boolean; installed: boolean }>("/server-setup/ols/").catch(() => ({
+        enabled: false,
+        installed: false,
+      })),
+    staleTime: 60_000,
+  });
+  const olsReady = Boolean(olsInfo?.enabled && olsInfo?.installed);
 
   const selected = useMemo(
     () => domains.find((d) => d.id === selectedId) ?? domains[0] ?? null,
@@ -51,15 +63,31 @@ export function DomainsManager({ title }: { title: string }) {
           ipv4_address: form.ipv4_address.trim() || null,
           parent_id: form.parent_id ? Number(form.parent_id) : null,
           create_dns_zone: true,
+          web_engine: form.web_engine,
         }),
       }),
     onSuccess: () => {
-      setForm({ name: "", domain_type: "primary", ipv4_address: form.ipv4_address, parent_id: "" });
+      setForm({
+        name: "",
+        domain_type: "primary",
+        ipv4_address: form.ipv4_address,
+        parent_id: "",
+        web_engine: "nginx",
+      });
       void qc.invalidateQueries({ queryKey: ["domains"] });
       void qc.invalidateQueries({ queryKey: ["dns-zones"] });
       void qc.invalidateQueries({ queryKey: ["dashboard-overview"] });
       setCreateOpen(false);
     },
+  });
+
+  const updateEngine = useMutation({
+    mutationFn: ({ id, web_engine }: { id: number; web_engine: string }) =>
+      apiRequest(`/domains/${id}/`, {
+        method: "PATCH",
+        body: JSON.stringify({ web_engine }),
+      }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["domains"] }),
   });
 
   const createSub = useMutation({
@@ -157,6 +185,24 @@ export function DomainsManager({ title }: { title: string }) {
             <select className="vz-input sm:col-span-2" value={form.parent_id} onChange={(e) => setForm({ ...form, parent_id: e.target.value })}>
               <option value="">Parent (parked/alias)</option>{parents.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
+            <label className="sm:col-span-2 space-y-1">
+              <span className="text-[11px] font-medium text-cp-muted">Web engine (PHP / static)</span>
+              <select
+                className="vz-input"
+                value={form.web_engine}
+                onChange={(e) => setForm({ ...form, web_engine: e.target.value })}
+              >
+                <option value="nginx">Nginx + PHP-FPM</option>
+                <option value="ols" disabled={!olsReady}>
+                  OpenLiteSpeed{olsReady ? "" : " (non installé)"}
+                </option>
+              </select>
+              {!olsReady && (
+                <span className="block text-[11px] text-cp-muted">
+                  Pour activer OLS : WHM → OpenLiteSpeed (VZONE_OLS_ENABLED=1).
+                </span>
+              )}
+            </label>
             {createDomain.isError && <p className="sm:col-span-2 text-sm text-cp-danger">{(createDomain.error as Error)?.message}</p>}
             <div className="flex justify-end gap-2 sm:col-span-2"><button type="button" className="vz-btn-ghost" onClick={() => setCreateOpen(false)}>Annuler</button><button className="vz-btn-primary" disabled={createDomain.isPending}>Ajouter</button></div>
           </form>
@@ -204,6 +250,27 @@ export function DomainsManager({ title }: { title: string }) {
                   <p className="mt-2 rounded-md border border-cp-border bg-cp-canvas/60 px-3 py-2 font-mono text-xs text-cp-text dark:border-ink-700 dark:bg-ink-900">
                     Document root : {selected.document_root || "—"}
                   </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <label className="text-[11px] font-medium text-cp-muted">Web engine</label>
+                    <select
+                      className="vz-input !min-h-0 max-w-[14rem] !py-1 text-xs"
+                      value={selected.web_engine || "nginx"}
+                      disabled={updateEngine.isPending}
+                      onChange={(e) =>
+                        updateEngine.mutate({ id: selected.id, web_engine: e.target.value })
+                      }
+                    >
+                      <option value="nginx">Nginx + PHP-FPM</option>
+                      <option value="ols" disabled={!olsReady && selected.web_engine !== "ols"}>
+                        OpenLiteSpeed
+                      </option>
+                    </select>
+                    {updateEngine.isError && (
+                      <span className="text-[11px] text-cp-danger">
+                        {(updateEngine.error as Error)?.message}
+                      </span>
+                    )}
+                  </div>
                   {selected.domain_type === "subdomain" ? (
                     <p className="mt-1 text-xs text-cp-muted">
                       Placez un <code className="font-mono">index.html</code> ou{" "}

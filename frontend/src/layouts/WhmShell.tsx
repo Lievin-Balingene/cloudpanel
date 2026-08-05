@@ -32,6 +32,7 @@ import {
   Rocket,
   Search,
   X,
+  Zap,
   type LucideIcon,
 } from "lucide-react";
 import { useAuthStore } from "@/stores/auth";
@@ -110,6 +111,7 @@ const navSections: NavSection[] = [
       { to: "/whm/monitoring", label: "Service Status", icon: Bell, keywords: ["alerte"] },
       { to: "/whm/resources", label: "Server Information", icon: Activity, keywords: ["cpu", "ram"] },
       { to: "/whm/panel-update", label: "Panel Update", icon: Rocket, keywords: ["mise à jour", "update", "git"] },
+      { to: "/whm/ols", label: "OpenLiteSpeed", icon: Zap, keywords: ["ols", "litespeed", "lsphp", "php"] },
       { to: "/whm/firewall", label: "Firewall", icon: Shield, keywords: ["fail2ban"] },
       { to: "/whm/security", label: "Security Center", icon: KeyRound },
       { to: "/whm/account-security", label: "Two-Factor Auth", icon: KeyRound, keywords: ["2fa"] },

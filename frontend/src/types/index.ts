@@ -204,6 +204,7 @@ export interface Domain {
   dns_zone_name: string | null;
   ipv4_address: string | null;
   ipv6_address: string | null;
+  web_engine?: "nginx" | "ols" | string;
   ssl: SslInfo | null;
   redirects: DomainRedirect[];
 }

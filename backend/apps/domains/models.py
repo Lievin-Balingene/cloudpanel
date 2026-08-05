@@ -67,6 +67,17 @@ class Domain(models.Model):
     )
     ipv4_address = models.GenericIPAddressField(protocol="IPv4", null=True, blank=True)
     ipv6_address = models.GenericIPAddressField(protocol="IPv6", null=True, blank=True)
+    class WebEngine(models.TextChoices):
+        NGINX = "nginx", "Nginx + PHP-FPM"
+        OLS = "ols", "OpenLiteSpeed"
+
+    web_engine = models.CharField(
+        max_length=16,
+        choices=WebEngine.choices,
+        default=WebEngine.NGINX,
+        db_index=True,
+        help_text="Moteur pour PHP/static (Python/Node restent en proxy Nginx).",
+    )
     notes = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

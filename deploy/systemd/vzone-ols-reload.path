@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch V-zone OpenLiteSpeed reload requests
+
+[Path]
+PathExists=/var/lib/vzone/ols/reload.requested
+MakeDirectory=true
+Unit=vzone-ols-reload.service
+
+[Install]
+WantedBy=multi-user.target

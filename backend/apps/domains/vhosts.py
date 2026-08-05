@@ -220,7 +220,7 @@ def _ssl_cert_paths(domain: Domain) -> tuple[str, str] | None:
         return None
 
 
-def _location_body(backend: DomainBackend) -> str:
+def _location_body(backend: DomainBackend, *, use_ols: bool = False) -> str:
     if backend.mode == "suspended":
         # Page style cPanel — tous les domaines du compte suspendu
         root = (backend.docroot or "/var/lib/vzone/suspended").rstrip("/")
@@ -316,6 +316,26 @@ def _location_body(backend: DomainBackend) -> str:
     }}
 """
 
+    # PHP / static via OpenLiteSpeed (opt-in)
+    if use_ols and backend.mode in {"php", "static"}:
+        from apps.domains.ols_vhosts import ols_listen
+
+        upstream = ols_listen()
+        return f"""
+    location / {{
+        proxy_pass http://{upstream};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 300s;
+        proxy_buffering off;
+    }}
+"""
+
     docroot = backend.docroot or "/var/empty"
     if backend.mode == "php" and backend.php_socket:
         return f"""
@@ -394,11 +414,20 @@ def render_vhost(domain: Domain, backend: DomainBackend) -> str:
     server_names = _server_names(domain)
     logs_prefix = SAFE_NAME_RE.sub("_", domain.name.lower())
     acme_root = getattr(settings, "VZONE_ACME_WEBROOT", None) or "/var/lib/vzone/acme"
-    body = _location_body(backend)
+    use_ols = False
+    if backend.mode in {"php", "static"}:
+        try:
+            from apps.domains.ols_vhosts import ols_installed, uses_ols_engine
+
+            use_ols = uses_ols_engine(domain) and ols_installed()
+        except Exception:  # noqa: BLE001
+            use_ols = False
+    engine_tag = "ols" if use_ols else "nginx"
+    body = _location_body(backend, use_ols=use_ols)
     ssl_paths = _ssl_cert_paths(domain)
 
     http = f"""# V-zone domain vhost — {domain.name}
-# backend={backend.mode} app={backend.app_label or '-'}
+# backend={backend.mode} engine={engine_tag} app={backend.app_label or '-'}
 server {{
     listen 80;
     listen [::]:80;
@@ -457,12 +486,30 @@ def write_domain_vhost(domain: Domain) -> Path:
         if path.exists():
             path.unlink()
             logger.info("Vhost domaine retiré (hostname panel): %s", path)
+        try:
+            from apps.domains.ols_vhosts import remove_ols_vhost
+
+            remove_ols_vhost(domain.name)
+        except Exception:  # noqa: BLE001
+            pass
         return path
 
     backend = resolve_domain_backend(domain)
     conf = render_vhost(domain, backend)
     path.write_text(conf, encoding="utf-8")
     logger.info("Vhost écrit %s (%s)", path, backend.mode)
+
+    # OpenLiteSpeed vhconf (si moteur ols + PHP/static)
+    try:
+        from apps.domains.ols_vhosts import remove_ols_vhost, uses_ols_engine, write_ols_vhost
+
+        if uses_ols_engine(domain) and backend.mode in {"php", "static"}:
+            write_ols_vhost(domain, docroot=backend.docroot or domain.document_root or "/var/empty")
+        else:
+            remove_ols_vhost(domain.name)
+    except Exception:  # noqa: BLE001
+        logger.debug("OLS vhost skip", exc_info=True)
+
     return path
 
 
@@ -547,6 +594,13 @@ def sync_all_domain_vhosts() -> int:
             path.unlink(missing_ok=True)
 
     reload_nginx()
+    try:
+        from apps.domains.ols_vhosts import rebuild_ols_maps, reload_ols
+
+        rebuild_ols_maps()
+        reload_ols()
+    except Exception:  # noqa: BLE001
+        logger.debug("OLS rebuild skip", exc_info=True)
     return count
 
 
@@ -563,6 +617,13 @@ def sync_domain_vhost(domain: Domain) -> Path:
     ):
         write_domain_vhost(child)
     reload_nginx()
+    try:
+        from apps.domains.ols_vhosts import rebuild_ols_maps, reload_ols
+
+        rebuild_ols_maps()
+        reload_ols()
+    except Exception:  # noqa: BLE001
+        logger.debug("OLS rebuild skip", exc_info=True)
     return path
 
 
@@ -575,6 +636,13 @@ def sync_owner_domain_vhosts(owner) -> int:
         count += 1
     if count:
         reload_nginx()
+        try:
+            from apps.domains.ols_vhosts import rebuild_ols_maps, reload_ols
+
+            rebuild_ols_maps()
+            reload_ols()
+        except Exception:  # noqa: BLE001
+            logger.debug("OLS rebuild skip", exc_info=True)
     return count
 
 
