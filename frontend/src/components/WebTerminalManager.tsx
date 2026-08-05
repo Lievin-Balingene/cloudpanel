@@ -155,13 +155,14 @@ export function WebTerminalManager({ title }: { title: string }) {
           <div>
             <h1 className="text-sm font-semibold uppercase tracking-wide">{title}</h1>
             <p className="text-[11px] text-white/80">
-              Terminal interactif (comme cPanel) — saisie clavier directe, pas de champ commande.
+              Prompt <code className="text-white/90">vzone@{access?.username || "compte"}</code>{" "}
+              — saisie clavier directe (jail du compte).
             </p>
           </div>
           <div className="text-xs text-white/90">
             {access?.username ? (
               <>
-                {access.username}
+                vzone@{access.username}
                 <span className="mx-1 opacity-50">·</span>
                 {connected ? "en ligne" : "hors ligne"}
               </>

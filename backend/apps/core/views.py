@@ -1,6 +1,8 @@
 """Vues API du module core."""
 from __future__ import annotations
 
+from django.conf import settings
+from django.contrib.auth import get_user_model
 from drf_spectacular.utils import extend_schema
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
@@ -13,6 +15,8 @@ from apps.core.serializers import HealthSerializer, ModuleSerializer, VersionSer
 from apps.core.services import collect_system_metrics, health_as_dict
 from apps.packages.models import PackageAssignment
 from vzone import __version__
+
+User = get_user_model()
 
 
 class HealthCheckView(APIView):
@@ -95,14 +99,25 @@ class WebTerminalAccessView(APIView):
             if assignment and assignment.package and assignment.package.allow_ssh:
                 allowed = True
                 reason = "Autorisé par le package."
+        jail = (
+            getattr(user, "system_username", None) or getattr(user, "username", "") or ""
+        ).strip().lower()
+        home = getattr(user, "home_directory", "") or ""
+        if not home and jail:
+            root = getattr(settings, "VZONE_HOME_ROOT", "/home")
+            if getattr(user, "role", None) == User.Role.ADMINISTRATOR:
+                home = f"{root}/admin"
+            else:
+                home = f"{root}/{jail}"
         return Response(
             {
                 "success": True,
                 "data": {
                     "allowed": allowed,
                     "reason": reason,
-                    "home_directory": getattr(user, "home_directory", "") or f"/home/{user.username}",
-                    "username": user.username,
+                    "home_directory": home,
+                    "username": jail or user.username,
+                    "prompt_user": "vzone",
                 },
             }
         )

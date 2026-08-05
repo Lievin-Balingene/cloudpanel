@@ -5,8 +5,10 @@ import asyncio
 import json
 import os
 import pty
+import shlex
 import signal
 import subprocess
+import tempfile
 import termios
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -33,6 +35,29 @@ def _resolve_user_and_access(user_id: int) -> tuple[object | None, bool]:
     assignment = PackageAssignment.objects.filter(user=user).select_related("package").first()
     allowed = bool(assignment and assignment.package and assignment.package.allow_ssh)
     return user, allowed
+
+
+def _jail_username(user: object) -> str:
+    """Nom du répertoire jail / identité shell (pas le hostname Contabo)."""
+    raw = (
+        getattr(user, "system_username", None)
+        or getattr(user, "username", None)
+        or "user"
+    )
+    name = str(raw).strip().lower()
+    if not name or name in {".", ".."} or "/" in name or "\\" in name:
+        return "user"
+    return name
+
+
+def _jail_home(user: object, jail: str) -> Path:
+    home = (getattr(user, "home_directory", "") or "").strip()
+    if home:
+        return Path(home)
+    root = Path(getattr(settings, "VZONE_HOME_ROOT", "/home"))
+    if str(getattr(user, "role", "")) == "administrator":
+        return root / "admin"
+    return root / jail
 
 
 class WebTerminalConsumer(AsyncWebsocketConsumer):
@@ -77,11 +102,16 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
                 os.close(fd)
             except OSError:
                 pass
+        rc = getattr(self, "_rcfile", None)
+        if rc:
+            try:
+                Path(rc).unlink(missing_ok=True)
+            except OSError:
+                pass
 
     async def receive(self, text_data: str | None = None, bytes_data=None) -> None:
         if not text_data:
             return
-        # JSON control frame or raw input
         if text_data.startswith("{"):
             try:
                 payload = json.loads(text_data)
@@ -124,21 +154,59 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
                 return
             await self.send(text_data=chunk.decode("utf-8", errors="ignore"))
 
+    def _write_rcfile(self, *, jail: str, home: Path) -> Path:
+        """
+        Force le prompt « vzone@<compte_jail> » : bash \\h lit gethostname()
+        (ex. vmi3182722 Contabo), pas le compte hébergé.
+        """
+        home_q = shlex.quote(str(home))
+        jail_q = shlex.quote(jail)
+        content = (
+            "# V-zone web terminal — identité jail (ne pas utiliser \\h OS)\n"
+            f"export HOME={home_q}\n"
+            f"export USER={jail_q}\n"
+            f"export LOGNAME={jail_q}\n"
+            f"export USERNAME={jail_q}\n"
+            f"export HOSTNAME={jail_q}\n"
+            f"export VZONE_JAIL_USER={jail_q}\n"
+            "unset PROMPT_COMMAND\n"
+            f"PS1='vzone@{jail}:\\w\\$ '\n"
+            "export PS1\n"
+            f"cd {home_q} 2>/dev/null || true\n"
+        )
+        fd, path = tempfile.mkstemp(prefix="vzone-term-", suffix=".bashrc")
+        os.close(fd)
+        Path(path).write_text(content, encoding="utf-8")
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+        self._rcfile = path
+        return Path(path)
+
     def _start_pty(self) -> None:
         shell = (getattr(settings, "VZONE_TERMINAL_SHELL", "/bin/bash") or "/bin/bash").strip()
-        home = (getattr(self.user, "home_directory", "") or "").strip()
-        if not home:
-            home = f"/home/{self.user.username}"
-        cwd = Path(home)
+        jail = _jail_username(self.user)
+        cwd = _jail_home(self.user, jail)
         if not cwd.exists():
-            cwd = Path("/tmp")
+            try:
+                cwd.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                cwd = Path("/tmp")
         master_fd, slave_fd = pty.openpty()
         self._resize(120, 34, master_fd=master_fd)
         env = os.environ.copy()
         env["TERM"] = "xterm-256color"
         env["HOME"] = str(cwd)
+        env["USER"] = jail
+        env["LOGNAME"] = jail
+        env["USERNAME"] = jail
+        env["HOSTNAME"] = jail
+        env["VZONE_JAIL_USER"] = jail
+        env["PROMPT_COMMAND"] = ""
+        rcfile = self._write_rcfile(jail=jail, home=cwd)
         proc = subprocess.Popen(
-            [shell, "-i"],
+            [shell, "--noprofile", "--rcfile", str(rcfile), "-i"],
             stdin=slave_fd,
             stdout=slave_fd,
             stderr=slave_fd,
