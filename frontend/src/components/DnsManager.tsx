@@ -105,66 +105,137 @@ export function DnsManager({ title }: { title: string }) {
         actions={<button type="button" className="vz-btn-primary" onClick={() => setCreateKind("zone")}><Plus className="h-4 w-4" />Créer une zone</button>}
       />
 
-      <div className="grid gap-4 lg:grid-cols-[240px_1fr]">
-        <div className="vz-panel overflow-hidden">
-          <div className="border-b border-cp-border bg-cp-canvas px-3 py-2 text-xs font-semibold uppercase text-cp-muted dark:border-ink-800 dark:bg-ink-900">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,13rem)_minmax(0,1fr)]">
+        <div className="vz-panel min-w-0 overflow-hidden">
+          <div className="border-b border-cp-border bg-cp-canvas px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-cp-muted dark:border-ink-800 dark:bg-ink-900">
             Zones
           </div>
-          {isLoading && <p className="p-3 text-sm">Chargement…</p>}
-          <ul>
+          {isLoading && <p className="p-3 text-xs text-cp-muted">Chargement…</p>}
+          <ul className="max-h-[min(70vh,32rem)] overflow-y-auto">
             {zones.map((z) => (
-              <li key={z.id}>
+              <li key={z.id} className="min-w-0">
                 <button
                   type="button"
-                  className={`block w-full border-b border-cp-border px-3 py-2 text-left text-sm dark:border-ink-800 ${
-                    selected?.id === z.id ? "bg-cp-orange-soft font-semibold text-cp-orange-dark" : ""
+                  title={z.name}
+                  className={`block w-full min-w-0 overflow-hidden border-b border-cp-border px-2.5 py-2 text-left dark:border-ink-800 ${
+                    selected?.id === z.id
+                      ? "bg-cp-orange-soft font-semibold text-cp-orange-dark"
+                      : "hover:bg-cp-canvas dark:hover:bg-ink-900"
                   }`}
                   onClick={() => setSelectedId(z.id)}
                 >
-                  {z.name}
-                  <span className="mt-0.5 block text-[11px] font-normal text-cp-muted">
-                    {z.record_count} records · serial {z.soa_serial}
+                  <span className="block truncate text-xs leading-snug">{z.name}</span>
+                  <span className="mt-0.5 block truncate text-[10px] font-normal leading-tight text-cp-muted">
+                    {z.record_count} rec. · s{z.soa_serial}
                   </span>
                 </button>
               </li>
             ))}
           </ul>
-          {!isLoading && zones.length === 0 && <EmptyState icon={<Globe2 className="h-8 w-8" />} message="Aucune zone DNS." action={<button type="button" className="vz-btn-primary" onClick={() => setCreateKind("zone")}><Plus className="h-4 w-4" />Créer une zone</button>} />}
+          {!isLoading && zones.length === 0 && (
+            <EmptyState
+              icon={<Globe2 className="h-8 w-8" />}
+              message="Aucune zone DNS."
+              action={
+                <button type="button" className="vz-btn-primary" onClick={() => setCreateKind("zone")}>
+                  <Plus className="h-4 w-4" />
+                  Créer une zone
+                </button>
+              }
+            />
+          )}
         </div>
 
-        <div className="space-y-3">
+        <div className="min-w-0 space-y-3">
           {selected ? (
             <>
-              <div className="vz-panel flex flex-wrap items-center justify-between gap-2 p-4">
-                <div>
-                  <p className="font-semibold">{selected.name}</p>
-                  <div className="mt-1 flex items-center gap-2 text-xs text-cp-muted"><span>Propriétaire {selected.owner_username}</span><StatusDot status={selected.dnssec_enabled ? "active" : "inactive"} label={`DNSSEC ${selected.dnssec_enabled ? "actif" : "inactif"}`} /></div>
+              <div className="vz-panel flex min-w-0 flex-wrap items-center justify-between gap-2 overflow-hidden p-3 sm:p-4">
+                <div className="min-w-0 flex-1 overflow-hidden">
+                  <p className="truncate text-sm font-semibold" title={selected.name}>
+                    {selected.name}
+                  </p>
+                  <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-cp-muted">
+                    <span className="truncate">Propriétaire {selected.owner_username}</span>
+                    <StatusDot
+                      status={selected.dnssec_enabled ? "active" : "inactive"}
+                      label={`DNSSEC ${selected.dnssec_enabled ? "actif" : "inactif"}`}
+                    />
+                  </div>
                 </div>
-                <div className="flex items-center gap-2"><button type="button" className="vz-btn-primary" onClick={() => setCreateKind("record")}><FilePlus2 className="h-4 w-4" />Ajouter un enregistrement</button><IconAction label={selected.dnssec_enabled ? "Désactiver DNSSEC" : "Activer DNSSEC"} onClick={() => toggleDnssec.mutate(!selected.dnssec_enabled)}>{selected.dnssec_enabled ? <ShieldOff className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}</IconAction></div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button type="button" className="vz-btn-primary" onClick={() => setCreateKind("record")}>
+                    <FilePlus2 className="h-4 w-4" />
+                    Ajouter
+                  </button>
+                  <IconAction
+                    label={selected.dnssec_enabled ? "Désactiver DNSSEC" : "Activer DNSSEC"}
+                    onClick={() => toggleDnssec.mutate(!selected.dnssec_enabled)}
+                  >
+                    {selected.dnssec_enabled ? (
+                      <ShieldOff className="h-4 w-4" />
+                    ) : (
+                      <ShieldCheck className="h-4 w-4" />
+                    )}
+                  </IconAction>
+                </div>
               </div>
 
-              <div className="vz-panel overflow-x-auto">
-                <table className="min-w-full text-left text-sm">
-                  <thead className="bg-cp-canvas text-xs uppercase text-cp-muted dark:bg-ink-900">
+              <div className="vz-panel min-w-0 overflow-x-auto">
+                <table className="w-full min-w-[36rem] table-fixed text-left text-xs">
+                  <thead className="bg-cp-canvas text-[10px] uppercase text-cp-muted dark:bg-ink-900">
                     <tr>
-                      <th className="px-3 py-2">Type</th>
-                      <th className="px-3 py-2">Nom</th>
-                      <th className="px-3 py-2">Contenu</th>
-                      <th className="px-3 py-2">TTL</th>
-                      <th className="px-3 py-2">Prio</th>
-                      <th className="px-3 py-2" />
+                      <th className="w-14 px-2 py-2">Type</th>
+                      <th className="w-28 px-2 py-2">Nom</th>
+                      <th className="px-2 py-2">Contenu</th>
+                      <th className="w-16 px-2 py-2">TTL</th>
+                      <th className="w-12 px-2 py-2">Prio</th>
+                      <th className="w-10 px-2 py-2" />
                     </tr>
                   </thead>
                   <tbody>
-                    {selected.records.length === 0 && <tr><td colSpan={6}><EmptyState icon={<FilePlus2 className="h-8 w-8" />} message="Aucun enregistrement dans cette zone." action={<button type="button" className="vz-btn-primary" onClick={() => setCreateKind("record")}><Plus className="h-4 w-4" />Ajouter un enregistrement</button>} /></td></tr>}
+                    {selected.records.length === 0 && (
+                      <tr>
+                        <td colSpan={6}>
+                          <EmptyState
+                            icon={<FilePlus2 className="h-8 w-8" />}
+                            message="Aucun enregistrement dans cette zone."
+                            action={
+                              <button
+                                type="button"
+                                className="vz-btn-primary"
+                                onClick={() => setCreateKind("record")}
+                              >
+                                <Plus className="h-4 w-4" />
+                                Ajouter un enregistrement
+                              </button>
+                            }
+                          />
+                        </td>
+                      </tr>
+                    )}
                     {selected.records.map((rec) => (
                       <tr key={rec.id} className="border-t border-cp-border dark:border-ink-800">
-                        <td className="px-3 py-2 font-mono text-xs">{rec.record_type}</td>
-                        <td className="px-3 py-2">{rec.name}</td>
-                        <td className="px-3 py-2 font-mono text-xs">{rec.content}</td>
-                        <td className="px-3 py-2">{rec.ttl ?? "—"}</td>
-                        <td className="px-3 py-2">{rec.priority ?? "—"}</td>
-                        <td className="px-3 py-2 text-right"><IconAction label="Supprimer l’enregistrement" danger onClick={() => deleteRecord.mutate(rec)}><Trash2 className="h-4 w-4" /></IconAction></td>
+                        <td className="px-2 py-1.5 font-mono text-[11px]">{rec.record_type}</td>
+                        <td className="max-w-0 truncate px-2 py-1.5 text-[11px]" title={rec.name}>
+                          {rec.name}
+                        </td>
+                        <td
+                          className="max-w-0 truncate px-2 py-1.5 font-mono text-[10px] leading-snug"
+                          title={rec.content}
+                        >
+                          {rec.content}
+                        </td>
+                        <td className="px-2 py-1.5 text-[11px] tabular-nums">{rec.ttl ?? "—"}</td>
+                        <td className="px-2 py-1.5 text-[11px] tabular-nums">{rec.priority ?? "—"}</td>
+                        <td className="px-2 py-1.5 text-right">
+                          <IconAction
+                            label="Supprimer l’enregistrement"
+                            danger
+                            onClick={() => deleteRecord.mutate(rec)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </IconAction>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -172,7 +243,18 @@ export function DnsManager({ title }: { title: string }) {
               </div>
             </>
           ) : (
-            <div className="vz-panel"><EmptyState icon={<Globe2 className="h-8 w-8" />} message="Sélectionnez ou créez une zone DNS." action={<button type="button" className="vz-btn-primary" onClick={() => setCreateKind("zone")}><Plus className="h-4 w-4" />Créer une zone</button>} /></div>
+            <div className="vz-panel">
+              <EmptyState
+                icon={<Globe2 className="h-8 w-8" />}
+                message="Sélectionnez ou créez une zone DNS."
+                action={
+                  <button type="button" className="vz-btn-primary" onClick={() => setCreateKind("zone")}>
+                    <Plus className="h-4 w-4" />
+                    Créer une zone
+                  </button>
+                }
+              />
+            </div>
           )}
         </div>
       </div>
