@@ -1,7 +1,8 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
+  ChevronRight,
   Copy,
   FileText,
   FolderOpen,
@@ -11,13 +12,17 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Search,
   Square,
   Terminal,
   Trash2,
   Download,
+  X,
 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
 import { runWithProgress } from "@/stores/operations";
+import { Modal } from "@/components/ui/Modal";
+import { EmptyState, PageHeader, Tabs } from "@/components/ui/PageChrome";
 
 interface PyOverview {
   apps: number;
@@ -50,6 +55,14 @@ interface PythonApp {
   django_project: string;
 }
 
+interface DomainRow {
+  id: number;
+  name: string;
+  domain_type: string;
+}
+
+type StatusFilter = "all" | "running" | "stopped" | "error";
+
 async function copyText(text: string) {
   try {
     await navigator.clipboard.writeText(text);
@@ -69,20 +82,21 @@ function statusMeta(status: string) {
   if (status === "running") {
     return {
       label: "En cours",
-      dot: "bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.2)]",
-      badge: "bg-emerald-50 text-emerald-800 ring-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:ring-emerald-800",
+      bar: "bg-emerald-500",
+      badge:
+        "bg-emerald-50 text-emerald-800 ring-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:ring-emerald-800",
     };
   }
   if (status === "error") {
     return {
       label: "Erreur",
-      dot: "bg-red-500 shadow-[0_0_0_3px_rgba(239,68,68,0.2)]",
+      bar: "bg-cp-danger",
       badge: "bg-red-50 text-red-800 ring-red-200 dark:bg-red-950/40 dark:text-red-300 dark:ring-red-900",
     };
   }
   return {
     label: "Arrêtée",
-    dot: "bg-slate-400",
+    bar: "bg-slate-400",
     badge: "bg-slate-100 text-slate-700 ring-slate-200 dark:bg-ink-900 dark:text-ink-200 dark:ring-ink-700",
   };
 }
@@ -97,6 +111,33 @@ function frameworkLabel(fw: string) {
   return map[fw] || fw;
 }
 
+const FRAMEWORKS = [
+  {
+    value: "django",
+    label: "Django",
+    hint: "WSGI · passenger_wsgi.py",
+    mode: "wsgi",
+  },
+  {
+    value: "flask",
+    label: "Flask",
+    hint: "WSGI · passenger_wsgi.py",
+    mode: "wsgi",
+  },
+  {
+    value: "fastapi",
+    label: "FastAPI",
+    hint: "ASGI · asgi.py",
+    mode: "asgi",
+  },
+  {
+    value: "generic",
+    label: "Generic",
+    hint: "WSGI ou ASGI",
+    mode: "wsgi",
+  },
+] as const;
+
 function CopyableError({ text, title }: { text: string; title?: string }) {
   const [copied, setCopied] = useState(false);
 
@@ -107,7 +148,7 @@ function CopyableError({ text, title }: { text: string; title?: string }) {
   }
 
   return (
-    <div className="rounded-lg border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30">
+    <div className="overflow-hidden rounded-lg border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30">
       <div className="flex items-center justify-between gap-2 border-b border-red-200/80 px-2.5 py-1.5 dark:border-red-900">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-cp-danger">
           {title || "Erreur"}
@@ -121,46 +162,77 @@ function CopyableError({ text, title }: { text: string; title?: string }) {
           {copied ? "Copié" : "Copier"}
         </button>
       </div>
-      <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words px-2.5 py-2 font-mono text-xs leading-relaxed text-cp-danger">
+      <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words px-2.5 py-2 font-mono text-xs leading-relaxed text-cp-danger">
         {text}
       </pre>
     </div>
   );
 }
 
-function DeployPanel({
-  app,
-  onClose,
+function CopyBlock({
+  label,
+  value,
+  dark,
 }: {
-  app: PythonApp;
-  onClose?: () => void;
+  label: string;
+  value: string;
+  dark?: boolean;
 }) {
-  const [copied, setCopied] = useState<"enter" | "deploy" | "root" | null>(null);
-
-  async function copy(kind: "enter" | "deploy" | "root") {
-    const text =
-      kind === "enter"
-        ? app.enter_command
-        : kind === "deploy"
-          ? app.deploy_command
-          : app.absolute_root || app.relative_root;
-    if (!text) return;
-    await copyText(text);
-    setCopied(kind);
-    window.setTimeout(() => setCopied(null), 2000);
-  }
-
+  const [copied, setCopied] = useState(false);
   return (
-    <div className="mt-4 space-y-3 rounded-lg border border-cp-navy/15 bg-gradient-to-b from-cp-canvas to-white p-4 dark:from-ink-900 dark:to-ink-950 dark:border-ink-700">
+    <div className="space-y-1">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-cp-muted">{label}</p>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 text-xs text-cp-link hover:underline"
+          onClick={() => {
+            void copyText(value).then(() => {
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 2000);
+            });
+          }}
+        >
+          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          {copied ? "Copié" : "Copier"}
+        </button>
+      </div>
+      <pre
+        className={`overflow-x-auto rounded-md px-3 py-2.5 font-mono text-xs leading-relaxed whitespace-pre-wrap ${
+          dark
+            ? "bg-[#0f172a] text-slate-200"
+            : "border border-cp-border/80 bg-white text-cp-text dark:border-ink-700 dark:bg-ink-950 dark:text-ink-100"
+        }`}
+      >
+        {value || "(indisponible)"}
+      </pre>
+    </div>
+  );
+}
+
+function DeployPanel({ app, onClose }: { app: PythonApp; onClose?: () => void }) {
+  return (
+    <div className="space-y-4 rounded-lg border border-cp-border/80 bg-cp-canvas/40 p-4 dark:border-ink-700 dark:bg-ink-900/40">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h3 className="flex items-center gap-2 text-sm font-semibold text-cp-navy dark:text-ink-50">
             <Terminal className="h-4 w-4 text-cp-orange" />
-            Déploiement SSH — {app.name}
+            Déploiement — {app.name}
           </h3>
-          <p className="mt-1 text-xs text-cp-muted">
-            Collez la commande dans un terminal SSH (comme cPanel), puis Start pour publier.
-          </p>
+          <ol className="mt-2 space-y-1 text-xs text-cp-muted">
+            <li className="flex items-center gap-1.5">
+              <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-cp-navy text-[10px] font-bold text-white">
+                1
+              </span>
+              Copiez la commande SSH ci‑dessous
+            </li>
+            <li className="flex items-center gap-1.5">
+              <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-cp-navy text-[10px] font-bold text-white">
+                2
+              </span>
+              Exécutez‑la dans un terminal, puis cliquez Start
+            </li>
+          </ol>
         </div>
         {onClose && (
           <button type="button" className="vz-btn-ghost !px-2.5 !py-1 text-xs" onClick={onClose}>
@@ -169,84 +241,36 @@ function DeployPanel({
         )}
       </div>
 
-      <div className="space-y-1">
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-cp-muted">
-            Application root (projet)
-          </p>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 text-xs text-cp-link hover:underline"
-            onClick={() => void copy("root")}
-          >
-            {copied === "root" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-            {copied === "root" ? "Copié" : "Copier"}
-          </button>
-        </div>
-        <code className="block break-all rounded-md border border-cp-border/80 bg-white px-3 py-2 font-mono text-xs dark:border-ink-700 dark:bg-ink-950">
-          {app.absolute_root || app.relative_root}
-        </code>
+      <CopyBlock label="Application root" value={app.absolute_root || app.relative_root} />
+      <CopyBlock label="Commande à coller (SSH)" value={app.enter_command} dark />
+      <CopyBlock
+        label={`Script ${frameworkLabel(app.framework)}`}
+        value={app.deploy_command}
+        dark
+      />
+
+      <div className="grid gap-2 text-[11px] text-cp-muted sm:grid-cols-2">
         {app.passenger_wsgi && (
-          <p className="text-[11px] text-cp-muted">
-            <span className="font-medium text-cp-text">passenger_wsgi.py</span> :{" "}
+          <p>
+            <span className="font-medium text-cp-text">Entrée</span>{" "}
             <code className="font-mono">{app.passenger_wsgi}</code>
           </p>
         )}
         {app.venv_path && (
-          <p className="text-[11px] text-cp-muted">
-            <span className="font-medium text-cp-text">virtualenv</span> :{" "}
+          <p>
+            <span className="font-medium text-cp-text">Venv</span>{" "}
             <code className="font-mono">{app.venv_path}</code>
           </p>
         )}
-      </div>
-
-      <div className="space-y-1">
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-cp-muted">
-            Commande à coller
+        {app.framework === "django" && (
+          <p className="sm:col-span-2">
+            <span className="font-medium text-cp-text">Django</span>{" "}
+            <code className="font-mono">
+              DJANGO_SETTINGS_MODULE={app.django_project || "config"}.settings
+            </code>
           </p>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 text-xs text-cp-link hover:underline"
-            onClick={() => void copy("enter")}
-          >
-            {copied === "enter" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-            {copied === "enter" ? "Copié" : "Copier"}
-          </button>
-        </div>
-        <pre className="overflow-x-auto rounded-md bg-[#0f172a] px-3 py-2.5 font-mono text-xs leading-relaxed text-emerald-300">
-          {app.enter_command || "(indisponible)"}
-        </pre>
+        )}
       </div>
-
-      <div className="space-y-1">
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-cp-muted">
-            Script {frameworkLabel(app.framework)}
-          </p>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 text-xs text-cp-link hover:underline"
-            onClick={() => void copy("deploy")}
-          >
-            {copied === "deploy" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-            {copied === "deploy" ? "Copié" : "Copier tout"}
-          </button>
-        </div>
-        <pre className="max-h-56 overflow-auto rounded-md bg-[#0f172a] px-3 py-2.5 font-mono text-xs leading-relaxed text-slate-200 whitespace-pre-wrap">
-          {app.deploy_command || "(indisponible)"}
-        </pre>
-      </div>
-
-      {app.framework === "django" && (
-        <p className="rounded-md border border-cp-border/70 bg-white/80 px-3 py-2 text-xs text-cp-muted dark:bg-ink-950/60">
-          Projet attendu :{" "}
-          <code className="font-mono text-cp-text">{app.django_project || "config"}</code> —{" "}
-          <code className="font-mono text-cp-text">
-            DJANGO_SETTINGS_MODULE={app.django_project || "config"}.settings
-          </code>
-        </p>
-      )}
     </div>
   );
 }
@@ -273,15 +297,17 @@ function AppCard({
 
   return (
     <article
-      className={`vz-panel overflow-hidden transition ${
-        expanded ? "ring-2 ring-cp-link/25 border-cp-link/40" : ""
+      className={`vz-panel overflow-hidden transition duration-200 ${
+        expanded ? "ring-2 ring-cp-link/30 border-cp-link/40" : "hover:border-cp-link/25"
       }`}
     >
+      <div className={`h-1 w-full ${st.bar}`} />
       <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 flex-1 space-y-3">
           <div className="flex flex-wrap items-center gap-2">
-            <span className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${st.dot}`} />
-            <h3 className="truncate font-semibold text-cp-navy dark:text-ink-50">{app.label || app.name}</h3>
+            <h3 className="truncate text-base font-semibold text-cp-navy dark:text-ink-50">
+              {app.label || app.name}
+            </h3>
             <span className="rounded-md bg-cp-navy/5 px-2 py-0.5 font-mono text-[11px] text-cp-muted dark:bg-ink-900">
               {app.name}
             </span>
@@ -292,21 +318,31 @@ function AppCard({
             </span>
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            <span className="inline-flex items-center gap-1 rounded-md border border-cp-border/80 bg-cp-canvas/80 px-2 py-1 text-[11px] font-medium text-cp-text dark:border-ink-700 dark:bg-ink-900">
+          <div className="flex flex-wrap gap-1.5">
+            <span className="inline-flex items-center gap-1 rounded-md border border-cp-border/80 bg-cp-canvas/80 px-2 py-1 text-[11px] font-medium dark:border-ink-700 dark:bg-ink-900">
               <Package className="h-3 w-3 text-cp-orange" />
               {frameworkLabel(app.framework)}
             </span>
             <span className="inline-flex items-center rounded-md border border-cp-border/80 bg-cp-canvas/80 px-2 py-1 text-[11px] text-cp-muted dark:border-ink-700 dark:bg-ink-900">
-              {app.mode.toUpperCase()} · Python {app.python_version}
+              Python {app.python_version} · {app.mode.toUpperCase()}
             </span>
             <span className="inline-flex items-center rounded-md border border-cp-border/80 bg-cp-canvas/80 px-2 py-1 font-mono text-[11px] text-cp-muted dark:border-ink-700 dark:bg-ink-900">
               :{app.port}
             </span>
-            {app.domain_name && (
-              <span className="inline-flex items-center gap-1 rounded-md border border-cp-border/80 bg-cp-canvas/80 px-2 py-1 text-[11px] text-cp-text dark:border-ink-700 dark:bg-ink-900">
-                <Globe2 className="h-3 w-3 text-cp-link" />
+            {app.domain_name ? (
+              <a
+                href={`http://${app.domain_name}`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 rounded-md border border-cp-link/30 bg-cp-link-soft/40 px-2 py-1 text-[11px] text-cp-link hover:underline dark:border-ink-700"
+              >
+                <Globe2 className="h-3 w-3" />
                 {app.domain_name}
+              </a>
+            ) : (
+              <span className="inline-flex items-center gap-1 rounded-md border border-dashed border-cp-border px-2 py-1 text-[11px] text-cp-muted">
+                <Globe2 className="h-3 w-3" />
+                Aucun domaine
               </span>
             )}
           </div>
@@ -316,7 +352,7 @@ function AppCard({
             <div className="min-w-0">
               <p className="font-mono text-cp-text dark:text-ink-200">{app.relative_root}</p>
               {app.absolute_root && (
-                <p className="mt-0.5 truncate font-mono text-[11px] opacity-80" title={app.absolute_root}>
+                <p className="mt-0.5 truncate font-mono text-[11px] opacity-75" title={app.absolute_root}>
                   {app.absolute_root}
                 </p>
               )}
@@ -324,87 +360,101 @@ function AppCard({
           </div>
 
           {app.last_error && app.status === "error" && (
-            <CopyableError text={app.last_error} title="Python start · erreur" />
+            <CopyableError text={app.last_error} title="Erreur au démarrage" />
           )}
         </div>
 
-        <div className="flex shrink-0 flex-wrap gap-1.5 sm:max-w-[280px] sm:justify-end">
-          <button
-            type="button"
-            className={`vz-btn-ghost !px-2.5 !py-1.5 text-xs ${expanded ? "!border-cp-link !bg-cp-link-soft" : ""}`}
-            onClick={onToggleDeploy}
-            title="Commande SSH"
-          >
-            <Terminal className="h-3.5 w-3.5" />
-            SSH
-          </button>
-          {!running ? (
+        <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+          <div className="flex flex-wrap gap-1.5 sm:justify-end">
+            {!running ? (
+              <button
+                type="button"
+                className="vz-btn-primary !px-3 !py-1.5 text-xs"
+                disabled={busy}
+                onClick={() => onAction("start")}
+              >
+                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                Start
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="vz-btn-ghost !px-3 !py-1.5 text-xs"
+                disabled={busy}
+                onClick={() => onAction("stop")}
+              >
+                <Square className="h-3.5 w-3.5" />
+                Stop
+              </button>
+            )}
             <button
               type="button"
-              className="vz-btn-primary !px-2.5 !py-1.5 text-xs"
-              disabled={busy}
-              onClick={() => onAction("start")}
+              className={`vz-btn-ghost !px-3 !py-1.5 text-xs ${expanded ? "!border-cp-link !bg-cp-link-soft" : ""}`}
+              onClick={onToggleDeploy}
             >
-              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-              Start
+              <Terminal className="h-3.5 w-3.5" />
+              SSH
+              <ChevronRight className={`h-3 w-3 transition ${expanded ? "rotate-90" : ""}`} />
             </button>
-          ) : (
+          </div>
+          <div className="flex flex-wrap gap-1 sm:justify-end">
             <button
               type="button"
-              className="vz-btn-ghost !px-2.5 !py-1.5 text-xs"
+              className="vz-btn-ghost !px-2 !py-1 text-[11px]"
               disabled={busy}
-              onClick={() => onAction("stop")}
+              onClick={() => onAction("restart")}
+              title="Restart"
             >
-              <Square className="h-3.5 w-3.5" />
-              Stop
+              <RefreshCw className="h-3.5 w-3.5" />
             </button>
-          )}
-          <button
-            type="button"
-            className="vz-btn-ghost !px-2.5 !py-1.5 text-xs"
-            disabled={busy}
-            onClick={() => onAction("restart")}
-            title="Restart"
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            className="vz-btn-ghost !px-2.5 !py-1.5 text-xs"
-            disabled={busy}
-            onClick={() => onAction("install")}
-            title="pip install -r requirements.txt"
-          >
-            <Download className="h-3.5 w-3.5" />
-            pip
-          </button>
-          <button
-            type="button"
-            className="vz-btn-ghost !px-2.5 !py-1.5 text-xs"
-            onClick={onLogs}
-            title="Logs"
-          >
-            <FileText className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            className="vz-btn-ghost !px-2.5 !py-1.5 text-xs text-cp-danger hover:!border-red-300 hover:!bg-red-50 dark:hover:!bg-red-950/30"
-            onClick={onRemove}
-            title="Supprimer"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+            <button
+              type="button"
+              className="vz-btn-ghost !px-2 !py-1 text-[11px]"
+              disabled={busy}
+              onClick={() => onAction("install")}
+              title="pip install -r requirements.txt"
+            >
+              <Download className="h-3.5 w-3.5" />
+              pip
+            </button>
+            <button
+              type="button"
+              className="vz-btn-ghost !px-2 !py-1 text-[11px]"
+              onClick={onLogs}
+              title="Logs"
+            >
+              <FileText className="h-3.5 w-3.5" />
+              Logs
+            </button>
+            <button
+              type="button"
+              className="vz-btn-ghost !px-2 !py-1 text-[11px] text-cp-danger hover:!border-red-300 hover:!bg-red-50 dark:hover:!bg-red-950/30"
+              onClick={onRemove}
+              title="Supprimer"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </div>
       </div>
 
       {expanded && (
-        <div className="border-t border-cp-border/80 px-4 pb-4 dark:border-ink-800">
+        <div className="border-t border-cp-border/80 px-4 pb-4 pt-3 dark:border-ink-800">
           <DeployPanel app={app} onClose={onToggleDeploy} />
         </div>
       )}
     </article>
   );
 }
+
+const EMPTY_FORM = {
+  name: "",
+  mode: "wsgi",
+  framework: "django",
+  python_version: "3.12",
+  domain_name: "",
+  relative_root: "",
+};
 
 export function PythonAppsManager({ title }: { title: string }) {
   const qc = useQueryClient();
@@ -416,19 +466,41 @@ export function PythonAppsManager({ title }: { title: string }) {
     queryKey: ["python-apps"],
     queryFn: () => apiRequest<PythonApp[]>("/python/apps/"),
   });
-
-  const [form, setForm] = useState({
-    name: "",
-    mode: "wsgi",
-    framework: "django",
-    python_version: "3.12",
-    domain_name: "",
-    relative_root: "",
+  const { data: domains = [] } = useQuery({
+    queryKey: ["domains-for-python"],
+    queryFn: () => apiRequest<DomainRow[]>("/domains/"),
   });
+
+  const [form, setForm] = useState(EMPTY_FORM);
   const [logs, setLogs] = useState<Record<string, string> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [createdApp, setCreatedApp] = useState<PythonApp | null>(null);
   const [focusId, setFocusId] = useState<number | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [query, setQuery] = useState("");
+
+  const domainOptions = useMemo(() => {
+    const usable = domains.filter((d) =>
+      ["primary", "addon", "subdomain"].includes(d.domain_type),
+    );
+    return usable.sort((a, b) => a.name.localeCompare(b.name));
+  }, [domains]);
+
+  const filteredApps = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return apps.filter((app) => {
+      if (statusFilter !== "all" && app.status !== statusFilter) return false;
+      if (!q) return true;
+      return (
+        app.name.toLowerCase().includes(q) ||
+        app.label.toLowerCase().includes(q) ||
+        app.domain_name.toLowerCase().includes(q) ||
+        app.relative_root.toLowerCase().includes(q) ||
+        app.framework.toLowerCase().includes(q)
+      );
+    });
+  }, [apps, query, statusFilter]);
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["python-overview"] });
@@ -459,15 +531,9 @@ export function PythonAppsManager({ title }: { title: string }) {
     onSuccess: (app) => {
       setCreatedApp(app);
       setFocusId(app.id);
-      setForm({
-        name: "",
-        mode: "wsgi",
-        framework: "django",
-        python_version: "3.12",
-        domain_name: "",
-        relative_root: "",
-      });
+      setForm(EMPTY_FORM);
       setError(null);
+      setCreateOpen(false);
       invalidate();
     },
     onError: (err: Error) => setError(err.message),
@@ -510,185 +576,133 @@ export function PythonAppsManager({ title }: { title: string }) {
     focusId ?? (createdApp && apps.some((a) => a.id === createdApp.id) ? createdApp.id : null);
 
   return (
-    <div className="space-y-5 animate-fade-up">
-      <div className="vz-panel overflow-hidden">
-        <div className="border-b border-cp-border/80 bg-gradient-to-r from-cp-navy/[0.04] to-transparent px-5 py-4 dark:border-ink-800 dark:from-ink-900">
-          <h1 className="text-xl font-semibold text-cp-navy dark:text-ink-50">{title}</h1>
-          <p className="mt-1 max-w-2xl text-sm text-cp-muted">
-            Comme cPanel Setup Python App : indiquez l&apos;Application root (dossier du projet
-            Django). <code className="font-mono text-xs">passenger_wsgi.py</code> est créé dans ce
-            même dossier que <code className="font-mono text-xs">manage.py</code> ; le venv est sous{" "}
-            <code className="font-mono text-xs">virtualenv/</code>.
-          </p>
-        </div>
+    <div className="space-y-4 animate-fade-up">
+      <PageHeader
+        title={title}
+        subtitle="Créez une app (Django, Flask, FastAPI), déployez via SSH, puis démarrez-la — comme cPanel."
+        actions={
+          <button type="button" className="vz-btn-primary" onClick={() => setCreateOpen(true)}>
+            <Plus className="h-4 w-4" />
+            Nouvelle application
+          </button>
+        }
+        stats={[
+          { label: "Apps", value: overview?.apps ?? "—" },
+          { label: "En cours", value: overview?.running ?? "—" },
+          { label: "Arrêtées", value: overview?.stopped ?? "—" },
+          { label: "Erreurs", value: overview?.error ?? "—" },
+        ]}
+      />
 
-        <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
-          {[
-            { label: "Applications", value: overview?.apps ?? "—", tone: "text-cp-navy dark:text-ink-50" },
-            { label: "En cours", value: overview?.running ?? "—", tone: "text-emerald-700 dark:text-emerald-400" },
-            { label: "Arrêtées", value: overview?.stopped ?? "—", tone: "text-cp-muted" },
-            { label: "Erreurs", value: overview?.error ?? "—", tone: "text-cp-danger" },
-          ].map((card) => (
-            <div
-              key={card.label}
-              className="rounded-lg border border-cp-border/70 bg-cp-canvas/50 px-4 py-3 dark:border-ink-800 dark:bg-ink-900/40"
+      {createdApp && apps.some((a) => a.id === createdApp.id) && (
+        <div className="vz-panel flex flex-wrap items-start justify-between gap-3 border-cp-link/30 bg-cp-link-soft/30 p-4 dark:bg-ink-900/50">
+          <div>
+            <p className="text-sm font-semibold text-cp-navy dark:text-ink-50">
+              Application « {createdApp.name} » créée
+            </p>
+            <p className="mt-1 text-xs text-cp-muted">
+              Ouvrez SSH pour coller la commande de déploiement, puis cliquez Start.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="vz-btn-primary !py-1.5 text-xs"
+              onClick={() => setFocusId(createdApp.id)}
             >
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-cp-muted">{card.label}</p>
-              <p className={`mt-1 text-2xl font-semibold tabular-nums ${card.tone}`}>{card.value}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {error && <CopyableError text={error} title="Python start · vzone" />}
-
-      <form className="vz-panel p-4 sm:p-5" onSubmit={onCreate}>
-        <div className="mb-3 flex items-center gap-2">
-          <Plus className="h-4 w-4 text-cp-orange" />
-          <h2 className="text-sm font-semibold text-cp-navy dark:text-ink-50">
-            CREATE APPLICATION
-          </h2>
-        </div>
-        <p className="mb-4 text-xs text-cp-muted">
-          Home :{" "}
-          <code className="font-mono">{overview?.home_path || "~/"}</code>
-          {" — "}
-          l&apos;Application root est relatif à ce home (ex.{" "}
-          <code className="font-mono">mydjango</code>).
-        </p>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <label className="space-y-1">
-            <span className="text-[11px] font-medium text-cp-muted">Application name *</span>
-            <input
-              className="vz-input"
-              placeholder="ex: webapp"
-              required
-              value={form.name}
-              onChange={(e) => {
-                const name = e.target.value;
-                setForm((prev) => ({
-                  ...prev,
-                  name,
-                  // Comme cPanel : préremplir l'application root avec le nom si encore vide / synchro
-                  relative_root:
-                    !prev.relative_root || prev.relative_root === prev.name ? name : prev.relative_root,
-                }));
-              }}
-            />
-          </label>
-          <label className="space-y-1 sm:col-span-2">
-            <span className="text-[11px] font-medium text-cp-muted">
-              Application root * (chemin du projet Django)
-            </span>
-            <div className="flex overflow-hidden rounded-lg border border-cp-border focus-within:border-cp-link focus-within:ring-2 focus-within:ring-cp-link/20 dark:border-ink-700">
-              <span className="flex max-w-[45%] items-center truncate border-r border-cp-border bg-cp-canvas/80 px-2 font-mono text-[11px] text-cp-muted dark:border-ink-700 dark:bg-ink-900">
-                {(overview?.home_path || "~").replace(/\/$/, "")}/
-              </span>
-              <input
-                className="vz-input !rounded-none !border-0 !ring-0"
-                placeholder="mydjango"
-                required={form.framework === "django"}
-                value={form.relative_root}
-                onChange={(e) => setForm({ ...form, relative_root: e.target.value.replace(/^\/+/, "") })}
-              />
-            </div>
-            <span className="text-[11px] text-cp-muted">
-              Ici seront créés <code className="font-mono">passenger_wsgi.py</code> + votre projet (
-              <code className="font-mono">manage.py</code>). Pas de sous-dossier <code className="font-mono">apps/</code>.
-            </span>
-          </label>
-          <label className="space-y-1">
-            <span className="text-[11px] font-medium text-cp-muted">Application URL / domaine</span>
-            <input
-              className="vz-input"
-              placeholder="app.exemple.com (opt.)"
-              value={form.domain_name}
-              onChange={(e) => setForm({ ...form, domain_name: e.target.value })}
-            />
-          </label>
-          <label className="space-y-1">
-            <span className="text-[11px] font-medium text-cp-muted">Python version</span>
-            <input
-              className="vz-input"
-              placeholder="3.12"
-              value={form.python_version}
-              onChange={(e) => setForm({ ...form, python_version: e.target.value })}
-            />
-          </label>
-          <label className="space-y-1">
-            <span className="text-[11px] font-medium text-cp-muted">Framework</span>
-            <select
-              className="vz-input"
-              value={form.framework}
-              onChange={(e) => {
-                const framework = e.target.value;
-                setForm({
-                  ...form,
-                  framework,
-                  mode: framework === "django" ? "wsgi" : framework === "fastapi" ? "asgi" : form.mode,
-                });
-              }}
+              <Terminal className="h-3.5 w-3.5" />
+              Voir la commande SSH
+            </button>
+            <button
+              type="button"
+              className="vz-btn-ghost !py-1.5 text-xs"
+              onClick={() => setCreatedApp(null)}
             >
-              <option value="django">Django</option>
-              <option value="generic">Generic</option>
-              <option value="flask">Flask</option>
-              <option value="fastapi">FastAPI</option>
-            </select>
-          </label>
-          <label className="space-y-1">
-            <span className="text-[11px] font-medium text-cp-muted">Application startup file</span>
-            <input
-              className="vz-input"
-              readOnly
-              value={form.framework === "fastapi" || form.mode === "asgi" ? "asgi.py" : "passenger_wsgi.py"}
-            />
-          </label>
-          <div className="flex items-end sm:col-span-2 lg:col-span-1">
-            <button className="vz-btn-primary w-full" type="submit" disabled={create.isPending}>
-              {create.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Plus className="h-4 w-4" />
-              )}
-              CREATE
+              <X className="h-3.5 w-3.5" />
+              Masquer
             </button>
           </div>
         </div>
-      </form>
+      )}
 
-      <section className="space-y-3">
-        <div className="flex items-end justify-between gap-3 px-0.5">
-          <div>
-            <h2 className="text-sm font-semibold text-cp-navy dark:text-ink-50">Applications</h2>
-            <p className="text-xs text-cp-muted">
-              {apps.length} application{apps.length === 1 ? "" : "s"} · cliquez SSH pour la commande
-              terminal
-            </p>
+      {error && <CopyableError text={error} title="Python · vzone" />}
+
+      <div className="vz-panel overflow-hidden">
+        <div className="flex flex-col gap-3 border-b border-cp-border px-4 py-3 dark:border-ink-800 sm:flex-row sm:items-center sm:justify-between">
+          <Tabs
+            tabs={[
+              { id: "all", label: "Toutes", count: apps.length },
+              {
+                id: "running",
+                label: "En cours",
+                count: apps.filter((a) => a.status === "running").length,
+              },
+              {
+                id: "stopped",
+                label: "Arrêtées",
+                count: apps.filter((a) => a.status === "stopped").length,
+              },
+              {
+                id: "error",
+                label: "Erreurs",
+                count: apps.filter((a) => a.status === "error").length,
+              },
+            ]}
+            active={statusFilter}
+            onChange={(id) => setStatusFilter(id as StatusFilter)}
+          />
+          <div className="relative min-w-[200px] flex-1 sm:max-w-xs">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-cp-muted" />
+            <input
+              className="vz-input !py-1.5 pl-8 text-sm"
+              placeholder="Rechercher une app…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
           </div>
         </div>
 
-        {isLoading && (
-          <div className="vz-panel flex items-center gap-2 px-4 py-8 text-sm text-cp-muted">
-            <Loader2 className="h-4 w-4 animate-spin text-cp-orange" />
-            Chargement des applications…
-          </div>
-        )}
-
-        {!isLoading && apps.length === 0 && (
-          <div className="vz-panel flex flex-col items-center justify-center gap-2 px-6 py-12 text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-cp-navy/5 text-cp-orange dark:bg-ink-900">
-              <Package className="h-6 w-6" />
+        <div className="space-y-3 p-4">
+          {isLoading && (
+            <div className="flex items-center gap-2 py-8 text-sm text-cp-muted">
+              <Loader2 className="h-4 w-4 animate-spin text-cp-orange" />
+              Chargement des applications…
             </div>
-            <p className="text-sm font-medium text-cp-navy dark:text-ink-50">Aucune application</p>
-            <p className="max-w-sm text-xs text-cp-muted">
-              Créez une app Django ci-dessus : le panel générera le venv et la commande à coller en
-              SSH.
-            </p>
-          </div>
-        )}
+          )}
 
-        <div className="space-y-3">
-          {apps.map((app) => (
+          {!isLoading && apps.length === 0 && (
+            <EmptyState
+              icon={<Package className="h-8 w-8" />}
+              message="Aucune application Python. Créez-en une pour commencer."
+              action={
+                <button type="button" className="vz-btn-primary" onClick={() => setCreateOpen(true)}>
+                  <Plus className="h-4 w-4" />
+                  Nouvelle application
+                </button>
+              }
+            />
+          )}
+
+          {!isLoading && apps.length > 0 && filteredApps.length === 0 && (
+            <EmptyState
+              icon={<Search className="h-8 w-8" />}
+              message="Aucun résultat pour ce filtre."
+              action={
+                <button
+                  type="button"
+                  className="vz-btn-ghost"
+                  onClick={() => {
+                    setQuery("");
+                    setStatusFilter("all");
+                  }}
+                >
+                  Réinitialiser
+                </button>
+              }
+            />
+          )}
+
+          {filteredApps.map((app) => (
             <AppCard
               key={app.id}
               app={app}
@@ -706,35 +720,184 @@ export function PythonAppsManager({ title }: { title: string }) {
               onAction={(op) => action.mutate({ id: app.id, op, name: app.name })}
               onLogs={() => loadLogs.mutate(app.id)}
               onRemove={() => {
-                if (window.confirm(`Supprimer ${app.name} ?`)) remove.mutate(app.id);
+                if (window.confirm(`Supprimer ${app.name} ? Les fichiers du projet sont conservés.`)) {
+                  remove.mutate(app.id);
+                }
               }}
             />
           ))}
         </div>
-      </section>
+      </div>
+
+      {createOpen && (
+        <Modal
+          wide
+          title="Créer une application Python"
+          subtitle={`Home : ${overview?.home_path || "~/"}`}
+          onClose={() => {
+            if (!create.isPending) setCreateOpen(false);
+          }}
+        >
+          <form className="space-y-4" onSubmit={onCreate}>
+            <div className="space-y-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-cp-muted">
+                Framework
+              </p>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {FRAMEWORKS.map((fw) => {
+                  const active = form.framework === fw.value;
+                  return (
+                    <button
+                      key={fw.value}
+                      type="button"
+                      className={`rounded-lg border px-3 py-2.5 text-left transition ${
+                        active
+                          ? "border-cp-orange bg-orange-50 ring-1 ring-cp-orange/30 dark:bg-orange-950/20"
+                          : "border-cp-border hover:border-cp-link/40 dark:border-ink-700"
+                      }`}
+                      onClick={() =>
+                        setForm({
+                          ...form,
+                          framework: fw.value,
+                          mode: fw.mode,
+                        })
+                      }
+                    >
+                      <p className="text-sm font-semibold text-cp-navy dark:text-ink-50">{fw.label}</p>
+                      <p className="mt-0.5 text-[10px] text-cp-muted">{fw.hint}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="space-y-1 sm:col-span-1">
+                <span className="text-[11px] font-medium text-cp-muted">Application name *</span>
+                <input
+                  className="vz-input"
+                  placeholder="webapp"
+                  required
+                  autoFocus
+                  value={form.name}
+                  onChange={(e) => {
+                    const name = e.target.value;
+                    setForm((prev) => ({
+                      ...prev,
+                      name,
+                      relative_root:
+                        !prev.relative_root || prev.relative_root === prev.name
+                          ? name
+                          : prev.relative_root,
+                    }));
+                  }}
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="text-[11px] font-medium text-cp-muted">Python version</span>
+                <select
+                  className="vz-input"
+                  value={form.python_version}
+                  onChange={(e) => setForm({ ...form, python_version: e.target.value })}
+                >
+                  {["3.12", "3.11", "3.10", "3.9"].map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <label className="block space-y-1">
+              <span className="text-[11px] font-medium text-cp-muted">
+                Application root * (dossier du projet)
+              </span>
+              <div className="flex overflow-hidden rounded-lg border border-cp-border focus-within:border-cp-link focus-within:ring-2 focus-within:ring-cp-link/20 dark:border-ink-700">
+                <span className="flex max-w-[42%] items-center truncate border-r border-cp-border bg-cp-canvas/80 px-2 font-mono text-[11px] text-cp-muted dark:border-ink-700 dark:bg-ink-900">
+                  {(overview?.home_path || "~").replace(/\/$/, "")}/
+                </span>
+                <input
+                  className="vz-input !rounded-none !border-0 !ring-0"
+                  placeholder="mydjango"
+                  required={form.framework === "django"}
+                  value={form.relative_root}
+                  onChange={(e) =>
+                    setForm({ ...form, relative_root: e.target.value.replace(/^\/+/, "") })
+                  }
+                />
+              </div>
+              <span className="text-[11px] text-cp-muted">
+                <code className="font-mono">passenger_wsgi.py</code> et{" "}
+                <code className="font-mono">manage.py</code> dans ce même dossier.
+              </span>
+            </label>
+
+            <label className="block space-y-1">
+              <span className="text-[11px] font-medium text-cp-muted">
+                Application URL / domaine
+              </span>
+              <select
+                className="vz-input"
+                value={form.domain_name}
+                onChange={(e) => setForm({ ...form, domain_name: e.target.value })}
+              >
+                <option value="">— Aucun (optionnel) —</option>
+                {domainOptions.map((d) => (
+                  <option key={d.id} value={d.name}>
+                    {d.name} ({d.domain_type})
+                  </option>
+                ))}
+              </select>
+              <span className="text-[11px] text-cp-muted">
+                Une fois démarrée, cette URL sera proxifiée vers l&apos;app (plus de page public_html).
+              </span>
+            </label>
+
+            <div className="flex flex-wrap justify-end gap-2 border-t border-cp-border pt-3 dark:border-ink-800">
+              <button
+                type="button"
+                className="vz-btn-ghost"
+                disabled={create.isPending}
+                onClick={() => setCreateOpen(false)}
+              >
+                Annuler
+              </button>
+              <button className="vz-btn-primary" type="submit" disabled={create.isPending}>
+                {create.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Plus className="h-4 w-4" />
+                )}
+                Créer l&apos;application
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
 
       {logs && (
-        <div className="vz-panel p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-cp-navy dark:text-ink-50">
-              <FileText className="h-4 w-4 text-cp-orange" />
-              Logs
-            </h2>
-            <button type="button" className="vz-btn-ghost !px-2.5 !py-1 text-xs" onClick={() => setLogs(null)}>
-              Fermer
-            </button>
-          </div>
-          <div className="grid gap-3 lg:grid-cols-3">
+        <Modal title="Logs de l'application" subtitle="error / access / pip" onClose={() => setLogs(null)} wide>
+          <div className="grid max-h-[60vh] gap-3 overflow-y-auto lg:grid-cols-1">
             {Object.entries(logs).map(([name, content]) => (
-              <div key={name} className="min-w-0">
-                <p className="mb-1 font-mono text-[11px] font-semibold text-cp-orange">{name}</p>
-                <pre className="max-h-48 overflow-auto rounded-lg border border-cp-border/70 bg-cp-canvas p-3 text-xs dark:border-ink-800 dark:bg-ink-900">
+              <div key={name}>
+                <div className="mb-1 flex items-center justify-between">
+                  <p className="font-mono text-[11px] font-semibold text-cp-orange">{name}</p>
+                  <button
+                    type="button"
+                    className="text-[11px] text-cp-link hover:underline"
+                    onClick={() => void copyText(content || "")}
+                  >
+                    Copier
+                  </button>
+                </div>
+                <pre className="max-h-40 overflow-auto rounded-lg border border-cp-border/70 bg-cp-canvas p-3 text-xs dark:border-ink-800 dark:bg-ink-900">
                   {content || "(vide)"}
                 </pre>
               </div>
             ))}
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

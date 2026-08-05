@@ -18,7 +18,7 @@ export function Modal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div
         className={`w-full rounded-[10px] border border-cp-border bg-white p-4 shadow-xl dark:border-ink-700 dark:bg-ink-950 ${
-          wide ? "max-w-lg" : "max-w-md"
+          wide ? "max-w-2xl" : "max-w-md"
         }`}
         role="dialog"
         aria-modal="true"
