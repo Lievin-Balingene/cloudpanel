@@ -87,6 +87,16 @@ function statusMeta(status: string) {
   };
 }
 
+function frameworkLabel(fw: string) {
+  const map: Record<string, string> = {
+    django: "Django",
+    flask: "Flask",
+    fastapi: "FastAPI",
+    generic: "Python",
+  };
+  return map[fw] || fw;
+}
+
 function CopyableError({ text, title }: { text: string; title?: string }) {
   const [copied, setCopied] = useState(false);
 
