@@ -16,8 +16,12 @@ Restart=always
 RestartSec=3
 StartLimitIntervalSec=60
 StartLimitBurst=10
+KillMode=process
+TasksMax=infinity
 NoNewPrivileges=true
 PrivateTmp=true
+# Relancer les apps Python clientes après démarrage API (évite 502 nginx → ports morts)
+ExecStartPost=/bin/bash -c 'sleep 2; cd /opt/vzone/backend && .venv/bin/python manage.py reconcile_python_apps || true'
 
 [Install]
 WantedBy=multi-user.target

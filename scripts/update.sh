@@ -157,6 +157,21 @@ else
   systemctl restart vzone-api
   sleep 2
 fi
+
+# Apps Python : relancer les process morts (502 nginx → port app)
+if [[ -x "${VZONE_ROOT}/backend/.venv/bin/python" ]]; then
+  echo "[vzone] Réconciliation apps Python…"
+  (
+    set -a
+    # shellcheck disable=SC1091
+    source /etc/vzone/vzone.env 2>/dev/null || true
+    set +a
+    export DJANGO_SETTINGS_MODULE=vzone.settings.production
+    cd "${VZONE_ROOT}/backend"
+    .venv/bin/python manage.py reconcile_python_apps
+  ) || echo "[vzone] Avertissement: reconcile_python_apps a échoué"
+fi
+
 echo "[vzone] Mise à jour terminée — version ${VERSION}"
 echo "[vzone] Services : $(systemctl is-active vzone-api vzone-worker vzone-beat nginx | tr '\n' ' ')"
 ss -lntp 2>/dev/null | grep ':8000' || echo "[vzone] ALERTE: pas d'écoute :8000"

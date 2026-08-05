@@ -25,9 +25,26 @@ from apps.python_apps.models import PythonApp
 logger = logging.getLogger(__name__)
 
 
-def _refresh_domain_routing() -> None:
-    """Priorité app → régénère les vhosts Nginx des domaines."""
+def _refresh_domain_routing(domain_name: str = "") -> None:
+    """Priorité app → régénère les vhosts Nginx (ciblé si domain_name fourni)."""
     try:
+        name = (domain_name or "").strip().lower()
+        if name.startswith("www."):
+            name = name[4:]
+        if name:
+            from apps.domains.models import Domain
+            from apps.domains.vhosts import sync_domain_vhost
+
+            domain = Domain.objects.filter(name__iexact=name).select_related("owner", "parent").first()
+            if domain is None and not name.startswith("www."):
+                domain = (
+                    Domain.objects.filter(name__iexact=f"www.{name}")
+                    .select_related("owner", "parent")
+                    .first()
+                )
+            if domain is not None:
+                sync_domain_vhost(domain)
+                return
         from apps.domains.services import refresh_web_routing
 
         refresh_web_routing()
@@ -462,13 +479,13 @@ def create_python_app(
         port=allocate_port(owner),
         env_vars=env_vars or {},
         venv_path=str(venv_dir),
-        domain_name=domain_name.strip().lower(),
+        domain_name=normalize_app_domain(domain_name),
         notes=notes,
         status=PythonApp.Status.STOPPED,
     )
     write_app_config(app)
     deploy_info(app)
-    _refresh_domain_routing()
+    _refresh_domain_routing(app.domain_name)
     return app
 
 
@@ -488,7 +505,7 @@ def update_python_app(
     if entrypoint is not None:
         app.entrypoint = entrypoint
     if domain_name is not None:
-        app.domain_name = domain_name.strip().lower()
+        app.domain_name = normalize_app_domain(domain_name)
     if env_vars is not None:
         app.env_vars = env_vars
     if notes is not None:
@@ -497,7 +514,7 @@ def update_python_app(
         app.is_active = is_active
     app.save()
     write_app_config(app)
-    _refresh_domain_routing()
+    _refresh_domain_routing(app.domain_name)
     return app
 
 
@@ -566,6 +583,73 @@ def ensure_runtime_deps(app: PythonApp, app_root: Path, py: Path) -> None:
 
 
 def _tail_log(path: Path, lines: int = 40) -> str:
+    if not path.exists():
+        return ""
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        return "\n".join(content[-lines:])
+    except OSError:
+        return ""
+
+
+def _process_alive(pid: int | None) -> bool:
+    if not pid or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError, OSError):
+        return False
+
+
+def _port_listening(port: int, host: str = "127.0.0.1", timeout: float = 0.4) -> bool:
+    if port <= 0:
+        return False
+    import socket
+
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _wait_port(port: int, *, timeout_s: float = 15.0) -> bool:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if _port_listening(port):
+            return True
+        time.sleep(0.25)
+    return False
+
+
+def _kill_app_pid(pid: int | None) -> None:
+    if not pid:
+        return
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(pid, sig)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                os.kill(pid, sig)
+            except (ProcessLookupError, PermissionError, OSError):
+                return
+        time.sleep(0.35)
+        if not _process_alive(pid):
+            return
+
+
+def normalize_app_domain(value: str) -> str:
+    """Normalise Application URL (sans schéma / chemin / www)."""
+    v = (value or "").strip().lower()
+    for prefix in ("https://", "http://"):
+        if v.startswith(prefix):
+            v = v[len(prefix) :]
+    v = v.split("/")[0].split("?")[0].strip(".")
+    if v.startswith("www."):
+        v = v[4:]
+    return v
+
     if not path.exists():
         return ""
     try:
@@ -686,7 +770,7 @@ def start_python_app(app: PythonApp) -> PythonApp:
         app.last_started_at = timezone.now()
         app.save()
         write_app_config(app)
-        _refresh_domain_routing()
+        _refresh_domain_routing(app.domain_name)
         return app
 
     # Arrêter une instance précédente sur le même pid
@@ -720,8 +804,20 @@ def start_python_app(app: PythonApp) -> PythonApp:
             stderr=error_f,
             start_new_session=True,
         )
-        # Laisser le temps à gunicorn/uvicorn d'échouer immédiatement
-        time.sleep(0.8)
+        # Attendre que le port écoute (gunicorn peut mettre >1s à binder)
+        if not _wait_port(app.port, timeout_s=20.0):
+            if proc.poll() is not None:
+                tail = _tail_log(error_log)
+                raise RuntimeError(
+                    f"Le process s'est arrêté (code {proc.returncode}).\n"
+                    f"{tail[-2000:] if tail else 'Voir logs/error.log — pip install gunicorn Django ?'}"
+                )
+            _kill_app_pid(proc.pid)
+            tail = _tail_log(error_log)
+            raise RuntimeError(
+                f"Le port {app.port} n'écoute pas après démarrage.\n"
+                f"{tail[-2000:] if tail else 'Voir logs/error.log'}"
+            )
         if proc.poll() is not None:
             tail = _tail_log(error_log)
             raise RuntimeError(
@@ -740,7 +836,6 @@ def start_python_app(app: PythonApp) -> PythonApp:
             extra = dict(exc.extra or {})
         else:
             extra = {"error": detail, "stderr": _tail_log(error_log)}
-        # Enrichir avec stderr pip/_run
         if hasattr(exc, "extra") and isinstance(getattr(exc, "extra"), dict):
             extra.update(exc.extra)
         app.status = PythonApp.Status.ERROR
@@ -758,7 +853,7 @@ def start_python_app(app: PythonApp) -> PythonApp:
         ) from exc
     app.save()
     write_app_config(app)
-    _refresh_domain_routing()
+    _refresh_domain_routing(app.domain_name)
     return app
 
 
@@ -774,10 +869,7 @@ def stop_python_app(app: PythonApp) -> PythonApp:
             pid = app.pid
 
     if provision_mode() != "mock" and pid and should_execute():
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError, OSError):
-            logger.info("Processus Python %s déjà arrêté", pid)
+        _kill_app_pid(pid)
 
     if pid_file.exists():
         pid_file.unlink(missing_ok=True)
@@ -786,7 +878,7 @@ def stop_python_app(app: PythonApp) -> PythonApp:
     app.last_error = ""
     app.save()
     write_app_config(app)
-    _refresh_domain_routing()
+    _refresh_domain_routing(app.domain_name)
     return app
 
 
@@ -811,15 +903,59 @@ def delete_python_app(app: PythonApp, *, remove_files: bool = False) -> None:
             pass
         venv = Path(app.venv_path) if app.venv_path else cpanel_venv_path(app.owner, app.name, app.python_version)
         shutil.rmtree(venv, ignore_errors=True)
-        # Nettoyer virtualenv/<app>/ s'il est vide
         try:
             parent = venv.parent
             if parent.is_dir() and not any(parent.iterdir()):
                 parent.rmdir()
         except OSError:
             pass
+    domain = app.domain_name
     app.delete()
-    _refresh_domain_routing()
+    _refresh_domain_routing(domain)
+
+
+def reconcile_python_apps() -> dict:
+    """
+    Relance les apps marquées RUNNING dont le process/port est mort
+    (ex. après restart vzone-api avant KillMode=process).
+    """
+    if provision_mode() == "mock":
+        return {"mode": "mock", "checked": 0, "restarted": [], "failed": []}
+
+    checked = 0
+    restarted: list[str] = []
+    failed: list[dict] = []
+    qs = PythonApp.objects.filter(is_active=True, status=PythonApp.Status.RUNNING, port__gt=0)
+    for app in qs.iterator():
+        checked += 1
+        if _port_listening(app.port) and _process_alive(app.pid):
+            continue
+        logger.warning(
+            "Python app %s (port %s) RUNNING mais inactive — relance",
+            app.name,
+            app.port,
+        )
+        try:
+            start_python_app(app)
+            restarted.append(app.name)
+        except Exception as exc:  # noqa: BLE001
+            failed.append({"name": app.name, "error": str(exc)[:300]})
+            logger.exception("reconcile start failed for %s", app.name)
+
+    # Toujours resync vhosts pour les apps RUNNING liées à un domaine
+    try:
+        from apps.domains.services import refresh_web_routing
+
+        refresh_web_routing()
+    except Exception:  # noqa: BLE001
+        logger.debug("reconcile vhost sync skip", exc_info=True)
+
+    return {
+        "mode": "live",
+        "checked": checked,
+        "restarted": restarted,
+        "failed": failed,
+    }
 
 
 def read_logs(app: PythonApp, *, lines: int = 100) -> dict:

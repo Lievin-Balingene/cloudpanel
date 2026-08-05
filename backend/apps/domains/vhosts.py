@@ -101,14 +101,26 @@ def resolve_domain_backend(domain: Domain) -> DomainBackend:
         )
 
     names = {domain.name.lower(), target.name.lower()}
+    for n in list(names):
+        if n.startswith("www."):
+            names.add(n[4:])
+        else:
+            names.add(f"www.{n}")
     docroot = target.document_root or ""
 
     try:
         from apps.python_apps.models import PythonApp
+        from django.db.models import Q
+
+        py_q = Q(domain_name__in=names)
+        # Matching souple : domain_name stocké sans www
+        for n in names:
+            bare = n[4:] if n.startswith("www.") else n
+            py_q |= Q(domain_name__iexact=bare) | Q(domain_name__iexact=n)
 
         py = (
             PythonApp.objects.filter(
-                domain_name__in=names,
+                py_q,
                 is_active=True,
                 status=PythonApp.Status.RUNNING,
                 port__gt=0,
@@ -298,8 +310,9 @@ def _location_body(backend: DomainBackend) -> str:
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
+        proxy_connect_timeout 5s;
         proxy_read_timeout 300s;
-        proxy_connect_timeout 60s;
+        proxy_next_upstream off;
     }}
 """
 
