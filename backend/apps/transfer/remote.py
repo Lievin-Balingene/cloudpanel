@@ -377,6 +377,12 @@ class WhmRemoteClient:
         except VZoneAPIException:
             pass
 
+        try:
+            for backup_path in self.list_homedir_backups(username):
+                add(backup_path)
+        except VZoneAPIException:
+            pass
+
         for name in (
             f"cpmove-{username}.tar.gz",
             f"cpmove-{username}.tar",
@@ -404,14 +410,170 @@ class WhmRemoteClient:
                     return home
         return f"/home/{username}"
 
-    @staticmethod
-    def _rel_to_account_home(username: str, absolute: str) -> str:
-        """Chemin relatif au home cPanel (/home/user)."""
-        home = f"/home/{username.strip().lower()}"
+    def _rel_to_account_home(self, username: str, absolute: str) -> str:
+        """Chemin relatif au home cPanel (/home/user, /home2/user, …)."""
+        home = self.account_homedir(username).rstrip("/")
         abs_norm = absolute.replace("\\", "/")
         if abs_norm.startswith(home + "/"):
             return abs_norm[len(home) + 1 :]
         return posixpath.relpath(abs_norm, home)
+
+    def _parse_uapi_payload(self, data: dict) -> Any:
+        result = data.get("result")
+        if isinstance(result, dict):
+            return result.get("data")
+        block = data.get("cpanelresult") or {}
+        if isinstance(block, dict):
+            return block.get("data")
+        return data.get("data")
+
+    def _cpanel_uapi(
+        self,
+        cpanel_user: str,
+        module: str,
+        func: str,
+        *,
+        timeout: int | None = None,
+        **params: Any,
+    ) -> dict:
+        """Appel UAPI cPanel via WHM (apiversion 3)."""
+        req: dict[str, Any] = {
+            "user": cpanel_user,
+            "cpanel_jsonapi_user": cpanel_user,
+            "cpanel_jsonapi_apiversion": 3,
+            "cpanel_jsonapi_module": module,
+            "cpanel_jsonapi_func": func,
+        }
+        req.update(params)
+        data = self._request("cpanel", req, timeout=timeout or self.timeout)
+        result = data.get("result")
+        if isinstance(result, dict) and result.get("status") in {0, "0", False}:
+            errors = result.get("errors")
+            if isinstance(errors, list) and errors:
+                reason = errors[0] if isinstance(errors[0], str) else str(errors[0])
+            else:
+                reason = result.get("messages") or "échec UAPI"
+            raise VZoneAPIException(
+                detail=f"UAPI {module}::{func}: {reason}",
+                code="whm_cpanel_uapi_failed",
+                status_code=502,
+            )
+        return data
+
+    def list_homedir_backups(self, username: str) -> list[str]:
+        """Archives backup-* dans le home du compte (propriétaire = utilisateur)."""
+        username = username.strip()
+        home = self.account_homedir(username).rstrip("/")
+        try:
+            data = self._cpanel_uapi(username, "Backup", "list_backups")
+        except VZoneAPIException:
+            return []
+        raw = self._parse_uapi_payload(data)
+        names: list[str] = []
+        if isinstance(raw, list):
+            for item in raw:
+                if isinstance(item, str):
+                    names.append(item)
+                elif isinstance(item, dict):
+                    for key in ("fullpath", "file", "filename", "name", "backup"):
+                        val = item.get(key)
+                        if val:
+                            names.append(str(val))
+                            break
+        elif isinstance(raw, dict):
+            for key in ("backups", "files"):
+                val = raw.get(key)
+                if isinstance(val, list):
+                    for item in val:
+                        if isinstance(item, str):
+                            names.append(item)
+                        elif isinstance(item, dict):
+                            for k in ("fullpath", "file", "filename", "name"):
+                                if item.get(k):
+                                    names.append(str(item[k]))
+                                    break
+        out: list[str] = []
+        for name in names:
+            n = name.strip().replace("\\", "/")
+            if not n:
+                continue
+            out.append(n if n.startswith("/") else f"{home}/{n}")
+        return out
+
+    def _uapi_file_size(self, username: str, rel_path: str) -> int:
+        try:
+            data = self._cpanel_uapi(username, "Fileman", "get_file_information", file=rel_path)
+        except VZoneAPIException:
+            return -1
+        raw = self._parse_uapi_payload(data)
+        if isinstance(raw, dict):
+            for key in ("size", "filesize", "bytes"):
+                val = raw.get(key)
+                if val is not None:
+                    try:
+                        return int(val)
+                    except (TypeError, ValueError):
+                        continue
+        return -1
+
+    def _package_homedir_backup(
+        self,
+        username: str,
+        *,
+        progress: ProgressCb | None = None,
+        poll_seconds: int = 5,
+        max_wait_seconds: int = 7200,
+    ) -> str:
+        """
+        Backup complet via UAPI (fichier possédé par l'utilisateur, pas root).
+        Utilisé quand SSH entrant est bloqué depuis V-zone.
+        """
+        username = username.strip()
+        before = set(self.list_homedir_backups(username))
+        if progress:
+            progress(12, f"Backup cPanel UAPI → home de {username}…")
+        self._cpanel_uapi(
+            username,
+            "Backup",
+            "fullbackup_to_homedir",
+            homedir="include",
+            timeout=max(self.timeout, 120),
+        )
+        deadline = time.time() + max_wait_seconds
+        last_path = ""
+        last_size = -1
+        stable_rounds = 0
+        while time.time() < deadline:
+            current = self.list_homedir_backups(username)
+            new_paths = [p for p in current if p not in before]
+            candidates = new_paths or [
+                p for p in current if posixpath.basename(p).startswith("backup-")
+            ]
+            if candidates:
+                path = sorted(candidates)[-1]
+                rel = self._rel_to_account_home(username, path)
+                size = self._uapi_file_size(username, rel)
+                if path == last_path and size > 0 and size == last_size:
+                    stable_rounds += 1
+                else:
+                    stable_rounds = 0
+                    last_path = path
+                    last_size = size
+                if stable_rounds >= 2 and size > 1024 * 1024:
+                    if progress:
+                        progress(55, f"Backup homedir prêt ({posixpath.basename(path)})")
+                    return path
+            if progress:
+                pct = min(50, 15 + int((max_wait_seconds - (deadline - time.time())) // 30))
+                progress(pct, "Backup cPanel en cours (home utilisateur)…")
+            time.sleep(poll_seconds)
+        if last_path:
+            return last_path
+        raise VZoneAPIException(
+            detail="Timeout backup cPanel dans le home utilisateur.",
+            code="whm_pkgacct_timeout",
+            status_code=504,
+        )
 
     def _path_inside_homedir(self, username: str, absolute: str) -> bool:
         home = self.account_homedir(username).rstrip("/")
@@ -1050,6 +1212,36 @@ class WhmRemoteClient:
             status_code=502,
         )
 
+    def _download_via_whm_root_basic(
+        self,
+        username: str,
+        dest: Path,
+        *,
+        progress: ProgressCb | None = None,
+        extra_paths: list[str] | None = None,
+    ) -> int:
+        """Téléchargement direct WHM 2087 avec auth root (Basic / token)."""
+        paths = self.resolve_cpmove_paths(username, extra=extra_paths)
+        if progress:
+            progress(59, "Téléchargement WHM root (auth directe)…")
+        errors: list[str] = []
+        for remote_path in paths[:8]:
+            for url in self._http_download_urls(remote_path, cp_token=""):
+                short = url.split("?")[0].rsplit("/", 1)[-1]
+                try:
+                    if progress:
+                        progress(60, f"WHM root {short} — {remote_path}…")
+                    return self._stream_download(url, dest)
+                except VZoneAPIException as exc:
+                    errors.append(f"{short}: {exc.detail}")
+                    dest.unlink(missing_ok=True)
+                    continue
+        raise VZoneAPIException(
+            detail="Téléchargement WHM root impossible. " + " ; ".join(errors[:4]),
+            code="whm_download_failed",
+            status_code=502,
+        )
+
     def download_cpmove(
         self,
         username: str,
@@ -1102,6 +1294,19 @@ class WhmRemoteClient:
             errors.append(msg)
             if progress:
                 progress(58, "SSH indisponible — repli HTTP WHM…")
+
+        try:
+            size = self._download_via_whm_root_basic(
+                username,
+                dest,
+                progress=progress,
+                extra_paths=extra_paths,
+            )
+            if progress:
+                progress(90, f"Archive téléchargée via WHM root ({size} octets)")
+            return dest
+        except VZoneAPIException as exc:
+            errors.append(str(exc.detail))
 
         try:
             size = self._http_download_candidates(
@@ -1187,6 +1392,29 @@ class WhmRemoteClient:
         username = username.strip()
         if not username:
             raise VZoneAPIException(detail="Nom de compte distant requis.", code="missing_user", status_code=400)
+
+        ssh_probe = self.check_ssh_access()
+        if not ssh_probe.get("ok"):
+            if progress:
+                progress(
+                    8,
+                    "SSH entrant bloqué — backup cPanel dans le home utilisateur "
+                    f"({ssh_probe.get('message', '')})…",
+                )
+            backup_path = self._package_homedir_backup(
+                username,
+                progress=progress,
+                poll_seconds=poll_seconds,
+                max_wait_seconds=max_wait_seconds,
+            )
+            if progress:
+                progress(60, "Téléchargement de l'archive…")
+            return self.download_cpmove(
+                username,
+                dest,
+                progress=progress,
+                extra_paths=[backup_path],
+            )
 
         session_id: str | None = None
         if progress:

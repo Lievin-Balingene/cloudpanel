@@ -152,15 +152,19 @@ def test_download_cpmove_uses_scp_when_password_auth(tmp_path: Path):
 
 
 def test_rel_to_account_home_cpmove_in_home_root():
-    assert WhmRemoteClient._rel_to_account_home("bienve", "/home/cpmove-bienve.tar.gz") == "../cpmove-bienve.tar.gz"
-    assert (
-        WhmRemoteClient._rel_to_account_home("bienve", "/home/bienve/backup-x.tar.gz")
-        == "backup-x.tar.gz"
-    )
-    assert (
-        WhmRemoteClient._rel_to_account_home("bienve", "/home/bienve/cpmove-bienve.tar.gz")
-        == "cpmove-bienve.tar.gz"
-    )
+    client = WhmRemoteClient("whm.test", token="abc")
+    with patch.object(client, "account_homedir", return_value="/home/bienve"):
+        assert client._rel_to_account_home("bienve", "/home/cpmove-bienve.tar.gz") == "../cpmove-bienve.tar.gz"
+        assert client._rel_to_account_home("bienve", "/home/bienve/backup-x.tar.gz") == "backup-x.tar.gz"
+        assert (
+            client._rel_to_account_home("bienve", "/home/bienve/cpmove-bienve.tar.gz")
+            == "cpmove-bienve.tar.gz"
+        )
+    with patch.object(client, "account_homedir", return_value="/home2/bienve"):
+        assert (
+            client._rel_to_account_home("bienve", "/home2/bienve/cpmove-bienve.tar.gz")
+            == "cpmove-bienve.tar.gz"
+        )
 
 
 def test_start_background_pkgacct_uses_account_homedir():
@@ -209,10 +213,15 @@ def test_download_cpmove_falls_back_to_public_site(tmp_path: Path):
     dest = tmp_path / "cpmove.tar.gz"
 
     with patch.object(client, "check_ssh_access", return_value={"ok": False, "message": "SSH down"}):
-        with patch.object(client, "_http_download_candidates", side_effect=VZoneAPIException(detail="http fail", code="whm_download_failed")):
-            with patch.object(client, "resolve_cpmove_paths", return_value=["/home/cpmove-u.tar.gz"]):
-                with patch.object(client, "_download_via_public_site", return_value=256) as pub:
-                    out = client.download_cpmove("u", dest)
+        with patch.object(
+            client,
+            "_download_via_whm_root_basic",
+            side_effect=VZoneAPIException(detail="root fail", code="whm_download_failed"),
+        ):
+            with patch.object(client, "_http_download_candidates", side_effect=VZoneAPIException(detail="http fail", code="whm_download_failed")):
+                with patch.object(client, "resolve_cpmove_paths", return_value=["/home/cpmove-u.tar.gz"]):
+                    with patch.object(client, "_download_via_public_site", return_value=256) as pub:
+                        out = client.download_cpmove("u", dest)
     pub.assert_called_once()
     assert out == dest
 
@@ -223,9 +232,27 @@ def test_download_cpmove_falls_back_to_http_when_ssh_down(tmp_path: Path):
     dest = tmp_path / "cpmove.tar.gz"
 
     with patch.object(client, "check_ssh_access", return_value={"ok": False, "message": "SSH down"}):
-        with patch.object(client, "_http_download_candidates", return_value=128) as http:
-            out = client.download_cpmove("u", dest)
+        with patch.object(
+            client,
+            "_download_via_whm_root_basic",
+            side_effect=VZoneAPIException(detail="root fail", code="whm_download_failed"),
+        ):
+            with patch.object(client, "_http_download_candidates", return_value=128) as http:
+                out = client.download_cpmove("u", dest)
     http.assert_called_once()
+    assert out == dest
+
+
+def test_package_and_fetch_uses_homedir_backup_when_ssh_blocked(tmp_path: Path):
+    client = WhmRemoteClient("whm.test", token="secret", insecure_ssl=True)
+    dest = tmp_path / "cpmove.tar.gz"
+    with patch.object(client, "check_ssh_access", return_value={"ok": False, "message": "timeout"}):
+        with patch.object(client, "_package_homedir_backup", return_value="/home/u/backup-x.tar.gz") as pkg:
+            with patch.object(client, "download_cpmove", return_value=dest) as dl:
+                out = client.package_and_fetch("u", dest)
+    pkg.assert_called_once()
+    dl.assert_called_once()
+    assert dl.call_args.kwargs.get("extra_paths") == ["/home/u/backup-x.tar.gz"]
     assert out == dest
 
 
