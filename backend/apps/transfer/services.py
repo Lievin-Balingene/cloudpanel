@@ -90,11 +90,14 @@ def remote_list_accounts(
     )
     ver = client.version()
     accounts = client.list_accounts()
+    ssh = client.check_ssh_access()
     return {
         "version": ver,
         "accounts": accounts,
         "count": len(accounts),
         "auth_method": client.auth_method,
+        "ssh_reachable": bool(ssh.get("ok")),
+        "ssh_message": ssh.get("message") or "",
     }
 
 

@@ -143,8 +143,18 @@ def test_download_cpmove_uses_scp_when_password_auth(tmp_path: Path):
     dest = tmp_path / "cpmove.tar.gz"
     dest.write_bytes(b"\x1f\x8b" + b"x" * 128)
 
-    with patch.object(client, "resolve_cpmove_paths", return_value=["/home/cpmove-u.tar.gz"]):
-        with patch.object(client, "_scp_download_candidates", return_value=130) as scp:
-            out = client.download_cpmove("u", dest)
+    with patch.object(client, "check_ssh_access", return_value={"ok": True, "message": "SSH OK"}):
+        with patch.object(client, "resolve_cpmove_paths", return_value=["/home/cpmove-u.tar.gz"]):
+            with patch.object(client, "_scp_download_candidates", return_value=130) as scp:
+                out = client.download_cpmove("u", dest)
     scp.assert_called_once()
     assert out == dest
+
+
+def test_check_ssh_access_reports_timeout():
+    client = WhmRemoteClient("whm.test", token="secret")
+    client.auth_method = "basic-password"
+    with patch("socket.create_connection", side_effect=TimeoutError("timed out")):
+        result = client.check_ssh_access()
+    assert result["ok"] is False
+    assert "injoignable" in result["message"].lower() or "timed out" in result["message"].lower()

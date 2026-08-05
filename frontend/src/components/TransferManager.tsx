@@ -173,7 +173,13 @@ export function TransferManager({ title }: { title: string }) {
 
   const listRemote = useMutation({
     mutationFn: () =>
-      apiRequest<{ accounts: RemoteAccount[]; count: number; auth_method?: string }>(
+      apiRequest<{
+        accounts: RemoteAccount[];
+        count: number;
+        auth_method?: string;
+        ssh_reachable?: boolean;
+        ssh_message?: string;
+      }>(
         "/transfer/remote/list/",
         {
           method: "POST",
@@ -190,13 +196,21 @@ export function TransferManager({ title }: { title: string }) {
     onSuccess: (data) => {
       setError(null);
       setRemoteAccounts(data.accounts || []);
+      const parts: string[] = [];
       if (data.auth_method === "basic-password") {
-        setRemoteAuthInfo(`Connecté via mot de passe (${data.count ?? 0} comptes)`);
+        parts.push(`WHM OK (${data.count ?? 0} comptes)`);
       } else if (data.auth_method) {
-        setRemoteAuthInfo(`Connecté via API Token/hash (${data.count ?? 0} comptes)`);
+        parts.push(`WHM OK via token (${data.count ?? 0} comptes)`);
       } else {
-        setRemoteAuthInfo(`${data.count ?? 0} comptes listés`);
+        parts.push(`${data.count ?? 0} comptes listés`);
       }
+      if (data.ssh_reachable) {
+        parts.push("SSH OK");
+      } else if (data.ssh_message) {
+        parts.push(`SSH KO : ${data.ssh_message}`);
+        setError(data.ssh_message);
+      }
+      setRemoteAuthInfo(parts.join(" · "));
     },
     onError: (err: Error) => {
       setRemoteAuthInfo(null);
@@ -395,8 +409,14 @@ export function TransferManager({ title }: { title: string }) {
           >
             {listRemote.isPending ? "Connexion…" : "Lister les comptes"}
           </button>
-          {remoteAuthInfo && !error && (
-            <p className="text-sm text-emerald-700">{remoteAuthInfo}</p>
+          {remoteAuthInfo && (
+            <p
+              className={`text-sm ${
+                remoteAuthInfo.includes("SSH KO") ? "text-amber-800" : "text-emerald-700"
+              }`}
+            >
+              {remoteAuthInfo}
+            </p>
           )}
           {remoteAccounts.length > 0 && (
             <div className="max-h-64 overflow-auto rounded border border-cp-border">

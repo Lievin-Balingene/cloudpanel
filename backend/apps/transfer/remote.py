@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+import socket
 import ssl
 import time
 import urllib.error
@@ -15,6 +16,33 @@ from typing import Any, Callable
 from apps.core.exceptions import VZoneAPIException
 
 ProgressCb = Callable[[int, str], None]
+
+_SSH_CONNECT_TIMEOUT = 15
+
+
+def _egress_ip_hint() -> str:
+    try:
+        from django.conf import settings
+
+        ip = (getattr(settings, "VZONE_PUBLIC_IP", "") or "").strip()
+        if ip:
+            return f" Autorisez l'IP sortante V-zone ({ip}) dans le firewall du serveur source."
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
+
+
+def _classify_ssh_error(exc: Exception) -> str:
+    msg = str(exc).lower()
+    if "authentication" in msg or "auth failed" in msg:
+        return "auth"
+    if "connection refused" in msg or "errno 111" in msg:
+        return "refused"
+    if "timed out" in msg or "timeout" in msg or "errno 110" in msg:
+        return "timeout"
+    if "no route" in msg or "unreachable" in msg or "errno 113" in msg:
+        return "network"
+    return "other"
 
 
 class WhmRemoteClient:
@@ -311,8 +339,8 @@ class WhmRemoteClient:
             )
         return out
 
-    def resolve_cpmove_paths(self, username: str) -> list[str]:
-        """Chemins distants probables pour le cpmove d'un compte."""
+    def resolve_cpmove_paths(self, username: str, *, extra: list[str] | None = None) -> list[str]:
+        """Chemins distants probables pour le cpmove d'un compte (API WHM en priorité)."""
         username = username.strip()
         paths: list[str] = []
         seen: set[str] = set()
@@ -322,6 +350,9 @@ class WhmRemoteClient:
             if p and p not in seen:
                 seen.add(p)
                 paths.append(p)
+
+        for raw in extra or []:
+            add(raw)
 
         try:
             for entry in self.list_cparchive_files():
@@ -344,35 +375,23 @@ class WhmRemoteClient:
                 add(f"{base}/{name}")
         return paths
 
-    def _remote_file_size_scp(self, remote_path: str) -> int:
-        """Vérifie l'existence et la taille d'un fichier distant via SFTP."""
-        import paramiko
-
-        ssh = paramiko.SSHClient()
-        if self.insecure_ssl:
-            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        else:
-            ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
+    def _paths_from_pkgacct_log(self, session_id: str) -> list[str]:
+        """Extrait les chemins cpmove du journal pkgacct WHM."""
+        paths: list[str] = []
         try:
-            ssh.connect(
-                self.host,
-                port=self.ssh_port,
-                username=self.user,
-                password=self.token,
-                timeout=30,
-                allow_agent=False,
-                look_for_keys=False,
-            )
-            sftp = ssh.open_sftp()
-            try:
-                return int(sftp.stat(remote_path).st_size)
-            finally:
-                sftp.close()
-        finally:
-            ssh.close()
+            data = self._request("fetch_pkgacct_master_log", {"session_id": session_id})
+        except VZoneAPIException:
+            return paths
+        raw = (data.get("data") or {}).get("contents") or ""
+        if not raw:
+            return paths
+        for match in re.finditer(r"(/[\w./-]*cpmove[\w./-]*)", raw):
+            paths.append(match.group(1).rstrip(".,;"))
+        for match in re.finditer(r"(/home[\w./-]*backup[\w./-]*\.tar\.gz)", raw):
+            paths.append(match.group(1))
+        return paths
 
-    def download_via_scp(self, remote_path: str, dest: Path) -> int:
-        """Télécharge un fichier via SFTP/SSH (mot de passe root requis)."""
+    def _require_password_auth(self) -> None:
         if self.auth_method != "basic-password":
             raise VZoneAPIException(
                 detail=(
@@ -382,6 +401,10 @@ class WhmRemoteClient:
                 code="whm_scp_password_required",
                 status_code=400,
             )
+
+    def _ssh_client(self):
+        """Ouvre une session SSH (fermer avec .close())."""
+        self._require_password_auth()
         try:
             import paramiko
         except ImportError as exc:
@@ -391,7 +414,6 @@ class WhmRemoteClient:
                 status_code=500,
             ) from exc
 
-        dest.parent.mkdir(parents=True, exist_ok=True)
         ssh = paramiko.SSHClient()
         if self.insecure_ssl:
             ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -403,24 +425,83 @@ class WhmRemoteClient:
                 port=self.ssh_port,
                 username=self.user,
                 password=self.token,
-                timeout=60,
+                timeout=_SSH_CONNECT_TIMEOUT,
+                banner_timeout=_SSH_CONNECT_TIMEOUT,
+                auth_timeout=_SSH_CONNECT_TIMEOUT,
                 allow_agent=False,
                 look_for_keys=False,
             )
-            sftp = ssh.open_sftp()
-            try:
-                sftp.get(remote_path, str(dest))
-            finally:
-                sftp.close()
         except Exception as exc:  # noqa: BLE001
-            raise VZoneAPIException(
-                detail=f"SCP/SFTP {remote_path}: {exc}",
-                code="whm_scp_failed",
-                status_code=502,
-            ) from exc
+            kind = _classify_ssh_error(exc)
+            hint = _egress_ip_hint()
+            if kind == "timeout":
+                detail = (
+                    f"Connexion SSH impossible (timeout) vers {self.host}:{self.ssh_port}.{hint} "
+                    "Le port SSH doit être ouvert depuis le serveur V-zone vers le WHM source."
+                )
+                code = "whm_ssh_unreachable"
+            elif kind == "refused":
+                detail = (
+                    f"Connexion SSH refusée sur {self.host}:{self.ssh_port}. "
+                    f"Vérifiez le port SSH (pas seulement 2087 WHM).{hint}"
+                )
+                code = "whm_ssh_unreachable"
+            elif kind == "auth":
+                detail = (
+                    f"Authentification SSH refusée pour {self.user}@{self.host}:{self.ssh_port}. "
+                    "Le mot de passe root WHM doit aussi fonctionner en SSH."
+                )
+                code = "whm_ssh_auth_failed"
+            else:
+                detail = f"SSH {self.host}:{self.ssh_port}: {exc}{hint}"
+                code = "whm_ssh_unreachable"
+            raise VZoneAPIException(detail=detail, code=code, status_code=502) from exc
+        return ssh
+
+    def check_ssh_access(self) -> dict[str, Any]:
+        """Test rapide SSH (port + auth)."""
+        if self.auth_method != "basic-password":
+            return {
+                "ok": False,
+                "message": "Mot de passe root requis pour SCP (API Token seul insuffisant).",
+            }
+        try:
+            with socket.create_connection((self.host, self.ssh_port), timeout=8):
+                pass
+        except OSError as exc:
+            return {
+                "ok": False,
+                "message": (
+                    f"Port SSH {self.ssh_port} injoignable sur {self.host}: {exc}."
+                    + _egress_ip_hint()
+                ),
+            }
+        ssh = self._ssh_client()
+        try:
+            _stdin, stdout, _stderr = ssh.exec_command("echo ok", timeout=10)
+            stdout.channel.recv_exit_status()
+            if stdout.read().decode().strip() != "ok":
+                return {"ok": False, "message": "SSH connecté mais commande test échouée."}
+            return {"ok": True, "message": f"SSH OK ({self.host}:{self.ssh_port})"}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "message": str(exc)}
         finally:
             ssh.close()
 
+    def _discover_cpmove_ssh(self, ssh: Any, username: str) -> list[str]:
+        """find distant pour localiser l'archive réelle."""
+        safe = re.sub(r"[^a-zA-Z0-9_-]", "", username)
+        cmd = (
+            f"find /home /home2 /home3 /root /var/cpanel/user_backups -maxdepth 2 "
+            f"\\( -name 'cpmove-{safe}*.tar.gz' -o -name 'cpmove-{safe}*.tar' "
+            f"-o -name 'backup-*{safe}*.tar.gz' -o -name '{safe}.tar.gz' "
+            f"-o -type d -name 'cpmove-{safe}' \\) -printf '%p\\n' 2>/dev/null | head -30"
+        )
+        _stdin, stdout, _stderr = ssh.exec_command(cmd, timeout=90)
+        stdout.channel.recv_exit_status()
+        return [line.strip() for line in stdout.read().decode("utf-8", errors="replace").splitlines() if line.strip()]
+
+    def _validate_downloaded_archive(self, dest: Path, remote_path: str) -> int:
         size = dest.stat().st_size
         if size < 64:
             dest.unlink(missing_ok=True)
@@ -440,58 +521,38 @@ class WhmRemoteClient:
                 )
         return size
 
-    def _download_split_parts_scp(self, first_part_path: str, dest: Path) -> int:
-        """Assemble cpmove-USER.tar.gz.part00001… en une seule archive locale."""
-        import os
+    def _sftp_download_file(self, sftp: Any, remote_path: str, dest: Path) -> int:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        sftp.get(remote_path, str(dest))
+        return self._validate_downloaded_archive(dest, remote_path)
 
-        import paramiko
+    def _sftp_download_split(self, sftp: Any, first_part_path: str, dest: Path) -> int:
+        import os
 
         base_dir = os.path.dirname(first_part_path) or "/home"
         prefix = os.path.basename(first_part_path).split(".part")[0]
-
-        ssh = paramiko.SSHClient()
-        if self.insecure_ssl:
-            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        else:
-            ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
-        try:
-            ssh.connect(
-                self.host,
-                port=self.ssh_port,
-                username=self.user,
-                password=self.token,
-                timeout=60,
-                allow_agent=False,
-                look_for_keys=False,
+        names = sorted(
+            n for n in sftp.listdir(base_dir) if n.startswith(prefix + ".part") or n == prefix
+        )
+        if not names:
+            raise VZoneAPIException(
+                detail=f"Aucune partie split trouvée pour {prefix}",
+                code="whm_archive_not_ready",
+                status_code=502,
             )
-            sftp = ssh.open_sftp()
-            try:
-                names = sorted(
-                    n for n in sftp.listdir(base_dir) if n.startswith(prefix + ".part") or n == prefix
-                )
-                if not names:
-                    raise VZoneAPIException(
-                        detail=f"Aucune partie split trouvée pour {prefix}",
-                        code="whm_download_failed",
-                        status_code=502,
-                    )
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                written = 0
-                with dest.open("wb") as out:
-                    for name in names:
-                        part_path = f"{base_dir.rstrip('/')}/{name}"
-                        with sftp.open(part_path, "rb") as part:
-                            while True:
-                                chunk = part.read(1024 * 1024)
-                                if not chunk:
-                                    break
-                                out.write(chunk)
-                                written += len(chunk)
-            finally:
-                sftp.close()
-        finally:
-            ssh.close()
-        return written
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        written = 0
+        with dest.open("wb") as out:
+            for name in names:
+                part_path = f"{base_dir.rstrip('/')}/{name}"
+                with sftp.open(part_path, "rb") as part:
+                    while True:
+                        chunk = part.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                        written += len(chunk)
+        return self._validate_downloaded_archive(dest, first_part_path)
 
     def _scp_download_candidates(
         self,
@@ -499,31 +560,61 @@ class WhmRemoteClient:
         dest: Path,
         *,
         progress: ProgressCb | None = None,
+        extra_paths: list[str] | None = None,
     ) -> int:
-        errors: list[str] = []
-        paths = self.resolve_cpmove_paths(username)
-        for idx, remote_path in enumerate(paths):
-            if progress:
-                progress(62 + min(idx, 5), f"SCP {remote_path}…")
+        """Une seule session SSH : discover + téléchargement."""
+        paths = self.resolve_cpmove_paths(username, extra=extra_paths)
+        ssh = self._ssh_client()
+        try:
+            discovered = self._discover_cpmove_ssh(ssh, username)
+            merged: list[str] = []
+            seen: set[str] = set()
+            for p in discovered + paths:
+                if p not in seen:
+                    seen.add(p)
+                    merged.append(p)
+
+            if progress and discovered:
+                progress(62, f"Archives trouvées via SSH : {len(discovered)}")
+
+            sftp = ssh.open_sftp()
+            errors: list[str] = []
             try:
-                if ".part" in remote_path:
-                    return self._download_split_parts_scp(remote_path, dest)
-                size = self._remote_file_size_scp(remote_path)
-                if size < 64:
-                    errors.append(f"{remote_path}: {size} o")
-                    continue
-                return self.download_via_scp(remote_path, dest)
-            except VZoneAPIException as exc:
-                errors.append(f"{remote_path}: {exc.detail}")
-                dest.unlink(missing_ok=True)
-                continue
-            except Exception as exc:  # noqa: BLE001
-                errors.append(f"{remote_path}: {exc}")
-                dest.unlink(missing_ok=True)
-                continue
+                for idx, remote_path in enumerate(merged):
+                    if progress:
+                        progress(63 + min(idx, 4), f"SCP {remote_path}…")
+                    try:
+                        if ".part" in remote_path:
+                            return self._sftp_download_split(sftp, remote_path, dest)
+                        try:
+                            st = sftp.stat(remote_path)
+                        except OSError:
+                            errors.append(f"{remote_path}: absent")
+                            continue
+                        if st.st_size < 64:
+                            errors.append(f"{remote_path}: {st.st_size} o")
+                            continue
+                        return self._sftp_download_file(sftp, remote_path, dest)
+                    except VZoneAPIException as exc:
+                        errors.append(f"{remote_path}: {exc.detail}")
+                        dest.unlink(missing_ok=True)
+                        continue
+                    except OSError as exc:
+                        errors.append(f"{remote_path}: {exc}")
+                        dest.unlink(missing_ok=True)
+                        continue
+            finally:
+                sftp.close()
+        finally:
+            ssh.close()
+
         raise VZoneAPIException(
-            detail="SCP/SFTP impossible. " + " ; ".join(errors[:4]),
-            code="whm_scp_failed",
+            detail=(
+                "Archive cpmove introuvable sur le serveur distant"
+                + (f" ({'; '.join(errors[:4])})" if errors else "")
+                + ". Le packaging pkgacct est peut-être encore en cours."
+            ),
+            code="whm_archive_not_ready",
             status_code=502,
         )
 
@@ -584,33 +675,52 @@ class WhmRemoteClient:
         dest: Path,
         *,
         progress: ProgressCb | None = None,
-        wait_seconds: int = 120,
+        wait_seconds: int = 180,
+        extra_paths: list[str] | None = None,
     ) -> Path:
         """Télécharge cpmove-USER depuis le WHM distant (SCP puis repli HTTP)."""
         username = username.strip()
         dest.parent.mkdir(parents=True, exist_ok=True)
 
+        if progress:
+            progress(58, f"Test SSH {self.host}:{self.ssh_port}…")
+        ssh_probe = self.check_ssh_access()
+        if not ssh_probe.get("ok"):
+            raise VZoneAPIException(
+                detail=str(ssh_probe.get("message") or "SSH inaccessible"),
+                code="whm_ssh_unreachable",
+                status_code=502,
+            )
+
         deadline = time.time() + wait_seconds
         last_scp_error: VZoneAPIException | None = None
         while time.time() < deadline:
             try:
-                size = self._scp_download_candidates(username, dest, progress=progress)
+                size = self._scp_download_candidates(
+                    username,
+                    dest,
+                    progress=progress,
+                    extra_paths=extra_paths,
+                )
                 if progress:
                     progress(90, f"Archive téléchargée via SCP ({size} octets)")
                 return dest
             except VZoneAPIException as exc:
                 last_scp_error = exc
-                if getattr(exc, "default_code", "") == "whm_scp_password_required":
-                    break
+                code = getattr(exc, "default_code", "") or ""
+                if code in {"whm_scp_password_required", "whm_ssh_unreachable", "whm_ssh_auth_failed"}:
+                    raise
+                if code != "whm_archive_not_ready":
+                    raise
                 if progress:
                     progress(61, "Archive pas encore prête — nouvelle tentative SCP…")
-                time.sleep(5)
+                time.sleep(8)
 
-        if last_scp_error and getattr(last_scp_error, "default_code", "") == "whm_scp_password_required":
+        if last_scp_error:
             raise last_scp_error
 
-        # Repli HTTP (rare ; la plupart des WHM n'exposent pas de CGI de download)
-        paths = self.resolve_cpmove_paths(username)
+        # Repli HTTP (rare)
+        paths = self.resolve_cpmove_paths(username, extra=extra_paths)
         http_candidates: list[str] = []
         for remote_path in paths[:6]:
             http_candidates.append(
@@ -618,8 +728,6 @@ class WhmRemoteClient:
                 + urllib.parse.urlencode({"file": remote_path})
             )
         errors: list[str] = []
-        if last_scp_error:
-            errors.append(f"SCP: {last_scp_error.detail}")
         for idx, url in enumerate(http_candidates):
             try:
                 if progress:
@@ -635,10 +743,9 @@ class WhmRemoteClient:
         raise VZoneAPIException(
             detail=(
                 "Impossible de télécharger le cpmove distant. "
-                + " ; ".join(errors[:4])
-                + ". Vérifiez que SSH root (port "
-                + str(self.ssh_port)
-                + ") accepte le mot de passe."
+                + " ; ".join(errors[:3])
+                + f". SSH requis sur le port {self.ssh_port}."
+                + _egress_ip_hint()
             ),
             code="whm_download_failed",
             status_code=502,
@@ -741,4 +848,5 @@ class WhmRemoteClient:
 
         if progress:
             progress(60, "Téléchargement de l'archive cpmove…")
-        return self.download_cpmove(username, dest, progress=progress)
+        extra_paths = self._paths_from_pkgacct_log(session_id) if session_id else []
+        return self.download_cpmove(username, dest, progress=progress, extra_paths=extra_paths)
