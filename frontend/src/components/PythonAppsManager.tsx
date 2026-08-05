@@ -87,14 +87,35 @@ function statusMeta(status: string) {
   };
 }
 
-function frameworkLabel(fw: string) {
-  const map: Record<string, string> = {
-    django: "Django",
-    flask: "Flask",
-    fastapi: "FastAPI",
-    generic: "Python",
-  };
-  return map[fw] || fw;
+function CopyableError({ text, title }: { text: string; title?: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function onCopy() {
+    await copyText(text);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <div className="rounded-lg border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30">
+      <div className="flex items-center justify-between gap-2 border-b border-red-200/80 px-2.5 py-1.5 dark:border-red-900">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-cp-danger">
+          {title || "Erreur"}
+        </p>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-cp-danger hover:bg-red-100 dark:hover:bg-red-900/40"
+          onClick={() => void onCopy()}
+        >
+          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          {copied ? "Copié" : "Copier"}
+        </button>
+      </div>
+      <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words px-2.5 py-2 font-mono text-xs leading-relaxed text-cp-danger">
+        {text}
+      </pre>
+    </div>
+  );
 }
 
 function DeployPanel({
@@ -293,9 +314,7 @@ function AppCard({
           </div>
 
           {app.last_error && app.status === "error" && (
-            <p className="rounded-md border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs text-cp-danger dark:border-red-900 dark:bg-red-950/30">
-              {app.last_error}
-            </p>
+            <CopyableError text={app.last_error} title="Python start · erreur" />
           )}
         </div>
 
@@ -511,11 +530,7 @@ export function PythonAppsManager({ title }: { title: string }) {
         </div>
       </div>
 
-      {error && (
-        <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-cp-danger dark:border-red-900 dark:bg-red-950/30">
-          {error}
-        </p>
-      )}
+      {error && <CopyableError text={error} title="Python start · vzone" />}
 
       <form className="vz-panel p-4 sm:p-5" onSubmit={onCreate}>
         <div className="mb-3 flex items-center gap-2">

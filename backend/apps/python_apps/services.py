@@ -48,7 +48,7 @@ APP_ROOT = os.path.dirname(os.path.abspath(__file__))
 if APP_ROOT not in sys.path:
     sys.path.insert(0, APP_ROOT)
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "{settings_module}")
+os.environ["DJANGO_SETTINGS_MODULE"] = "{settings_module}"
 
 try:
     from django.core.wsgi import get_wsgi_application
@@ -572,6 +572,47 @@ def _tail_log(path: Path, lines: int = 40) -> str:
         return ""
 
 
+# Variables d'environnement du panel qui ne doivent PAS fuiter vers les apps clients.
+_PANEL_ENV_BLOCKLIST = (
+    "DJANGO_SETTINGS_MODULE",
+    "DJANGO_CONFIGURATION",
+    "VZONE_ROOT",
+    "VZONE_DATA_ROOT",
+    "DATABASE_URL",
+    "CELERY_BROKER_URL",
+    "REDIS_URL",
+)
+
+
+def _child_process_env(app: PythonApp, app_root: Path, venv_dir: Path) -> dict[str, str]:
+    """
+    Environnement isolé pour gunicorn/uvicorn.
+    Sans ça, DJANGO_SETTINGS_MODULE=vzone.settings.production du service
+    vzone-api est hérité et casse le démarrage des apps Django clients.
+    """
+    env = {k: v for k, v in os.environ.items() if isinstance(v, str)}
+    for key in _PANEL_ENV_BLOCKLIST:
+        env.pop(key, None)
+    # Retirer aussi toute clé DJANGO_* héritée du panel
+    for key in list(env):
+        if key.startswith("DJANGO_"):
+            env.pop(key, None)
+
+    env["VIRTUAL_ENV"] = str(venv_dir)
+    env["PATH"] = f"{venv_dir / 'bin'}{os.pathsep}{env.get('PATH', '')}"
+    # PYTHONPATH = uniquement le root de l'app (pas le PYTHONPATH du panel)
+    env["PYTHONPATH"] = str(app_root)
+    env["HOME"] = str(user_home(app.owner))
+
+    if app.framework == PythonApp.Framework.DJANGO:
+        pkg = detect_django_project_package(app_root)
+        env["DJANGO_SETTINGS_MODULE"] = f"{pkg}.settings"
+
+    for key, value in (app.env_vars or {}).items():
+        env[str(key)] = str(value)
+    return env
+
+
 def _build_start_command(app: PythonApp, app_root: Path, py: Path) -> list[str]:
     (app_root / "logs").mkdir(parents=True, exist_ok=True)
     if app.mode == PythonApp.Mode.ASGI:
@@ -624,14 +665,7 @@ def start_python_app(app: PythonApp) -> PythonApp:
     error_log = app_root / "logs" / "error.log"
     (app_root / "logs").mkdir(parents=True, exist_ok=True)
 
-    env = os.environ.copy()
-    env["VIRTUAL_ENV"] = str(venv_dir)
-    env["PATH"] = f"{venv_dir / 'bin'}{os.pathsep}{env.get('PATH', '')}"
-    env["PYTHONPATH"] = str(app_root) + (
-        os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
-    )
-    for key, value in (app.env_vars or {}).items():
-        env[str(key)] = str(value)
+    env = _child_process_env(app, app_root, venv_dir)
 
     if provision_mode() == "mock" or not py.exists():
         if not py.exists() and provision_mode() != "mock":
@@ -662,6 +696,13 @@ def start_python_app(app: PythonApp) -> PythonApp:
 
     ensure_runtime_deps(app, app_root, py)
 
+    # Réaligner passenger_wsgi sur le package Django détecté (évite setdefault panel)
+    if app.framework == PythonApp.Framework.DJANGO and app.mode == PythonApp.Mode.WSGI:
+        try:
+            _scaffold(app_root, mode=app.mode, framework=app.framework)
+        except Exception:  # noqa: BLE001
+            logger.debug("scaffold avant start ignoré", exc_info=True)
+
     if app.mode == PythonApp.Mode.WSGI and not (app_root / "passenger_wsgi.py").exists():
         raise VZoneAPIException(
             detail=f"passenger_wsgi.py introuvable dans {app_root}. "
@@ -688,8 +729,8 @@ def start_python_app(app: PythonApp) -> PythonApp:
         if proc.poll() is not None:
             tail = _tail_log(error_log)
             raise RuntimeError(
-                f"Le process s'est arrêté (code {proc.returncode}). "
-                f"{tail[-400:] if tail else 'Voir logs/error.log — pip install gunicorn Django ?'}"
+                f"Le process s'est arrêté (code {proc.returncode}).\n"
+                f"{tail[-2000:] if tail else 'Voir logs/error.log — pip install gunicorn Django ?'}"
             )
         pid_file.write_text(str(proc.pid), encoding="utf-8")
         app.pid = proc.pid
