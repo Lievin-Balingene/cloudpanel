@@ -70,7 +70,7 @@ html.dark body {
   }
 
   .whm-nav-item {
-    @apply relative flex items-center gap-2.5 border-b border-white/[0.06] px-4 py-2.5 text-[13px]
+    @apply relative flex items-center gap-2.5 border-b border-white/[0.06] px-4 py-2 text-[13px]
       text-white/85 transition hover:bg-white/10 hover:text-white;
   }
 
@@ -84,7 +84,7 @@ html.dark body {
   }
 
   .whm-section-title {
-    @apply px-4 pb-1.5 pt-4 text-[10px] font-bold uppercase tracking-[0.14em] text-white/40;
+    @apply px-4 pb-1 pt-3.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white/40;
   }
 
   .whm-page-head {

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Check, Copy, Focus } from "lucide-react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -13,6 +14,39 @@ interface TerminalAccess {
   username: string;
 }
 
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+    return true;
+  }
+}
+
+/** Extrait tout le buffer scrollback + viewport du terminal xterm. */
+function readTerminalBuffer(term: Terminal): string {
+  const buffer = term.buffer.active;
+  const lines: string[] = [];
+  for (let i = 0; i < buffer.length; i += 1) {
+    const line = buffer.getLine(i);
+    if (!line) continue;
+    lines.push(line.translateToString(true));
+  }
+  // Retirer les lignes vides en fin de buffer
+  while (lines.length > 0 && lines[lines.length - 1].trim() === "") {
+    lines.pop();
+  }
+  return lines.join("\n");
+}
+
 export function WebTerminalManager({ title }: { title: string }) {
   const token = useAuthStore((s) => s.accessToken);
   const { data: access, isLoading } = useQuery({
@@ -21,6 +55,7 @@ export function WebTerminalManager({ title }: { title: string }) {
   });
   const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState("Initialisation…");
+  const [copied, setCopied] = useState(false);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const terminalHostRef = useRef<HTMLDivElement | null>(null);
@@ -148,6 +183,20 @@ export function WebTerminalManager({ title }: { title: string }) {
     terminalRef.current?.focus();
   }
 
+  async function copyAll() {
+    const term = terminalRef.current;
+    if (!term) return;
+    const text = readTerminalBuffer(term);
+    if (!text.trim()) {
+      setStatus("Rien à copier (terminal vide)");
+      return;
+    }
+    await copyText(text);
+    setCopied(true);
+    setStatus(`Copié · ${text.split("\n").length} ligne(s)`);
+    window.setTimeout(() => setCopied(false), 2000);
+  }
+
   return (
     <div className="space-y-3 animate-fade-up">
       <div className="vz-panel overflow-hidden">
@@ -188,9 +237,21 @@ export function WebTerminalManager({ title }: { title: string }) {
                 <span className="mx-1">·</span>
                 {status}
               </span>
-              <button type="button" className="vz-btn-ghost !px-2 !py-1 text-xs" onClick={focusTerminal}>
-                Focus terminal
-              </button>
+              <div className="flex flex-wrap items-center gap-1">
+                <button
+                  type="button"
+                  className="vz-btn-ghost !px-2 !py-1 text-xs"
+                  onClick={() => void copyAll()}
+                  title="Copier tout le contenu du terminal"
+                >
+                  {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                  {copied ? "Copié" : "Tout copier"}
+                </button>
+                <button type="button" className="vz-btn-ghost !px-2 !py-1 text-xs" onClick={focusTerminal}>
+                  <Focus className="h-3.5 w-3.5" />
+                  Focus
+                </button>
+              </div>
             </div>
             <div
               ref={terminalHostRef}

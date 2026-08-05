@@ -441,10 +441,16 @@ def read_logs(app: NodeApp, *, lines: int = 100) -> dict:
 
 def overview_for(user: User) -> dict:
     qs = apps_qs(user)
+    home = ""
+    try:
+        home = str(user_home(user))
+    except Exception:  # noqa: BLE001
+        home = ""
     return {
         "apps": qs.count(),
         "running": qs.filter(status=NodeApp.Status.RUNNING).count(),
         "stopped": qs.filter(status=NodeApp.Status.STOPPED).count(),
         "error": qs.filter(status=NodeApp.Status.ERROR).count(),
         "provision_mode": provision_mode(),
+        "home_path": home,
     }
