@@ -41,6 +41,31 @@ export async function apiRequest<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
+  const maxAttempts =
+    options.method && options.method.toUpperCase() !== "GET" ? 3 : 2;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await apiRequestOnce<T>(path, options);
+    } catch (err) {
+      lastError = err;
+      const retryable =
+        err instanceof ApiClientError &&
+        (err.status === 502 || err.status === 503 || err.status === 0);
+      if (!retryable || attempt === maxAttempts) {
+        throw err;
+      }
+      await new Promise((r) => setTimeout(r, 400 * attempt));
+    }
+  }
+  throw lastError;
+}
+
+async function apiRequestOnce<T>(
+  path: string,
+  options: RequestInit = {},
+): Promise<T> {
   const headers = new Headers(options.headers ?? {});
   if (!headers.has("Content-Type") && options.body && !(options.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
@@ -60,8 +85,7 @@ export async function apiRequest<T>(
     const raw = err instanceof Error ? err.message : String(err);
     const hint =
       /failed to fetch|networkerror|load failed|network request failed/i.test(raw)
-        ? "Connexion interrompue (souvent un reload nginx pendant l’opération). " +
-          "Réessayez : les données (ex. nameservers) peuvent déjà être enregistrées."
+        ? "Connexion interrompue (nginx ou API en redémarrage). Réessayez dans quelques secondes."
         : raw || "Erreur réseau";
     throw new ApiClientError(hint, 0, null);
   }
@@ -91,13 +115,10 @@ export async function apiRequest<T>(
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 400) || `Erreur HTTP ${response.status}`;
-    if (
-      response.status === 502 &&
-      /bad gateway|nginx/i.test(message)
-    ) {
+    if (response.status === 502 || response.status === 503) {
       message =
-        "502 Bad Gateway : l’API a été coupée pendant l’opération (souvent un reload SSL). " +
-        "Vérifiez si le certificat est déjà actif, puis réessayez si besoin.";
+        "API indisponible (502). Le service vzone-api est probablement arrêté ou en redémarrage. " +
+        "Sur le serveur : sudo bash /opt/vzone-src/scripts/repair-api-502.sh — puis réessayez.";
     }
     throw new ApiClientError(
       message,

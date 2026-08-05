@@ -144,5 +144,15 @@ systemctl daemon-reload
 systemctl enable --now redis-server 2>/dev/null || systemctl enable --now redis 2>/dev/null || true
 systemctl enable --now vzone-postgresql.service 2>/dev/null || true
 systemctl enable --now vzone-api vzone-worker vzone-beat nginx
+
+# Garantir que le login ne tombe pas en 502 après update
+if ! ss -lntp 2>/dev/null | grep -q ':8000'; then
+  echo "[vzone] API absente sur :8000 — repair-api-502"
+  bash "${REPO_DIR}/scripts/repair-api-502.sh" || true
+else
+  systemctl restart vzone-api
+  sleep 2
+fi
 echo "[vzone] Mise à jour terminée — version ${VERSION}"
 echo "[vzone] Services : $(systemctl is-active vzone-api vzone-worker vzone-beat nginx | tr '\n' ' ')"
+ss -lntp 2>/dev/null | grep ':8000' || echo "[vzone] ALERTE: pas d'écoute :8000"

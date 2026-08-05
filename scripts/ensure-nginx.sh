@@ -233,12 +233,14 @@ if ! sudo -u www-data test -r "${VZONE_ROOT}/frontend/dist/index.html" 2>/dev/nu
 fi
 
 nginx -t
-# Pendant une émission SSL panel : reload seulement (pas de restart nginx/API
-# sinon la requête Let's Encrypt en cours reçoit un 502 Bad Gateway).
-if [[ "${VZONE_NGINX_RELOAD_ONLY:-0}" == "1" ]]; then
+# Préférer reload : un restart nginx coupe /api → 502 au login.
+# Restart uniquement si reload échoue, ou si VZONE_NGINX_FORCE_RESTART=1
+# (ex. premier install pour prendre le groupe ssl-cert).
+if [[ "${VZONE_NGINX_FORCE_RESTART:-0}" == "1" ]]; then
+  systemctl restart nginx
+elif [[ "${VZONE_NGINX_RELOAD_ONLY:-0}" == "1" ]] || systemctl is-active --quiet nginx; then
   systemctl reload nginx || systemctl restart nginx
 else
-  # restart : prend en compte le groupe ssl-cert de www-data
   systemctl restart nginx
 fi
 
@@ -326,8 +328,27 @@ if [[ -f "$ENV_FILE" ]]; then
     grep -q '^VZONE_MAIL_PUBLIC_IP=' "$ENV_FILE" || echo "VZONE_MAIL_PUBLIC_IP=${HOST_IP}" >> "$ENV_FILE"
   fi
   # Ne jamais tuer vzone-api pendant un job SSL (VZONE_SKIP_API_RESTART=1).
+  # Sur changement ALLOWED_HOSTS : restart doux + attente :8000 (évite 502 login).
   if [[ "${VZONE_SKIP_API_RESTART:-0}" != "1" && "$HOSTS_CHANGED" -eq 1 ]]; then
     systemctl try-restart vzone-api 2>/dev/null || true
+    for i in $(seq 1 20); do
+      if ss -lntp 2>/dev/null | grep -q ':8000'; then
+        break
+      fi
+      sleep 0.5
+    done
   fi
   echo "[vzone] ALLOWED_HOSTS → ${MERGED}"
+fi
+
+# Garde-fou final : API doit écouter sinon login = 502
+if ! ss -lntp 2>/dev/null | grep -q ':8000'; then
+  echo "[vzone] ALERTE: rien sur :8000 — redémarrage vzone-api"
+  systemctl restart vzone-api 2>/dev/null || true
+  sleep 2
+fi
+if ss -lntp 2>/dev/null | grep -q ':8000'; then
+  echo "[vzone] API Daphne OK (127.0.0.1:8000)"
+else
+  echo "[vzone] ERREUR: API absente — sudo bash /opt/vzone-src/scripts/repair-api-502.sh" >&2
 fi
