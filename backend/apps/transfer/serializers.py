@@ -26,17 +26,28 @@ class RemoteConnectSerializer(serializers.Serializer):
     host = serializers.CharField(max_length=255)
     port = serializers.IntegerField(required=False, default=2087, min_value=1, max_value=65535)
     user = serializers.CharField(required=False, default="root", max_length=64)
-    token = serializers.CharField(max_length=512)
+    token = serializers.CharField(max_length=2048)
     insecure_ssl = serializers.BooleanField(required=False, default=False)
 
 
 class RemoteTransferSerializer(RemoteConnectSerializer):
-    remote_username = serializers.CharField(max_length=32)
+    remote_username = serializers.CharField(required=False, allow_blank=True, max_length=32, default="")
+    username = serializers.CharField(required=False, allow_blank=True, max_length=32, default="")
     email = serializers.EmailField(required=False, allow_blank=True, default="")
     password = serializers.CharField(required=False, allow_blank=True, default="", max_length=128)
     package_name = serializers.CharField(required=False, allow_blank=True, default="", max_length=64)
     overwrite = serializers.BooleanField(required=False, default=False)
     options = TransferOptionsSerializer(required=False)
+
+    def validate(self, attrs):
+        remote = (attrs.get("remote_username") or attrs.get("username") or "").strip()
+        if not remote:
+            raise serializers.ValidationError(
+                {"remote_username": "Sélectionnez ou saisissez le compte cPanel à migrer."}
+            )
+        attrs["remote_username"] = remote.lower()
+        attrs["username"] = remote.lower()
+        return attrs
 
 
 class TransferJobSerializer(serializers.Serializer):

@@ -189,36 +189,46 @@ export function TransferManager({ title }: { title: string }) {
   });
 
   const startRemote = useMutation({
-    mutationFn: () =>
-      apiRequest<TransferJob>("/transfer/remote/start/", {
+    mutationFn: () => {
+      const remoteUserName = (selectedRemote || username).trim();
+      if (!remoteUserName) throw new Error("Sélectionnez un compte dans la liste ou saisissez le username.");
+      if (!remoteHost.trim() || !remoteToken.trim()) {
+        throw new Error("Host WHM et API Token sont requis.");
+      }
+      return apiRequest<TransferJob>("/transfer/remote/start/", {
         method: "POST",
         body: JSON.stringify({
-          host: remoteHost,
+          host: remoteHost.trim(),
           port: remotePort,
           user: remoteUser,
-          token: remoteToken,
+          token: remoteToken.trim(),
           insecure_ssl: insecureSsl,
-          remote_username: selectedRemote || username,
+          remote_username: remoteUserName,
+          username: username.trim() || remoteUserName,
           email,
           password,
           package_name: packageName,
           overwrite,
           options,
         }),
-      }),
+      });
+    },
     onSuccess: (job) => {
       setError(null);
       setActiveJobId(job.id);
       void qc.invalidateQueries({ queryKey: ["transfer-jobs"] });
     },
     onError: (err: Error) => {
-      const msg =
-        err instanceof ApiClientError
-          ? err.message
-          : err.message;
+      const msg = err instanceof ApiClientError ? err.message : err.message;
       setError(msg);
     },
   });
+
+  const canStartRemote =
+    !startRemote.isPending &&
+    !!remoteHost.trim() &&
+    !!remoteToken.trim() &&
+    !!(selectedRemote || username).trim();
 
   function onInspect(e: FormEvent) {
     e.preventDefault();
@@ -316,9 +326,10 @@ export function TransferManager({ title }: { title: string }) {
         <div className="vz-panel space-y-3 p-4">
           <h2 className="text-sm font-semibold uppercase text-cp-muted">WHM distant</h2>
           <p className="text-sm text-cp-muted">
-            Listez les comptes via l’API WHM (token). Pour une migration complète sans perte, générez
-            ensuite un <code className="text-xs">cpmove</code> sur la source et importez-le (onglet
-            Archive) — méthode recommandée par cPanel.
+            Connectez-vous avec un <strong>API Token WHM</strong> (pas le mot de passe root) : WHM →
+            Development → Manage API Tokens. Le transfert lance{" "}
+            <code className="text-xs">pkgacct</code> sur la source, télécharge le{" "}
+            <code className="text-xs">cpmove</code>, puis restaure le compte complet sur V-zone.
           </p>
           <div className="grid gap-2 md:grid-cols-2">
             <input
@@ -342,9 +353,11 @@ export function TransferManager({ title }: { title: string }) {
             />
             <input
               className="vz-input"
-              placeholder="API token"
+              type="password"
+              placeholder="API Token WHM (pas le mot de passe)"
               value={remoteToken}
               onChange={(e) => setRemoteToken(e.target.value)}
+              autoComplete="off"
             />
           </div>
           <label className="flex items-center gap-2 text-sm">
@@ -381,7 +394,7 @@ export function TransferManager({ title }: { title: string }) {
                         setSelectedRemote(a.user);
                         setUsername(a.user);
                         setEmail(a.email || "");
-                        setPackageName(a.plan || "");
+                        if (a.plan) setPackageName(a.plan);
                       }}
                     >
                       <td className="px-2 py-1 font-medium">{a.user}</td>
@@ -394,6 +407,12 @@ export function TransferManager({ title }: { title: string }) {
               </table>
             </div>
           )}
+          {remoteAccounts.length > 0 && !selectedRemote && (
+            <p className="text-xs text-amber-700">
+              Cliquez une ligne du tableau pour sélectionner le compte à migrer (ou saisissez le
+              username ci-dessous).
+            </p>
+          )}
         </div>
       )}
 
@@ -404,7 +423,13 @@ export function TransferManager({ title }: { title: string }) {
             className="vz-input"
             placeholder="username (identique cPanel)"
             value={username}
-            onChange={(e) => setUsername(e.target.value)}
+            onChange={(e) => {
+              const v = e.target.value;
+              setUsername(v);
+              if (tab === "remote") {
+                setSelectedRemote(v.trim());
+              }
+            }}
             required
           />
           <input
@@ -453,14 +478,22 @@ export function TransferManager({ title }: { title: string }) {
             {startArchive.isPending ? "Démarrage…" : "Lancer le transfert"}
           </button>
         ) : (
-          <button
-            type="button"
-            className="vz-btn-primary"
-            disabled={startRemote.isPending || !selectedRemote || !remoteHost || !remoteToken}
-            onClick={() => startRemote.mutate()}
-          >
-            {startRemote.isPending ? "Démarrage…" : "Tenter transfert API distant"}
-          </button>
+          <div className="space-y-2">
+            {!canStartRemote && (
+              <p className="text-xs text-amber-700">
+                Pour activer le transfert : host WHM + API Token + compte (cliquez une ligne ou
+                saisissez le username).
+              </p>
+            )}
+            <button
+              type="button"
+              className="vz-btn-primary"
+              disabled={!canStartRemote}
+              onClick={() => startRemote.mutate()}
+            >
+              {startRemote.isPending ? "Transfert en cours…" : "Lancer le transfert distant"}
+            </button>
+          </div>
         )}
       </div>
 

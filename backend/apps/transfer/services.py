@@ -120,36 +120,52 @@ def _run_job(job_id: int) -> None:
                 insecure_ssl=job.remote_insecure_ssl,
                 timeout=180,
             )
-            remote_user = job.remote_username or job.username
-            _set_progress(job, 15, f"Demande pkgacct pour {remote_user}…")
-            # La plupart des WHM exigent un cpmove manuel ; on tente puis on échoue clairement.
-            client.start_pkgacct(remote_user)
-            raise VZoneAPIException(
-                detail=(
-                    "Packaging distant initié ou non supporté selon la version. "
-                    "Pour une migration sans perte, générez `cpmove-{user}.tar.gz` "
-                    "sur le WHM source (Transfer Tool / pkgacct) et importez l'archive ici."
-                ),
-                code="remote_upload_required",
-                status_code=501,
-            )
+            remote_user = (job.remote_username or job.username or "").strip()
+            if not remote_user:
+                raise VZoneAPIException(
+                    detail="Compte distant non spécifié.",
+                    code="missing_remote_user",
+                    status_code=400,
+                )
+            # Vérifie l'auth tôt
+            try:
+                client.version()
+            except VZoneAPIException:
+                raise
+            dest = transfer_root() / "uploads" / f"remote-{job.id}-cpmove-{remote_user}.tar.gz"
 
-        if not job.archive_path:
+            def remote_progress(pct: int, step: str) -> None:
+                # Packaging/download : garder dans 5–60
+                mapped = max(5, min(60, int(pct) if pct <= 100 else 55))
+                _set_progress(job, mapped, step)
+
+            _set_progress(job, 8, f"Packaging + téléchargement cpmove de {remote_user}…")
+            archive_path = client.package_and_fetch(
+                remote_user,
+                dest,
+                progress=remote_progress,
+            )
+            job.archive_path = str(archive_path)
+            job.archive_name = archive_path.name
+            job.save(update_fields=["archive_path", "archive_name", "updated_at"])
+            _set_progress(job, 58, f"Archive distante prête ({archive_path.name})")
+
+        if not job.archive_path and not archive_path:
             raise VZoneAPIException(detail="Archive manquante.", code="missing_archive", status_code=400)
-        archive_path = Path(job.archive_path)
+        archive_path = Path(job.archive_path) if not archive_path else archive_path
         if not archive_path.is_file():
             raise VZoneAPIException(detail="Fichier archive introuvable.", code="archive_missing", status_code=400)
 
-        _set_progress(job, 10, "Extraction archive cPanel…")
+        _set_progress(job, 62, "Extraction archive cPanel…")
         work = transfer_root() / "work" / f"job-{job.id}"
         if work.exists():
             shutil.rmtree(work, ignore_errors=True)
         extract_archive(archive_path, work)
         root = find_account_root(work)
-        _set_progress(job, 25, "Analyse structure pkgacct…")
+        _set_progress(job, 70, "Analyse structure pkgacct…")
         bundle = inspect_bundle(root, username_override=job.username)
 
-        _set_progress(job, 35, "Restauration compte (home, domaines, mail, DB)…")
+        _set_progress(job, 75, "Restauration compte (home, domaines, mail, DB)…")
         result = restore_account(
             bundle,
             username=job.username or bundle.username,
