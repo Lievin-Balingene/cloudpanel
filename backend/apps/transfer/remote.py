@@ -461,60 +461,185 @@ class WhmRemoteClient:
             )
         return data
 
-    def list_homedir_backups(self, username: str) -> list[str]:
-        """Archives backup-* dans le home du compte (propriétaire = utilisateur)."""
+    def _cpanel_api2(
+        self,
+        cpanel_user: str,
+        module: str,
+        func: str,
+        *,
+        timeout: int | None = None,
+        **params: Any,
+    ) -> dict:
+        """Appel cPanel API 2 via WHM."""
+        req: dict[str, Any] = {
+            "user": cpanel_user,
+            "cpanel_jsonapi_user": cpanel_user,
+            "cpanel_jsonapi_apiversion": 2,
+            "cpanel_jsonapi_module": module,
+            "cpanel_jsonapi_func": func,
+        }
+        req.update(params)
+        return self._request("cpanel", req, timeout=timeout or self.timeout)
+
+    def list_full_backups(self, username: str) -> list[dict[str, Any]]:
+        """
+        Backups::listfullbackups — statut Pending/Complete + nom de fichier.
+        (Backup::list_backups UAPI ne renvoie que des dates ISO, inutilisable.)
+        """
         username = username.strip()
         home = self.account_homedir(username).rstrip("/")
         try:
-            data = self._cpanel_uapi(username, "Backup", "list_backups")
+            data = self._cpanel_api2(username, "Backups", "listfullbackups")
         except VZoneAPIException:
             return []
-        raw = self._parse_uapi_payload(data)
-        names: list[str] = []
-        if isinstance(raw, list):
-            for item in raw:
-                if isinstance(item, str):
-                    names.append(item)
-                elif isinstance(item, dict):
-                    for key in ("fullpath", "file", "filename", "name", "backup"):
-                        val = item.get(key)
-                        if val:
-                            names.append(str(val))
-                            break
-        elif isinstance(raw, dict):
-            for key in ("backups", "files"):
-                val = raw.get(key)
-                if isinstance(val, list):
-                    for item in val:
-                        if isinstance(item, str):
-                            names.append(item)
-                        elif isinstance(item, dict):
-                            for k in ("fullpath", "file", "filename", "name"):
-                                if item.get(k):
-                                    names.append(str(item[k]))
-                                    break
-        out: list[str] = []
-        for name in names:
-            n = name.strip().replace("\\", "/")
-            if not n:
+        block = data.get("cpanelresult") or {}
+        rows = block.get("data")
+        if rows is None and isinstance(block.get("files"), list):
+            rows = block.get("files")
+        if not isinstance(rows, list):
+            return []
+        out: list[dict[str, Any]] = []
+        for item in rows:
+            if not isinstance(item, dict):
                 continue
-            out.append(n if n.startswith("/") else f"{home}/{n}")
+            name = str(item.get("file") or item.get("filename") or "").strip()
+            if not name:
+                continue
+            path = name if name.startswith("/") else f"{home}/{name}"
+            status = str(item.get("status") or "").strip().lower()
+            out.append(
+                {
+                    "file": name,
+                    "path": path,
+                    "status": status,
+                    "time": item.get("time") or 0,
+                    "complete": status in {"complete", "completed", "ok", "finished"},
+                    "pending": status in {"pending", "inprogress", "in progress", "running"},
+                }
+            )
         return out
 
-    def _uapi_file_size(self, username: str, rel_path: str) -> int:
+    def list_homedir_archive_files(self, username: str) -> list[dict[str, Any]]:
+        """Scan Fileman du home pour backup-*.tar.gz / cpmove-*.tar.gz."""
+        username = username.strip()
+        home = self.account_homedir(username).rstrip("/")
+        files: list[dict[str, Any]] = []
+        # UAPI Fileman::list_files
         try:
-            data = self._cpanel_uapi(username, "Fileman", "get_file_information", file=rel_path)
+            data = self._cpanel_uapi(
+                username,
+                "Fileman",
+                "list_files",
+                dir="",
+                include_mime=0,
+                types="file",
+            )
+            raw = self._parse_uapi_payload(data)
+            rows: list[Any] = []
+            if isinstance(raw, dict):
+                rows = list(raw.get("files") or [])
+            elif isinstance(raw, list):
+                rows = raw
+            for item in rows:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("file") or item.get("name") or "").strip()
+                if not name:
+                    continue
+                low = name.lower()
+                if not (
+                    low.startswith("backup-")
+                    or low.startswith("cpmove-")
+                    or low.endswith(".tar.gz")
+                ):
+                    continue
+                if not (low.endswith(".tar.gz") or low.endswith(".tar")):
+                    continue
+                path = str(item.get("fullpath") or item.get("path") or "")
+                if path and not path.endswith(name):
+                    path = f"{path.rstrip('/')}/{name}"
+                if not path.startswith("/"):
+                    path = f"{home}/{name}"
+                try:
+                    size = int(item.get("size") or 0)
+                except (TypeError, ValueError):
+                    size = 0
+                files.append({"file": name, "path": path, "size": size})
         except VZoneAPIException:
-            return -1
-        raw = self._parse_uapi_payload(data)
-        if isinstance(raw, dict):
-            for key in ("size", "filesize", "bytes"):
-                val = raw.get(key)
-                if val is not None:
-                    try:
-                        return int(val)
-                    except (TypeError, ValueError):
+            pass
+        # Repli API 2 Fileman::listfiles
+        if not files:
+            try:
+                data = self._cpanel_api2(
+                    username,
+                    "Fileman",
+                    "listfiles",
+                    dir="",
+                    showdotfiles="no",
+                )
+                block = data.get("cpanelresult") or {}
+                rows = block.get("data") or block.get("files") or []
+                if isinstance(rows, dict):
+                    rows = list(rows.values())
+                for item in rows if isinstance(rows, list) else []:
+                    if not isinstance(item, dict):
                         continue
+                    if str(item.get("type") or "").lower() not in {"", "file"}:
+                        continue
+                    name = str(item.get("file") or "").strip()
+                    low = name.lower()
+                    if not (low.startswith("backup-") or low.startswith("cpmove-")):
+                        continue
+                    if not (low.endswith(".tar.gz") or low.endswith(".tar")):
+                        continue
+                    path = str(item.get("fullpath") or f"{home}/{name}")
+                    try:
+                        size = int(item.get("size") or 0)
+                    except (TypeError, ValueError):
+                        size = 0
+                    files.append({"file": name, "path": path, "size": size})
+            except VZoneAPIException:
+                pass
+        return files
+
+    def list_homedir_backups(self, username: str) -> list[str]:
+        """Chemins d'archives backup/cpmove dans le home du compte."""
+        paths: list[str] = []
+        seen: set[str] = set()
+        for entry in self.list_full_backups(username):
+            path = entry.get("path") or ""
+            if path and path not in seen:
+                seen.add(path)
+                paths.append(path)
+        for entry in self.list_homedir_archive_files(username):
+            path = entry.get("path") or ""
+            if path and path not in seen:
+                seen.add(path)
+                paths.append(path)
+        return paths
+
+    def _uapi_file_size(self, username: str, rel_path: str) -> int:
+        for candidate in (rel_path, posixpath.basename(rel_path)):
+            try:
+                data = self._cpanel_uapi(
+                    username, "Fileman", "get_file_information", file=candidate
+                )
+            except VZoneAPIException:
+                continue
+            raw = self._parse_uapi_payload(data)
+            if isinstance(raw, dict):
+                for key in ("size", "filesize", "bytes"):
+                    val = raw.get(key)
+                    if val is not None:
+                        try:
+                            return int(val)
+                        except (TypeError, ValueError):
+                            continue
+        for entry in self.list_homedir_archive_files(username):
+            if entry.get("path", "").endswith(rel_path) or entry.get("file") == posixpath.basename(
+                rel_path
+            ):
+                return int(entry.get("size") or 0)
         return -1
 
     def _package_homedir_backup(
@@ -522,7 +647,7 @@ class WhmRemoteClient:
         username: str,
         *,
         progress: ProgressCb | None = None,
-        poll_seconds: int = 5,
+        poll_seconds: int = 8,
         max_wait_seconds: int = 7200,
     ) -> str:
         """
@@ -530,48 +655,143 @@ class WhmRemoteClient:
         Utilisé quand SSH entrant est bloqué depuis V-zone.
         """
         username = username.strip()
-        before = set(self.list_homedir_backups(username))
+        before_names = {
+            posixpath.basename(p) for p in self.list_homedir_backups(username)
+        }
+        before_complete = {
+            e["file"] for e in self.list_full_backups(username) if e.get("complete")
+        }
         if progress:
             progress(12, f"Backup cPanel UAPI → home de {username}…")
-        self._cpanel_uapi(
-            username,
-            "Backup",
-            "fullbackup_to_homedir",
-            homedir="include",
-            timeout=max(self.timeout, 120),
-        )
+        try:
+            self._cpanel_uapi(
+                username,
+                "Backup",
+                "fullbackup_to_homedir",
+                homedir="include",
+                timeout=max(self.timeout, 120),
+            )
+        except VZoneAPIException as exc:
+            # Parfois déjà en cours / feature désactivée — on poll quand même
+            if progress:
+                progress(14, f"Démarrage backup : {exc.detail} — attente fichier…")
+
         deadline = time.time() + max_wait_seconds
+        started = time.time()
         last_path = ""
         last_size = -1
         stable_rounds = 0
+        seen_pending = False
+
         while time.time() < deadline:
-            current = self.list_homedir_backups(username)
-            new_paths = [p for p in current if p not in before]
-            candidates = new_paths or [
-                p for p in current if posixpath.basename(p).startswith("backup-")
+            elapsed = int(time.time() - started)
+            full = self.list_full_backups(username)
+            archives = self.list_homedir_archive_files(username)
+
+            # 1) listfullbackups : nouveau fichier Complete
+            for entry in full:
+                if entry.get("pending"):
+                    seen_pending = True
+                if not entry.get("complete"):
+                    continue
+                name = entry["file"]
+                if name in before_complete and not seen_pending:
+                    continue
+                if name not in before_names or entry.get("complete"):
+                    path = entry["path"]
+                    if progress:
+                        progress(55, f"Backup terminé ({name})")
+                    return path
+
+            # 2) Fichiers visibles dans le File Manager
+            candidates = [
+                a
+                for a in archives
+                if a.get("file") not in before_names
+                or (
+                    str(a.get("file", "")).startswith("backup-")
+                    and a.get("file") not in before_complete
+                )
             ]
+            if not candidates:
+                candidates = [
+                    a
+                    for a in archives
+                    if str(a.get("file", "")).startswith("backup-")
+                    and a.get("file") not in before_names
+                ]
+
             if candidates:
-                path = sorted(candidates)[-1]
-                rel = self._rel_to_account_home(username, path)
-                size = self._uapi_file_size(username, rel)
-                if path == last_path and size > 0 and size == last_size:
+                # Prendre le plus récent / plus gros
+                candidates.sort(
+                    key=lambda a: (int(a.get("size") or 0), str(a.get("file") or ""))
+                )
+                best = candidates[-1]
+                path = str(best["path"])
+                size = int(best.get("size") or 0)
+                if size <= 0:
+                    size = self._uapi_file_size(username, self._rel_to_account_home(username, path))
+
+                if path == last_path and size == last_size and size >= 0:
                     stable_rounds += 1
                 else:
                     stable_rounds = 0
                     last_path = path
                     last_size = size
-                if stable_rounds >= 2 and size > 1024 * 1024:
+
+                # Prêt si taille stable (3 polls) — même sans 1 Mo si Complete déjà vu
+                ready = False
+                if size > 1024 * 1024 and stable_rounds >= 2:
+                    ready = True
+                elif size > 64 * 1024 and stable_rounds >= 4:
+                    ready = True
+                elif size > 0 and stable_rounds >= 6:
+                    ready = True
+                # Complete dans listfullbackups pour ce fichier
+                for entry in full:
+                    if entry.get("file") == best.get("file") and entry.get("complete"):
+                        ready = True
+                        break
+
+                if ready:
                     if progress:
-                        progress(55, f"Backup homedir prêt ({posixpath.basename(path)})")
+                        mb = size / (1024 * 1024) if size > 0 else 0
+                        progress(
+                            55,
+                            f"Backup prêt ({best.get('file')}"
+                            + (f", {mb:.1f} Mo" if mb else "")
+                            + ")",
+                        )
                     return path
-            if progress:
-                pct = min(50, 15 + int((max_wait_seconds - (deadline - time.time())) // 30))
-                progress(pct, "Backup cPanel en cours (home utilisateur)…")
+
+                if progress:
+                    mb = size / (1024 * 1024) if size > 0 else 0
+                    pct = min(54, 15 + elapsed // 20)
+                    progress(
+                        pct,
+                        f"Backup en cours… {best.get('file')} "
+                        + (f"{mb:.1f} Mo " if mb else "")
+                        + f"({elapsed // 60}m{elapsed % 60:02d}s)",
+                    )
+            else:
+                pending = next((e for e in full if e.get("pending")), None)
+                label = pending["file"] if pending else "attente fichier"
+                if progress:
+                    pct = min(54, 15 + elapsed // 20)
+                    progress(
+                        pct,
+                        f"Backup cPanel en cours ({label}) — {elapsed // 60}m{elapsed % 60:02d}s",
+                    )
+
             time.sleep(poll_seconds)
-        if last_path:
+
+        if last_path and last_size > 64 * 1024:
             return last_path
         raise VZoneAPIException(
-            detail="Timeout backup cPanel dans le home utilisateur.",
+            detail=(
+                "Timeout backup cPanel dans le home utilisateur "
+                f"(aucun backup-*.tar.gz détecté après {max_wait_seconds // 60} min)."
+            ),
             code="whm_pkgacct_timeout",
             status_code=504,
         )
@@ -1491,8 +1711,11 @@ class WhmRemoteClient:
                     )
                 if progress:
                     elapsed = int(max_wait_seconds - (deadline - time.time()))
-                    pct = min(50, 15 + elapsed // 30)
-                    progress(pct, f"Packaging en cours ({state or 'RUNNING'})…")
+                    pct = min(54, 15 + elapsed // 20)
+                    progress(
+                        pct,
+                        f"Packaging en cours ({state or 'RUNNING'}) — {elapsed // 60}m{elapsed % 60:02d}s",
+                    )
                 time.sleep(poll_seconds)
             else:
                 raise VZoneAPIException(

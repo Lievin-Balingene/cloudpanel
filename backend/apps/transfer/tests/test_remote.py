@@ -256,6 +256,62 @@ def test_package_and_fetch_uses_homedir_backup_when_ssh_blocked(tmp_path: Path):
     assert out == dest
 
 
+def test_list_full_backups_parses_complete_status():
+    client = WhmRemoteClient("whm.test", token="abc")
+    fake = {
+        "metadata": {"result": 1},
+        "cpanelresult": {
+            "data": [
+                {"file": "backup-8.5.2026_12-00-00_aimek.tar.gz", "status": "Pending", "time": 1},
+                {"file": "backup-8.5.2026_12-10-00_aimek.tar.gz", "status": "Complete", "time": 2},
+            ]
+        },
+    }
+    with patch.object(client, "account_homedir", return_value="/home/aimek"):
+        with patch.object(client, "_request", return_value=fake):
+            rows = client.list_full_backups("aimek")
+    assert len(rows) == 2
+    assert rows[1]["complete"] is True
+    assert rows[1]["path"] == "/home/aimek/backup-8.5.2026_12-10-00_aimek.tar.gz"
+
+
+def test_package_homedir_backup_detects_complete_status():
+    client = WhmRemoteClient("whm.test", token="abc")
+    calls = {"n": 0}
+
+    def fake_full(_user):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            return [
+                {
+                    "file": "backup-new.tar.gz",
+                    "path": "/home/u/backup-new.tar.gz",
+                    "status": "pending",
+                    "complete": False,
+                    "pending": True,
+                    "time": 1,
+                }
+            ]
+        return [
+            {
+                "file": "backup-new.tar.gz",
+                "path": "/home/u/backup-new.tar.gz",
+                "status": "complete",
+                "complete": True,
+                "pending": False,
+                "time": 2,
+            }
+        ]
+
+    with patch.object(client, "list_homedir_backups", return_value=[]):
+        with patch.object(client, "list_full_backups", side_effect=fake_full):
+            with patch.object(client, "list_homedir_archive_files", return_value=[]):
+                with patch.object(client, "_cpanel_uapi", return_value={"result": {"status": 1}}):
+                    with patch("apps.transfer.remote.time.sleep"):
+                        path = client._package_homedir_backup("u", poll_seconds=0, max_wait_seconds=60)
+    assert path == "/home/u/backup-new.tar.gz"
+
+
 def test_check_ssh_access_reports_timeout():
     client = WhmRemoteClient("whm.test", token="secret")
     client.auth_method = "basic-password"
