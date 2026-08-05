@@ -20,6 +20,7 @@ from apps.core.exceptions import VZoneAPIException
 ProgressCb = Callable[[int, str], None]
 
 _SSH_CONNECT_TIMEOUT = 15
+_SSH_FALLBACK_PORT = 722
 
 
 def _egress_ip_hint() -> str:
@@ -795,6 +796,22 @@ class WhmRemoteClient:
                 status_code=400,
             )
 
+    def _ssh_ports_to_probe(self) -> list[int]:
+        """Ports SSH à tester : port configuré puis 722 si différent."""
+        primary = int(self.ssh_port or 22)
+        ports: list[int] = []
+        for p in (primary, _SSH_FALLBACK_PORT):
+            if p not in ports:
+                ports.append(p)
+        return ports
+
+    def _probe_ssh_port(self, port: int) -> bool:
+        try:
+            with socket.create_connection((self.host, port), timeout=8):
+                return True
+        except OSError:
+            return False
+
     def _ssh_client(self):
         """Ouvre une session SSH (fermer avec .close())."""
         self._require_password_auth()
@@ -807,75 +824,94 @@ class WhmRemoteClient:
                 status_code=500,
             ) from exc
 
-        ssh = paramiko.SSHClient()
-        if self.insecure_ssl:
-            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        else:
-            ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
-        try:
-            ssh.connect(
-                self.host,
-                port=self.ssh_port,
-                username=self.user,
-                password=self.token,
-                timeout=_SSH_CONNECT_TIMEOUT,
-                banner_timeout=_SSH_CONNECT_TIMEOUT,
-                auth_timeout=_SSH_CONNECT_TIMEOUT,
-                allow_agent=False,
-                look_for_keys=False,
-            )
-        except Exception as exc:  # noqa: BLE001
-            kind = _classify_ssh_error(exc)
-            hint = _egress_ip_hint()
-            if kind == "timeout":
-                detail = (
-                    f"Connexion SSH impossible (timeout) vers {self.host}:{self.ssh_port}.{hint} "
-                    "Le port SSH doit être ouvert depuis le serveur V-zone vers le WHM source."
-                )
-                code = "whm_ssh_unreachable"
-            elif kind == "refused":
-                detail = (
-                    f"Connexion SSH refusée sur {self.host}:{self.ssh_port}. "
-                    f"Vérifiez le port SSH (pas seulement 2087 WHM).{hint}"
-                )
-                code = "whm_ssh_unreachable"
-            elif kind == "auth":
-                detail = (
-                    f"Authentification SSH refusée pour {self.user}@{self.host}:{self.ssh_port}. "
-                    "Le mot de passe root WHM doit aussi fonctionner en SSH."
-                )
-                code = "whm_ssh_auth_failed"
+        last_exc: Exception | None = None
+        ports_tried: list[int] = []
+        for port in self._ssh_ports_to_probe():
+            ports_tried.append(port)
+            client = paramiko.SSHClient()
+            if self.insecure_ssl:
+                client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             else:
-                detail = f"SSH {self.host}:{self.ssh_port}: {exc}{hint}"
-                code = "whm_ssh_unreachable"
-            raise VZoneAPIException(detail=detail, code=code, status_code=502) from exc
-        return ssh
+                client.set_missing_host_key_policy(paramiko.RejectPolicy())
+            try:
+                client.connect(
+                    self.host,
+                    port=port,
+                    username=self.user,
+                    password=self.token,
+                    timeout=_SSH_CONNECT_TIMEOUT,
+                    banner_timeout=_SSH_CONNECT_TIMEOUT,
+                    auth_timeout=_SSH_CONNECT_TIMEOUT,
+                    allow_agent=False,
+                    look_for_keys=False,
+                )
+                self.ssh_port = port
+                return client
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if _classify_ssh_error(exc) == "auth":
+                    hint = _egress_ip_hint()
+                    raise VZoneAPIException(
+                        detail=(
+                            f"Authentification SSH refusée pour {self.user}@{self.host}:{port}. "
+                            "Le mot de passe root WHM doit aussi fonctionner en SSH."
+                            + hint
+                        ),
+                        code="whm_ssh_auth_failed",
+                        status_code=502,
+                    ) from exc
+                continue
+        hint = _egress_ip_hint()
+        ports_label = ", ".join(str(p) for p in ports_tried)
+        kind = _classify_ssh_error(last_exc) if last_exc else "other"
+        if kind == "timeout":
+            detail = (
+                f"Connexion SSH impossible (timeout) vers {self.host} "
+                f"(ports testés : {ports_label}).{hint} "
+                "Autorisez l'IP sortante V-zone sur le firewall du serveur source."
+            )
+        elif kind == "refused":
+            detail = (
+                f"Connexion SSH refusée sur {self.host} (ports testés : {ports_label})."
+                f"{hint}"
+            )
+        else:
+            detail = f"SSH {self.host} (ports {ports_label}): {last_exc}{hint}"
+        raise VZoneAPIException(detail=detail, code="whm_ssh_unreachable", status_code=502) from last_exc
 
     def check_ssh_access(self) -> dict[str, Any]:
-        """Test rapide SSH (port + auth)."""
+        """Test rapide SSH (port + auth), repli automatique 22 → 722."""
         if self.auth_method != "basic-password":
             return {
                 "ok": False,
                 "message": "Mot de passe root requis pour SCP (API Token seul insuffisant).",
             }
-        try:
-            with socket.create_connection((self.host, self.ssh_port), timeout=8):
-                pass
-        except OSError as exc:
+        configured_port = int(self.ssh_port or 22)
+        reachable: int | None = None
+        for port in self._ssh_ports_to_probe():
+            if self._probe_ssh_port(port):
+                reachable = port
+                break
+        if reachable is None:
+            ports_label = ", ".join(str(p) for p in self._ssh_ports_to_probe())
             return {
                 "ok": False,
                 "message": (
-                    f"Port SSH {self.ssh_port} injoignable sur {self.host}: {exc}."
+                    f"Ports SSH injoignables sur {self.host} ({ports_label})."
                     + _egress_ip_hint()
                 ),
             }
+        self.ssh_port = reachable
         ssh = self._ssh_client()
         try:
             _stdin, stdout, _stderr = ssh.exec_command("echo ok", timeout=10)
             stdout.channel.recv_exit_status()
             if stdout.read().decode().strip() != "ok":
                 return {"ok": False, "message": "SSH connecté mais commande test échouée."}
-            return {"ok": True, "message": f"SSH OK ({self.host}:{self.ssh_port})"}
+            msg = f"SSH OK ({self.host}:{self.ssh_port})"
+            if self.ssh_port != configured_port:
+                msg += f" — repli depuis le port {configured_port}"
+            return {"ok": True, "message": msg, "ssh_port": self.ssh_port}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "message": str(exc)}
         finally:

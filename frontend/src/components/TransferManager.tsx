@@ -178,6 +178,7 @@ export function TransferManager({ title }: { title: string }) {
         count: number;
         auth_method?: string;
         ssh_reachable?: boolean;
+        ssh_port?: number;
         ssh_message?: string;
       }>(
         "/transfer/remote/list/",
@@ -205,7 +206,10 @@ export function TransferManager({ title }: { title: string }) {
         parts.push(`${data.count ?? 0} comptes listés`);
       }
       if (data.ssh_reachable) {
-        parts.push("SSH OK");
+        parts.push(`SSH OK${data.ssh_port && data.ssh_port !== remoteSshPort ? ` (port ${data.ssh_port})` : ""}`);
+        if (data.ssh_port && data.ssh_port !== remoteSshPort) {
+          setRemoteSshPort(data.ssh_port);
+        }
       } else if (data.ssh_message) {
         parts.push(`SSH KO : ${data.ssh_message}`);
         setError(data.ssh_message);
@@ -359,7 +363,7 @@ export function TransferManager({ title }: { title: string }) {
           <p className="text-sm text-cp-muted">
             Identifiant WHM : <strong>API Token</strong> ou <strong>mot de passe root</strong> (recommandé :
             permet le téléchargement SCP du cpmove). Le packaging utilise l&apos;API WHM ; le téléchargement
-            passe par <strong>SSH/SFTP</strong> (port ci-dessous).
+            passe par <strong>SSH/SFTP</strong> (port 22, repli automatique 722).
           </p>
           <div className="grid gap-2 md:grid-cols-2">
             <input
@@ -378,7 +382,7 @@ export function TransferManager({ title }: { title: string }) {
             <input
               className="vz-input"
               type="number"
-              placeholder="port SSH (22)"
+              placeholder="port SSH (22, repli 722)"
               value={remoteSshPort}
               onChange={(e) => setRemoteSshPort(Number(e.target.value) || 22)}
             />

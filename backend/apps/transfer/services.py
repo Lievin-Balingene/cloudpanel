@@ -98,6 +98,7 @@ def remote_list_accounts(
         "auth_method": client.auth_method,
         "ssh_reachable": bool(ssh.get("ok")),
         "ssh_message": ssh.get("message") or "",
+        "ssh_port": client.ssh_port,
     }
 
 

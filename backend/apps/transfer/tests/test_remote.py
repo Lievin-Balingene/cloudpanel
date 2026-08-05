@@ -5,7 +5,7 @@ import base64
 import json
 from io import BytesIO
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import urllib.error
@@ -262,4 +262,32 @@ def test_check_ssh_access_reports_timeout():
     with patch("socket.create_connection", side_effect=TimeoutError("timed out")):
         result = client.check_ssh_access()
     assert result["ok"] is False
-    assert "injoignable" in result["message"].lower() or "timed out" in result["message"].lower()
+    assert "injoignable" in result["message"].lower()
+    assert "722" in result["message"]
+
+
+def test_check_ssh_access_falls_back_to_port_722():
+    client = WhmRemoteClient("whm.test", token="secret", ssh_port=22)
+    client.auth_method = "basic-password"
+
+    def connect_side_effect(addr, timeout=None):
+        _host, port = addr
+        if port == 22:
+            raise TimeoutError("timed out")
+        cm = MagicMock()
+        cm.__enter__ = MagicMock(return_value=None)
+        cm.__exit__ = MagicMock(return_value=False)
+        return cm
+
+    mock_ssh = MagicMock()
+    mock_stdout = MagicMock()
+    mock_stdout.read.return_value = b"ok\n"
+    mock_stdout.channel.recv_exit_status.return_value = 0
+    mock_ssh.exec_command.return_value = (None, mock_stdout, None)
+
+    with patch("socket.create_connection", side_effect=connect_side_effect):
+        with patch.object(client, "_ssh_client", return_value=mock_ssh):
+            result = client.check_ssh_access()
+    assert result["ok"] is True
+    assert client.ssh_port == 722
+    assert "722" in result["message"]
