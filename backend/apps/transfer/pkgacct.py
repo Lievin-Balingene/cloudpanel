@@ -311,7 +311,7 @@ def list_userdata_domains(bundle: CpanelAccountBundle) -> list[dict]:
             {
                 "name": name,
                 "type": domain_type,
-                "documentroot": docroot or ("public_html" if domain_type == "primary" else f"domains/{name}/public_html"),
+                "documentroot": docroot or ("public_html" if domain_type == "primary" else name),
                 "serveralias": kv.get("serveralias") or kv.get("server_alias") or "",
                 "raw": kv,
             }

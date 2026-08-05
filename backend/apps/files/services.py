@@ -69,20 +69,49 @@ class FileEntry:
     is_text: bool
 
 
+# Arborescence standard d'un compte cPanel sous /home/<user>/
+CPANEL_HOME_DIRECTORIES = (
+    "public_html",
+    "private_html",
+    "public_ftp",
+    "mail",
+    "tmp",
+    "logs",
+    "etc",
+    "ssl",
+    "domains",
+    ".trash",
+    ".htpasswds",
+    ".spamassassin",
+    ".cpanel",
+)
+CPANEL_SSL_SUBDIRS = ("certs", "keys", "csrs")
+CPANEL_HOME_SYMLINKS = (
+    ("www", "public_html"),
+    ("access-logs", "logs"),
+)
+
+
 def ensure_cpanel_tree(personal: Path) -> None:
-    """Arborescence type cPanel sous le home du compte."""
+    """Arborescence identique à cPanel sous le home du compte."""
     from apps.domains.fsutils import apply_tree_permissions, secure_directory, try_chown_vzone
 
     personal.mkdir(parents=True, exist_ok=True)
-    for sub in ("public_html", "mail", "tmp", "logs", "etc", "ssl", ".trash", "domains"):
+    for sub in CPANEL_HOME_DIRECTORIES:
         secure_directory(personal / sub, 0o755)
+    for sub in CPANEL_SSL_SUBDIRS:
+        secure_directory(personal / "ssl" / sub, 0o711)
     secure_directory(personal / "public_html" / "cgi-bin", 0o755)
-    www = personal / "www"
-    if not www.exists() and not www.is_symlink():
+    secure_directory(personal / "public_html" / ".well-known", 0o755)
+    for link_name, target in CPANEL_HOME_SYMLINKS:
+        link = personal / link_name
+        if link.exists() or link.is_symlink():
+            continue
         try:
-            www.symlink_to("public_html")
+            link.symlink_to(target)
         except OSError:
-            secure_directory(www, 0o755)
+            if link_name == "www":
+                secure_directory(link, 0o755)
     apply_tree_permissions(personal / "public_html", dir_mode=0o755, file_mode=0o644)
     try_chown_vzone(personal)
 

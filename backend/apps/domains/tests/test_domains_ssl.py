@@ -117,8 +117,7 @@ def test_subdomain_dns_without_parent_fk(tmp_path, settings):
     assert parent.dns_zone_id
     assert parent.dns_zone.records.filter(record_type="A", name="app").exists()
     assert sub.dns_zone_id == parent.dns_zone_id
-    assert "public_html" in sub.document_root.replace("\\", "/")
-    assert sub.document_root.replace("\\", "/").endswith("/public_html/app")
+    assert sub.document_root.replace("\\", "/").endswith("/app.apex-heal.test")
     assert Path(sub.document_root).is_dir()
     assert (Path(sub.document_root) / "index.html").is_file()
 
@@ -202,7 +201,7 @@ def test_addon_docroot_and_app_priority(tmp_path, settings):
     addon = create_domain(
         name="addon-app.test", owner=owner, domain_type=Domain.DomainType.ADDON
     )
-    assert "domains/addon-app.test/public_html" in addon.document_root.replace("\\", "/")
+    assert addon.document_root.replace("\\", "/").endswith("/addon-app.test")
     assert Path(addon.document_root).is_dir()
 
     backend = resolve_domain_backend(addon)

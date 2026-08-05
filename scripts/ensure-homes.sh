@@ -37,9 +37,12 @@ fi
 
 ensure_cpanel_home() {
   local home="$1"
-  mkdir -p "${home}"/{public_html/cgi-bin,mail,tmp,logs,etc,ssl,.trash,domains}
+  mkdir -p "${home}"/{public_html/cgi-bin,public_html/.well-known,private_html,public_ftp,mail,tmp,logs,etc,ssl/{certs,keys,csrs},domains,.trash,.htpasswds,.spamassassin,.cpanel}
   if [[ ! -e "${home}/www" ]]; then
     ln -sfn public_html "${home}/www"
+  fi
+  if [[ ! -e "${home}/access-logs" ]]; then
+    ln -sfn logs "${home}/access-logs"
   fi
   chmod 755 "${home}" "${home}"/public_html 2>/dev/null || true
 }

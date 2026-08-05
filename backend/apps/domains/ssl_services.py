@@ -425,7 +425,35 @@ def persist_files(domain: Domain, material: CertificateMaterial) -> Path:
     (target / "cert.pem").write_text(material.certificate_pem, encoding="utf-8")
     (target / "privkey.pem").write_text(material.private_key_pem, encoding="utf-8")
     (target / "fullchain.pem").write_text(material.chain_pem, encoding="utf-8")
+    mirror_ssl_to_cpanel_home(domain)
     return target
+
+
+def mirror_ssl_to_cpanel_home(domain: Domain) -> None:
+    """Copie les certificats dans ~/ssl/certs et ~/ssl/keys (layout cPanel)."""
+    from apps.files.services import ensure_cpanel_tree, personal_home
+
+    try:
+        storage = ssl_storage_root() / domain.name
+        fullchain = storage / "fullchain.pem"
+        privkey = storage / "privkey.pem"
+        if not fullchain.is_file() or not privkey.is_file():
+            return
+        home = personal_home(domain.owner)
+        ensure_cpanel_tree(home)
+        safe_name = domain.name.replace(".", "_")
+        certs_dir = home / "ssl" / "certs"
+        keys_dir = home / "ssl" / "keys"
+        certs_dir.mkdir(parents=True, exist_ok=True)
+        keys_dir.mkdir(parents=True, exist_ok=True)
+        cert_dest = certs_dir / f"{safe_name}.crt"
+        key_dest = keys_dir / f"{safe_name}.key"
+        cert_dest.write_text(fullchain.read_text(encoding="utf-8"), encoding="utf-8")
+        key_dest.write_text(privkey.read_text(encoding="utf-8"), encoding="utf-8")
+        cert_dest.chmod(0o644)
+        key_dest.chmod(0o600)
+    except OSError as exc:
+        logger.warning("Miroir SSL cPanel home pour %s: %s", domain.name, exc)
 
 
 @transaction.atomic

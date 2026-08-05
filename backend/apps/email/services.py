@@ -79,25 +79,26 @@ def mail_storage_root() -> Path:
 
 def mailbox_maildir(owner: User, address: str) -> Path:
     """
-    Maildir virtuel sous /var/mail/vhosts/<domaine>/<local>/ (owned vmail).
-    Évite les échecs Roundcube/IMAP quand /home/<user> n'est pas traversable par vmail.
+    Maildir style cPanel : ~/mail/<domaine>/<local>/{cur,new,tmp}.
+    Override possible via VZONE_MAIL_HOME_ROOT (chemin absolu hors home).
     """
     local, _, domain = address.partition("@")
-    base = Path(
-        getattr(settings, "VZONE_MAIL_HOME_ROOT", None) or "/var/mail/vhosts"
-    )
-    path = base / domain.lower() / local.lower()
+    custom_root = (getattr(settings, "VZONE_MAIL_HOME_ROOT", "") or "").strip()
+    if custom_root and custom_root.lower() not in {"cpanel", "home"}:
+        path = Path(custom_root) / domain.lower() / local.lower()
+    else:
+        user_home(owner)
+        path = personal_home(owner) / "mail" / domain.lower() / local.lower()
     try:
         path.mkdir(parents=True, exist_ok=True)
         for sub in ("cur", "new", "tmp"):
             (path / sub).mkdir(exist_ok=True)
-    except OSError:
-        # Fallback style cPanel si /var/mail/vhosts non accessible
-        user_home(owner)
-        path = personal_home(owner) / "mail" / domain.lower() / local.lower()
-        path.mkdir(parents=True, exist_ok=True)
-        for sub in ("cur", "new", "tmp"):
-            (path / sub).mkdir(exist_ok=True)
+    except OSError as exc:
+        raise VZoneAPIException(
+            detail=f"Impossible de créer le Maildir {path}: {exc}",
+            code="maildir_unavailable",
+            status_code=500,
+        ) from exc
     _chown_vmail(path)
     _ensure_vmail_traverse(path)
     return path
@@ -530,16 +531,11 @@ def write_mail_maps() -> Path:
         "mail_domain", "mail_domain__owner"
     ):
         maildir = Path(box.maildir) if box.maildir else None
-        # Migrer hors de /home/… vers /var/mail/vhosts si possible (auth Roundcube)
-        needs_new = (
-            maildir is None
-            or not maildir.exists()
-            or "/home/" in str(maildir).replace("\\", "/")
-            or "vhosts" not in str(maildir).replace("\\", "/")
-        )
+        expected = mailbox_maildir(box.mail_domain.owner, box.address)
+        needs_new = maildir is None or not maildir.exists() or maildir.resolve() != expected.resolve()
         if needs_new:
-            new_path = mailbox_maildir(box.mail_domain.owner, box.address)
-            # Copier le contenu existant si on migre
+            new_path = expected
+            # Copier le contenu existant si on migre depuis un ancien chemin
             if maildir and maildir.exists() and new_path.resolve() != maildir.resolve():
                 try:
                     for sub in ("cur", "new", "tmp"):
