@@ -1,11 +1,14 @@
 """Tests client WHM remote (sans réseau)."""
 from __future__ import annotations
 
+import base64
 import json
+from io import BytesIO
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
+import urllib.error
 
 from apps.core.exceptions import VZoneAPIException
 from apps.transfer.remote import WhmRemoteClient
@@ -57,4 +60,52 @@ def test_download_rejects_json_error(tmp_path: Path):
     with patch("urllib.request.urlopen", return_value=FakeResp()):
         with pytest.raises(VZoneAPIException) as exc:
             client._stream_download("https://whm.test:2087/x", dest)
-    assert "refusé" in str(exc.value.detail).lower() or "no file" in str(exc.value.detail).lower()
+    detail = str(exc.value.detail).lower()
+    assert "no file" in detail or "refus" in detail or "trop petite" in detail or "json" in detail
+
+
+def test_auth_falls_back_to_basic_password():
+    """Si Authorization: whm échoue en 403, Basic password doit réussir."""
+    client = WhmRemoteClient("whm.test", user="root", token="Tempo2025@", insecure_ssl=True)
+    calls: list[str] = []
+
+    def fake_urlopen(req, timeout=None, context=None):
+        auth = req.get_header("Authorization") or ""
+        calls.append(auth)
+        if auth.startswith("whm ") or auth.startswith("WHM "):
+            err = urllib.error.HTTPError(
+                url=req.full_url,
+                code=403,
+                msg="Forbidden",
+                hdrs=None,
+                fp=BytesIO(b"denied"),
+            )
+            raise err
+
+        expected = "Basic " + base64.b64encode(b"root:Tempo2025@").decode("ascii")
+        assert auth == expected
+
+        class Ok:
+            def read(self):
+                return json.dumps({"metadata": {"result": 1}, "data": {"version": "128"}}).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        return Ok()
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        data = client.ensure_auth()
+    assert client.auth_method == "basic-password"
+    assert data["metadata"]["result"] == 1
+    assert any(c.startswith("Basic ") for c in calls)
+
+
+def test_auth_candidates_include_basic_and_whm():
+    c = WhmRemoteClient("h", user="root", token="secret")
+    names = [n for n, _ in c._auth_candidates()]
+    assert "whm-token" in names
+    assert "basic-password" in names

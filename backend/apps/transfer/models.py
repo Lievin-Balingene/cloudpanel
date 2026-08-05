@@ -46,7 +46,7 @@ class TransferJob(models.Model):
     remote_port = models.PositiveIntegerField(default=2087)
     remote_user = models.CharField(max_length=64, blank=True, default="")
     # Token stocké uniquement le temps du job (effacé à la fin)
-    remote_token = models.CharField(max_length=512, blank=True, default="")
+    remote_token = models.CharField(max_length=4096, blank=True, default="")
     remote_username = models.CharField(
         max_length=32,
         blank=True,

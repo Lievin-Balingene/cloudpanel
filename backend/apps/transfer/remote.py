@@ -1,7 +1,9 @@
 """Client API WHM distant (Transfer Tool) — packaging + téléchargement cpmove."""
 from __future__ import annotations
 
+import base64
 import json
+import re
 import ssl
 import time
 import urllib.error
@@ -16,6 +18,15 @@ ProgressCb = Callable[[int, str], None]
 
 
 class WhmRemoteClient:
+    """
+    Client WHM API 1.
+
+    Accepte dans le champ « token » :
+    - un API Token WHM (Manage API Tokens)
+    - un access hash legacy (sans retours à la ligne)
+    - le mot de passe root / reseller (auth Basic HTTP)
+    """
+
     def __init__(
         self,
         host: str,
@@ -42,6 +53,8 @@ class WhmRemoteClient:
         self.token = token.strip()
         self.insecure_ssl = insecure_ssl
         self.timeout = timeout
+        self._auth_header_value: str | None = None
+        self.auth_method: str = ""
 
     def _ssl_context(self) -> ssl.SSLContext | None:
         if self.insecure_ssl:
@@ -55,26 +68,124 @@ class WhmRemoteClient:
         query = urllib.parse.urlencode(q)
         return f"https://{self.host}:{self.port}/json-api/{function}?{query}"
 
-    def _auth_header(self) -> str:
-        return f"whm {self.user}:{self.token}"
+    def _auth_candidates(self) -> list[tuple[str, str]]:
+        """(méthode, valeur Authorization) — ordre : token, hash aplati, Basic password."""
+        secret = self.token
+        flat = re.sub(r"\s+", "", secret)
+        out: list[tuple[str, str]] = []
+        seen: set[str] = set()
 
-    def _request(
+        def add(name: str, header: str) -> None:
+            if header and header not in seen:
+                seen.add(header)
+                out.append((name, header))
+
+        # API Token / Access Hash (docs cPanel)
+        add("whm-token", f"whm {self.user}:{secret}")
+        if flat != secret:
+            add("whm-token-flat", f"whm {self.user}:{flat}")
+        add("WHM-hash", f"WHM {self.user}:{secret}")
+        if flat != secret:
+            add("WHM-hash-flat", f"WHM {self.user}:{flat}")
+        # Username + password (Basic) — ce que beaucoup d'admins collent dans le champ
+        raw = f"{self.user}:{secret}".encode("utf-8")
+        add("basic-password", "Basic " + base64.b64encode(raw).decode("ascii"))
+        return out
+
+    def _auth_header(self) -> str:
+        if not self._auth_header_value:
+            self.ensure_auth()
+        assert self._auth_header_value is not None
+        return self._auth_header_value
+
+    def ensure_auth(self) -> dict:
+        """Probe version() avec chaque schéma d'auth jusqu'à succès."""
+        if self._auth_header_value:
+            try:
+                return self._request_once("version")
+            except VZoneAPIException:
+                self._auth_header_value = None
+                self.auth_method = ""
+
+        if not self.token:
+            raise VZoneAPIException(
+                detail=(
+                    "Identifiant WHM requis : API Token (WHM → Development → Manage API Tokens) "
+                    "ou mot de passe root/reseller."
+                ),
+                code="whm_token_required",
+                status_code=400,
+            )
+
+        auth_errors: list[str] = []
+        last_non_auth: VZoneAPIException | None = None
+
+        for method, header in self._auth_candidates():
+            self._auth_header_value = header
+            self.auth_method = method
+            try:
+                data = self._request_once("version", allow_auth_retry=False)
+                return data
+            except VZoneAPIException as exc:
+                exc_code = getattr(exc, "default_code", None) or getattr(exc, "code", "") or ""
+                if exc_code == "whm_auth_failed":
+                    auth_errors.append(method)
+                    self._auth_header_value = None
+                    self.auth_method = ""
+                    continue
+                # Autre erreur HTTP/API : l'auth a probablement fonctionné
+                last_non_auth = exc
+                # Garder l'auth qui a passé le 401/403
+                if method.startswith("basic"):
+                    # version() a parfois un corps atypique — retenter listaccts
+                    try:
+                        return self._request_once("listaccts", allow_auth_retry=False)
+                    except VZoneAPIException as exc2:
+                        code2 = getattr(exc2, "default_code", None) or getattr(exc2, "code", "") or ""
+                        if code2 == "whm_auth_failed":
+                            auth_errors.append(method)
+                            self._auth_header_value = None
+                            self.auth_method = ""
+                            continue
+                        raise
+                raise
+
+        detail = (
+            "Authentification WHM refusée (HTTP 401/403). "
+            "Essayé : API Token (Authorization: whm), access hash, et mot de passe (Basic). "
+            "Vérifiez user/root, le secret, le port 2087, et que l'API n'est pas bloquée "
+            "(2FA sur password → activer « API requests » dans Security Policies)."
+        )
+        if auth_errors:
+            detail += f" Méthodes tentées : {', '.join(auth_errors)}."
+        if last_non_auth:
+            raise last_non_auth
+        raise VZoneAPIException(
+            detail=detail,
+            code="whm_auth_failed",
+            status_code=502,
+        )
+
+    def _request_once(
         self,
         function: str,
         params: dict[str, Any] | None = None,
         *,
         timeout: int | None = None,
+        allow_auth_retry: bool = True,
     ) -> dict:
-        if not self.token:
-            raise VZoneAPIException(
-                detail="Token API WHM requis (pas le mot de passe root). "
-                "WHM → Development → Manage API Tokens.",
-                code="whm_token_required",
-                status_code=400,
-            )
+        if not self._auth_header_value:
+            if allow_auth_retry:
+                self.ensure_auth()
+            else:
+                raise VZoneAPIException(
+                    detail="Auth WHM non initialisée.",
+                    code="whm_auth_failed",
+                    status_code=502,
+                )
         url = self._url(function, params)
         req = urllib.request.Request(url, method="GET")
-        req.add_header("Authorization", self._auth_header())
+        req.add_header("Authorization", self._auth_header_value or "")
         try:
             with urllib.request.urlopen(
                 req,
@@ -88,7 +199,7 @@ class WhmRemoteClient:
                 raise VZoneAPIException(
                     detail=(
                         f"Authentification WHM refusée (HTTP {exc.code}). "
-                        "Utilisez un API Token WHM (root), pas le mot de passe du compte."
+                        "Token API, access hash ou mot de passe invalide."
                     ),
                     code="whm_auth_failed",
                     status_code=502,
@@ -116,7 +227,15 @@ class WhmRemoteClient:
             return {"data": data}
         meta = data.get("metadata") or {}
         if meta.get("result") in {0, "0", False} and function not in {"version"}:
-            reason = meta.get("reason") or meta.get("output") or "échec WHM"
+            reason = str(meta.get("reason") or meta.get("output") or "échec WHM")
+            # Certains WHM renvoient result=0 + "Permission denied" / auth dans le JSON
+            low = reason.lower()
+            if any(x in low for x in ("permission denied", "auth", "login", "token", "password")):
+                raise VZoneAPIException(
+                    detail=f"Authentification WHM refusée: {reason}",
+                    code="whm_auth_failed",
+                    status_code=502,
+                )
             raise VZoneAPIException(
                 detail=f"WHM {function}: {reason}",
                 code="whm_api_error",
@@ -124,8 +243,26 @@ class WhmRemoteClient:
             )
         return data
 
+    def _request(
+        self,
+        function: str,
+        params: dict[str, Any] | None = None,
+        *,
+        timeout: int | None = None,
+    ) -> dict:
+        if not self.token:
+            raise VZoneAPIException(
+                detail=(
+                    "Identifiant WHM requis : API Token ou mot de passe root/reseller."
+                ),
+                code="whm_token_required",
+                status_code=400,
+            )
+        self.ensure_auth()
+        return self._request_once(function, params, timeout=timeout)
+
     def version(self) -> dict:
-        return self._request("version")
+        return self.ensure_auth()
 
     def list_accounts(self) -> list[dict]:
         data = self._request("listaccts")

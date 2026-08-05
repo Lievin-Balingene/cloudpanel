@@ -82,7 +82,12 @@ def remote_list_accounts(
     client = WhmRemoteClient(host, port=port, user=user, token=token, insecure_ssl=insecure_ssl)
     ver = client.version()
     accounts = client.list_accounts()
-    return {"version": ver, "accounts": accounts, "count": len(accounts)}
+    return {
+        "version": ver,
+        "accounts": accounts,
+        "count": len(accounts),
+        "auth_method": client.auth_method,
+    }
 
 
 def start_job_async(job_id: int) -> None:
@@ -132,6 +137,7 @@ def _run_job(job_id: int) -> None:
                 client.version()
             except VZoneAPIException:
                 raise
+            log(f"WHM authentifié ({client.auth_method or 'ok'}) — {job.remote_host}:{job.remote_port}")
             dest = transfer_root() / "uploads" / f"remote-{job.id}-cpmove-{remote_user}.tar.gz"
 
             def remote_progress(pct: int, step: str) -> None:

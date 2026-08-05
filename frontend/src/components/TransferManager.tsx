@@ -89,6 +89,7 @@ export function TransferManager({ title }: { title: string }) {
   const [insecureSsl, setInsecureSsl] = useState(true);
   const [remoteAccounts, setRemoteAccounts] = useState<RemoteAccount[]>([]);
   const [selectedRemote, setSelectedRemote] = useState("");
+  const [remoteAuthInfo, setRemoteAuthInfo] = useState<string | null>(null);
 
   const { data: jobs } = useQuery({
     queryKey: ["transfer-jobs"],
@@ -171,21 +172,34 @@ export function TransferManager({ title }: { title: string }) {
 
   const listRemote = useMutation({
     mutationFn: () =>
-      apiRequest<{ accounts: RemoteAccount[]; count: number }>("/transfer/remote/list/", {
-        method: "POST",
-        body: JSON.stringify({
-          host: remoteHost,
-          port: remotePort,
-          user: remoteUser,
-          token: remoteToken,
-          insecure_ssl: insecureSsl,
-        }),
-      }),
+      apiRequest<{ accounts: RemoteAccount[]; count: number; auth_method?: string }>(
+        "/transfer/remote/list/",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            host: remoteHost,
+            port: remotePort,
+            user: remoteUser,
+            token: remoteToken,
+            insecure_ssl: insecureSsl,
+          }),
+        },
+      ),
     onSuccess: (data) => {
       setError(null);
       setRemoteAccounts(data.accounts || []);
+      if (data.auth_method === "basic-password") {
+        setRemoteAuthInfo(`Connecté via mot de passe (${data.count ?? 0} comptes)`);
+      } else if (data.auth_method) {
+        setRemoteAuthInfo(`Connecté via API Token/hash (${data.count ?? 0} comptes)`);
+      } else {
+        setRemoteAuthInfo(`${data.count ?? 0} comptes listés`);
+      }
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => {
+      setRemoteAuthInfo(null);
+      setError(err.message);
+    },
   });
 
   const startRemote = useMutation({
@@ -193,7 +207,7 @@ export function TransferManager({ title }: { title: string }) {
       const remoteUserName = (selectedRemote || username).trim();
       if (!remoteUserName) throw new Error("Sélectionnez un compte dans la liste ou saisissez le username.");
       if (!remoteHost.trim() || !remoteToken.trim()) {
-        throw new Error("Host WHM et API Token sont requis.");
+        throw new Error("Host WHM et token/mot de passe sont requis.");
       }
       return apiRequest<TransferJob>("/transfer/remote/start/", {
         method: "POST",
@@ -326,10 +340,10 @@ export function TransferManager({ title }: { title: string }) {
         <div className="vz-panel space-y-3 p-4">
           <h2 className="text-sm font-semibold uppercase text-cp-muted">WHM distant</h2>
           <p className="text-sm text-cp-muted">
-            Connectez-vous avec un <strong>API Token WHM</strong> (pas le mot de passe root) : WHM →
-            Development → Manage API Tokens. Le transfert lance{" "}
+            Identifiant WHM : <strong>API Token</strong> (WHM → Development → Manage API Tokens){" "}
+            <em>ou</em> mot de passe root/reseller. Le transfert lance{" "}
             <code className="text-xs">pkgacct</code> sur la source, télécharge le{" "}
-            <code className="text-xs">cpmove</code>, puis restaure le compte complet sur V-zone.
+            <code className="text-xs">cpmove</code>, puis restaure le compte sur V-zone.
           </p>
           <div className="grid gap-2 md:grid-cols-2">
             <input
@@ -354,7 +368,7 @@ export function TransferManager({ title }: { title: string }) {
             <input
               className="vz-input"
               type="password"
-              placeholder="API Token WHM (pas le mot de passe)"
+              placeholder="API Token ou mot de passe WHM"
               value={remoteToken}
               onChange={(e) => setRemoteToken(e.target.value)}
               autoComplete="off"
@@ -372,6 +386,9 @@ export function TransferManager({ title }: { title: string }) {
           >
             {listRemote.isPending ? "Connexion…" : "Lister les comptes"}
           </button>
+          {remoteAuthInfo && !error && (
+            <p className="text-sm text-emerald-700">{remoteAuthInfo}</p>
+          )}
           {remoteAccounts.length > 0 && (
             <div className="max-h-64 overflow-auto rounded border border-cp-border">
               <table className="w-full text-left text-sm">
@@ -481,8 +498,8 @@ export function TransferManager({ title }: { title: string }) {
           <div className="space-y-2">
             {!canStartRemote && (
               <p className="text-xs text-amber-700">
-                Pour activer le transfert : host WHM + API Token + compte (cliquez une ligne ou
-                saisissez le username).
+                Pour activer le transfert : host WHM + token/mot de passe + compte (cliquez une ligne
+                ou saisissez le username).
               </p>
             )}
             <button
