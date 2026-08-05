@@ -54,6 +54,7 @@ class TransferJob(models.Model):
         help_text="Username cPanel distant à transférer.",
     )
     remote_insecure_ssl = models.BooleanField(default=False)
+    remote_ssh_port = models.PositiveIntegerField(default=22)
 
     # Options (composants)
     options = models.JSONField(

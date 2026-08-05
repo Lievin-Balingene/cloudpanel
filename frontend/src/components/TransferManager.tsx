@@ -84,6 +84,7 @@ export function TransferManager({ title }: { title: string }) {
 
   const [remoteHost, setRemoteHost] = useState("");
   const [remotePort, setRemotePort] = useState(2087);
+  const [remoteSshPort, setRemoteSshPort] = useState(22);
   const [remoteUser, setRemoteUser] = useState("root");
   const [remoteToken, setRemoteToken] = useState("");
   const [insecureSsl, setInsecureSsl] = useState(true);
@@ -182,6 +183,7 @@ export function TransferManager({ title }: { title: string }) {
             user: remoteUser,
             token: remoteToken,
             insecure_ssl: insecureSsl,
+            ssh_port: remoteSshPort,
           }),
         },
       ),
@@ -217,6 +219,7 @@ export function TransferManager({ title }: { title: string }) {
           user: remoteUser,
           token: remoteToken.trim(),
           insecure_ssl: insecureSsl,
+          ssh_port: remoteSshPort,
           remote_username: remoteUserName,
           username: username.trim() || remoteUserName,
           email,
@@ -340,10 +343,9 @@ export function TransferManager({ title }: { title: string }) {
         <div className="vz-panel space-y-3 p-4">
           <h2 className="text-sm font-semibold uppercase text-cp-muted">WHM distant</h2>
           <p className="text-sm text-cp-muted">
-            Identifiant WHM : <strong>API Token</strong> (WHM → Development → Manage API Tokens){" "}
-            <em>ou</em> mot de passe root/reseller. Le transfert lance{" "}
-            <code className="text-xs">pkgacct</code> sur la source, télécharge le{" "}
-            <code className="text-xs">cpmove</code>, puis restaure le compte sur V-zone.
+            Identifiant WHM : <strong>API Token</strong> ou <strong>mot de passe root</strong> (recommandé :
+            permet le téléchargement SCP du cpmove). Le packaging utilise l&apos;API WHM ; le téléchargement
+            passe par <strong>SSH/SFTP</strong> (port ci-dessous).
           </p>
           <div className="grid gap-2 md:grid-cols-2">
             <input
@@ -355,9 +357,16 @@ export function TransferManager({ title }: { title: string }) {
             <input
               className="vz-input"
               type="number"
-              placeholder="port (2087)"
+              placeholder="port WHM API (2087)"
               value={remotePort}
               onChange={(e) => setRemotePort(Number(e.target.value) || 2087)}
+            />
+            <input
+              className="vz-input"
+              type="number"
+              placeholder="port SSH (22)"
+              value={remoteSshPort}
+              onChange={(e) => setRemoteSshPort(Number(e.target.value) || 22)}
             />
             <input
               className="vz-input"
@@ -366,9 +375,9 @@ export function TransferManager({ title }: { title: string }) {
               onChange={(e) => setRemoteUser(e.target.value)}
             />
             <input
-              className="vz-input"
+              className="vz-input md:col-span-2"
               type="password"
-              placeholder="API Token ou mot de passe WHM"
+              placeholder="API Token ou mot de passe root WHM/SSH"
               value={remoteToken}
               onChange={(e) => setRemoteToken(e.target.value)}
               autoComplete="off"

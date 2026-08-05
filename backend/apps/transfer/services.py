@@ -78,8 +78,16 @@ def remote_list_accounts(
     user: str,
     token: str,
     insecure_ssl: bool = False,
+    ssh_port: int = 22,
 ) -> dict:
-    client = WhmRemoteClient(host, port=port, user=user, token=token, insecure_ssl=insecure_ssl)
+    client = WhmRemoteClient(
+        host,
+        port=port,
+        user=user,
+        token=token,
+        insecure_ssl=insecure_ssl,
+        ssh_port=ssh_port,
+    )
     ver = client.version()
     accounts = client.list_accounts()
     return {
@@ -123,6 +131,7 @@ def _run_job(job_id: int) -> None:
                 user=job.remote_user or "root",
                 token=job.remote_token,
                 insecure_ssl=job.remote_insecure_ssl,
+                ssh_port=getattr(job, "remote_ssh_port", None) or 22,
                 timeout=180,
             )
             remote_user = (job.remote_username or job.username or "").strip()
@@ -265,6 +274,7 @@ def create_remote_job(
     package_name: str = "",
     overwrite: bool = False,
     insecure_ssl: bool = False,
+    ssh_port: int = 22,
     options: dict | None = None,
 ) -> TransferJob:
     job = TransferJob.objects.create(
@@ -281,6 +291,7 @@ def create_remote_job(
         remote_user=whm_user.strip() or "root",
         remote_token=token.strip(),
         remote_insecure_ssl=insecure_ssl,
+        remote_ssh_port=int(ssh_port or 22),
         options={**default_options(), **(options or {})},
         status=TransferJob.Status.PENDING,
         current_step="En file d'attente",

@@ -183,6 +183,7 @@ class TransferRemoteListView(APIView):
             user=data.get("user") or "root",
             token=data["token"],
             insecure_ssl=bool(data.get("insecure_ssl")),
+            ssh_port=data.get("ssh_port") or 22,
         )
         return Response({"success": True, "data": result})
 
@@ -206,6 +207,7 @@ class TransferRemoteStartView(APIView):
             package_name=data.get("package_name") or "",
             overwrite=bool(data.get("overwrite")),
             insecure_ssl=bool(data.get("insecure_ssl")),
+            ssh_port=data.get("ssh_port") or 22,
             options=data.get("options"),
         )
         return Response({"success": True, "data": _job_payload(job)}, status=status.HTTP_201_CREATED)

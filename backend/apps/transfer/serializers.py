@@ -28,6 +28,7 @@ class RemoteConnectSerializer(serializers.Serializer):
     user = serializers.CharField(required=False, default="root", max_length=64)
     token = serializers.CharField(max_length=2048)
     insecure_ssl = serializers.BooleanField(required=False, default=False)
+    ssh_port = serializers.IntegerField(required=False, default=22, min_value=1, max_value=65535)
 
 
 class RemoteTransferSerializer(RemoteConnectSerializer):

@@ -109,3 +109,42 @@ def test_auth_candidates_include_basic_and_whm():
     names = [n for n, _ in c._auth_candidates()]
     assert "whm-token" in names
     assert "basic-password" in names
+
+
+def test_resolve_cpmove_paths_from_api():
+    client = WhmRemoteClient("whm.test", token="abc")
+    client._auth_header_value = "whm root:abc"
+    client.auth_method = "whm-token"
+    fake = {
+        "metadata": {"result": 1},
+        "data": {
+            "quickrestore_files": [
+                {"user": "alice", "file": "cpmove-alice.tar.gz", "path": "/home"},
+                {"user": "bob", "file": "cpmove-bob.tar.gz", "path": "/home2"},
+            ]
+        },
+    }
+    with patch.object(client, "_request", return_value=fake):
+        paths = client.resolve_cpmove_paths("alice")
+    assert paths[0] == "/home/cpmove-alice.tar.gz"
+    assert "/home/cpmove-alice.tar.gz" in paths
+
+
+def test_download_cpmove_uses_scp_when_password_auth(tmp_path: Path):
+    client = WhmRemoteClient(
+        "whm.test",
+        user="root",
+        token="secret",
+        insecure_ssl=True,
+        ssh_port=2222,
+    )
+    client._auth_header_value = "Basic x"
+    client.auth_method = "basic-password"
+    dest = tmp_path / "cpmove.tar.gz"
+    dest.write_bytes(b"\x1f\x8b" + b"x" * 128)
+
+    with patch.object(client, "resolve_cpmove_paths", return_value=["/home/cpmove-u.tar.gz"]):
+        with patch.object(client, "_scp_download_candidates", return_value=130) as scp:
+            out = client.download_cpmove("u", dest)
+    scp.assert_called_once()
+    assert out == dest
