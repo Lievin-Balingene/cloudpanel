@@ -18,7 +18,6 @@ import {
   Pencil,
   Download,
   Shield,
-  X,
 } from "lucide-react";
 import { apiRequest, ApiClientError } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
