@@ -11,7 +11,9 @@ REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VERSION="$(tr -d '[:space:]' < "${REPO_DIR}/VERSION")"
 
 echo "[vzone] Mise à jour vers ${VERSION}"
-systemctl stop vzone-api vzone-worker vzone-beat 2>/dev/null || true
+# Ne pas couper l'API pendant tout le build frontend (sinon login = 502).
+# On redémarre seulement après les migrations backend.
+KEEP_API_UP=1
 
 # Ne jamais supprimer frontend/dist via --delete : il n'est pas dans le dépôt git.
 # Sinon un échec migrate/pip laisse le panel en 404 (index.html absent).
@@ -32,9 +34,13 @@ set -a; source /etc/vzone/vzone.env; set +a
 export DJANGO_SETTINGS_MODULE=vzone.settings.production
 pip install -r "${VZONE_ROOT}/backend/requirements/prod.txt" || BACKEND_OK=0
 cd "${VZONE_ROOT}/backend"
+# Court redémarrage API uniquement pour appliquer le nouveau code + migrations
+systemctl stop vzone-api vzone-worker vzone-beat 2>/dev/null || true
 python manage.py migrate --noinput || BACKEND_OK=0
 python manage.py collectstatic --noinput || true
 deactivate
+systemctl start vzone-api vzone-worker vzone-beat 2>/dev/null || true
+KEEP_API_UP=1
 
 # Frontend : toujours reconstruire (évite 404 nginx sur toutes les pages)
 cd "${VZONE_ROOT}/frontend"
