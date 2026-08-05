@@ -3,6 +3,7 @@ from __future__ import annotations
 from django.urls import path
 
 from apps.server_setup.views import (
+    OlsAdoptView,
     OlsOverviewView,
     OlsReloadView,
     PanelUpdateJobView,
@@ -18,4 +19,5 @@ urlpatterns = [
     path("panel-update/jobs/<str:job_id>/", PanelUpdateJobView.as_view(), name="panel-update-job"),
     path("ols/", OlsOverviewView.as_view(), name="ols-overview"),
     path("ols/reload/", OlsReloadView.as_view(), name="ols-reload"),
+    path("ols/adopt/", OlsAdoptView.as_view(), name="ols-adopt"),
 ]

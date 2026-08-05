@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, Plus, Shield, Trash2 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
@@ -16,6 +16,25 @@ export function DomainsManager({ title }: { title: string }) {
   });
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const { data: olsInfo } = useQuery({
+    queryKey: ["ols-overview"],
+    queryFn: () =>
+      apiRequest<{
+        enabled: boolean;
+        installed: boolean;
+        ready?: boolean;
+        default_engine?: string;
+      }>("/server-setup/ols/").catch(() => ({
+        enabled: false,
+        installed: false,
+        ready: false,
+        default_engine: "nginx",
+      })),
+    staleTime: 60_000,
+  });
+  const olsReady = Boolean(olsInfo?.ready ?? (olsInfo?.enabled && olsInfo?.installed));
+  const preferredEngine = olsReady && olsInfo?.default_engine === "ols" ? "ols" : "nginx";
+
   const [form, setForm] = useState({
     name: "",
     domain_type: "primary",
@@ -33,16 +52,11 @@ export function DomainsManager({ title }: { title: string }) {
     redirect_type: "301",
   });
 
-  const { data: olsInfo } = useQuery({
-    queryKey: ["ols-overview"],
-    queryFn: () =>
-      apiRequest<{ enabled: boolean; installed: boolean }>("/server-setup/ols/").catch(() => ({
-        enabled: false,
-        installed: false,
-      })),
-    staleTime: 60_000,
-  });
-  const olsReady = Boolean(olsInfo?.enabled && olsInfo?.installed);
+  useEffect(() => {
+    setForm((prev) =>
+      prev.web_engine === preferredEngine ? prev : { ...prev, web_engine: preferredEngine },
+    );
+  }, [preferredEngine]);
 
   const selected = useMemo(
     () => domains.find((d) => d.id === selectedId) ?? domains[0] ?? null,
@@ -72,7 +86,7 @@ export function DomainsManager({ title }: { title: string }) {
         domain_type: "primary",
         ipv4_address: form.ipv4_address,
         parent_id: "",
-        web_engine: "nginx",
+        web_engine: preferredEngine,
       });
       void qc.invalidateQueries({ queryKey: ["domains"] });
       void qc.invalidateQueries({ queryKey: ["dns-zones"] });

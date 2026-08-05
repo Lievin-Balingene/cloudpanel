@@ -18,31 +18,26 @@ Internet :80/:443
 - Le challenge ACME `/.well-known/acme-challenge/` reste sur Nginx (avant le proxy OLS).
 - Les apps Python/Node **ignorent** le moteur OLS (toujours proxy Nginx).
 
-## Activation (une fois)
+## Activation
 
-1. Dans `/etc/vzone/vzone.env` :
-
-```bash
-VZONE_OLS_ENABLED=1
-VZONE_OLS_LISTEN=127.0.0.1:8088
-```
-
-2. Installer / mettre à jour :
+Dès qu’OpenLiteSpeed est **installé**, le mode `auto` l’active :
 
 ```bash
-cd /opt/vzone-src && git pull
-sudo bash scripts/install-openlitespeed.sh
-# ou : sudo bash scripts/update.sh  (installe OLS si le flag est à 1)
+sudo bash /opt/vzone-src/scripts/install-openlitespeed.sh
+sudo systemctl restart vzone-api
 ```
 
-3. WHM → **OpenLiteSpeed** : vérifier « Installé » + service actif.
+`/etc/vzone/vzone.env` :
+```bash
+VZONE_OLS_ENABLED=auto   # auto | 1 | 0
+VZONE_OLS_DEFAULT_ENGINE=1
+```
 
-## Utilisation
+## Utilisation (comme cPanel)
 
-- WHM / Client → **Domains** : champ **Web engine**
-  - `Nginx + PHP-FPM` (défaut)
-  - `OpenLiteSpeed` (opt-in, si installé)
-- À la bascule, le vhost Nginx proxifie vers OLS et le handler PHP passe en **LSAPI**.
+- **Nouveaux** domaines / sous-domaines → OpenLiteSpeed par défaut
+- Domaines déjà en Nginx → WHM → OpenLiteSpeed → **Activer OLS sur les domaines**
+- Ou manuellement : Domains → Web engine → OpenLiteSpeed
 
 ## Rollback d’un site
 
@@ -72,7 +67,10 @@ ils seront servis en PHP-FPM tant que le flag est off.
 
 ```bash
 systemctl status lshttpd   # ou lsws
-sudo /usr/local/lsws/bin/lswsctrl fullversion
+cat /usr/local/lsws/VERSION
 sudo nginx -t && systemctl reload nginx
 ls -la /var/lib/vzone/ols/
+# Si l'UI montre encore « Activé: non » après install :
+grep VZONE_OLS /etc/vzone/vzone.env
+sudo systemctl restart vzone-api
 ```

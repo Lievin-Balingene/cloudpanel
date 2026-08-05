@@ -123,8 +123,8 @@ class DomainCreateSerializer(serializers.Serializer):
     notes = serializers.CharField(required=False, allow_blank=True, default="")
     web_engine = serializers.ChoiceField(
         choices=Domain.WebEngine.choices,
-        default=Domain.WebEngine.NGINX,
         required=False,
+        allow_null=True,
     )
 
     def validate_ipv4_address(self, value: str | None) -> str | None:

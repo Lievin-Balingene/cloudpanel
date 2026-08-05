@@ -18,12 +18,34 @@ SAFE_NAME_RE = re.compile(r"[^a-zA-Z0-9._-]+")
 
 
 def ols_enabled() -> bool:
-    return bool(getattr(settings, "VZONE_OLS_ENABLED", False))
+    """
+    auto (défaut) → True si OLS est installé
+    1/true → forcé on
+    0/false → forcé off
+    """
+    raw = str(getattr(settings, "VZONE_OLS_ENABLED", "auto") or "auto").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return ols_installed()
+
+
+def ols_ready() -> bool:
+    return ols_enabled() and ols_installed()
+
+
+def default_web_engine() -> str:
+    """Moteur par défaut pour les nouveaux domaines (style cPanel = OLS si prêt)."""
+    if getattr(settings, "VZONE_OLS_DEFAULT_ENGINE", True) and ols_ready():
+        return Domain.WebEngine.OLS
+    return Domain.WebEngine.NGINX
 
 
 def ols_installed() -> bool:
     marker = Path(getattr(settings, "VZONE_DATA_ROOT", "/var/lib/vzone")) / "ols" / ".installed"
-    binary = Path(getattr(settings, "VZONE_OLS_ROOT", "/usr/local/lsws")) / "bin" / "lswsctrl"
+    root = Path(getattr(settings, "VZONE_OLS_ROOT", "/usr/local/lsws"))
+    binary = root / "bin" / "lswsctrl"
     return marker.is_file() or binary.is_file()
 
 
@@ -100,6 +122,7 @@ def render_vhconf(*, domain: Domain, docroot: str, php_version: str) -> str:
     aliases = ""
     if domain.domain_type in {Domain.DomainType.PRIMARY, Domain.DomainType.ADDON}:
         aliases = f"www.{domain.name}"
+    # docRoot absolu (sous vhRoot = home) — index.html en premier = page « Site prêt »
     return f"""# V-zone OLS vhconf — {domain.name}
 docRoot                   {docroot.rstrip('/')}/
 vhDomain                  {domain.name}
@@ -119,7 +142,7 @@ accesslog /var/lib/vzone/ols/logs/{_safe_vh_name(domain.name)}.access.log {{
 
 index  {{
   useServer               0
-  indexFiles              index.php, index.html, index.htm
+  indexFiles              index.html, index.htm, index.php
 }}
 
 scripthandler  {{
@@ -150,20 +173,43 @@ rewrite  {{
   enable                  1
   autoLoadHtaccess        1
 }}
+
+accessControl  {{
+  allow                   *
+}}
 """
+
+
+def _vh_root_for_domain(domain: Domain, docroot: str) -> str:
+    """vhRoot = home du compte (comme cPanel) ; docRoot reste le dossier du site."""
+    try:
+        from apps.files.services import personal_home
+
+        if domain.owner_id:
+            home = str(personal_home(domain.owner))
+            root = Path(docroot).resolve()
+            home_path = Path(home).resolve()
+            if root == home_path or home_path in root.parents:
+                return home
+    except Exception:  # noqa: BLE001
+        logger.debug("ols vhRoot fallback", exc_info=True)
+    parent = Path(docroot).parent
+    return str(parent) if str(parent) not in {".", ""} else docroot.rstrip("/")
 
 
 def render_virtualhost_block(*, domain: Domain, docroot: str) -> str:
     vh = _safe_vh_name(domain.name)
     conf_path = ols_vhconf_dir() / f"{vh}.conf"
+    vh_root = _vh_root_for_domain(domain, docroot)
     lines = [
         f"virtualhost {vh} {{",
-        f"  vhRoot                  {docroot.rstrip('/')}",
+        f"  vhRoot                  {vh_root}",
         f"  configFile              {conf_path}",
         "  allowSymbolLink         1",
         "  enableScript            1",
         "  restrained              1",
-        "  setUIDMode              0",
+        # 2 = UID du fichier (comme cPanel) — sinon nobody → 404 sur /home/...
+        "  setUIDMode              2",
         "}",
         "",
     ]
@@ -284,7 +330,7 @@ def rebuild_ols_maps() -> int:
 
 
 def reload_ols() -> bool:
-    if not ols_enabled() or not ols_installed():
+    if not ols_installed():
         return False
     helper = Path("/usr/local/sbin/vzone-ols-reload")
     flag = Path(getattr(settings, "VZONE_DATA_ROOT", "/var/lib/vzone")) / "ols" / "reload.requested"
@@ -309,27 +355,65 @@ def reload_ols() -> bool:
     return True
 
 
+def adopt_php_domains_to_ols() -> dict:
+    """Passe tous les domaines PHP/static éligibles en web_engine=ols + resync."""
+    if not ols_ready():
+        return {"ok": False, "error": "OLS non prêt", "updated": 0}
+
+    from apps.domains.vhosts import is_panel_hostname, resolve_domain_backend, sync_all_domain_vhosts
+
+    updated = 0
+    skipped = 0
+    for domain in Domain.objects.select_related("parent", "owner").all():
+        if is_panel_hostname(domain.name):
+            skipped += 1
+            continue
+        if domain.web_engine == Domain.WebEngine.OLS:
+            skipped += 1
+            continue
+        backend = resolve_domain_backend(domain)
+        if backend.mode in {"proxy", "suspended", "panel"}:
+            skipped += 1
+            continue
+        domain.web_engine = Domain.WebEngine.OLS
+        domain.save(update_fields=["web_engine", "updated_at"])
+        updated += 1
+
+    sync_all_domain_vhosts()
+    return {"ok": True, "updated": updated, "skipped": skipped}
+
+
 def ols_overview() -> dict:
     data_root = Path(getattr(settings, "VZONE_DATA_ROOT", "/var/lib/vzone"))
     ols_dir = data_root / "ols"
     vhconf = ols_vhconf_dir()
     count = len(list(vhconf.glob("*.conf"))) if vhconf.is_dir() else 0
-    # exclude default
     count = max(0, count - (1 if (vhconf / "vzoneDefault.conf").is_file() else 0))
+
     version = ""
-    ctrl = Path(getattr(settings, "VZONE_OLS_ROOT", "/usr/local/lsws")) / "bin" / "lswsctrl"
-    if ctrl.is_file():
-        try:
-            proc = subprocess.run(
-                [str(ctrl), "fullversion"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                check=False,
-            )
-            version = (proc.stdout or proc.stderr or "").strip()[:120]
-        except (OSError, subprocess.TimeoutExpired):
-            version = ""
+    root = Path(getattr(settings, "VZONE_OLS_ROOT", "/usr/local/lsws"))
+    for candidate in (root / "VERSION", root / "VERSION.txt"):
+        if candidate.is_file():
+            try:
+                version = candidate.read_text(encoding="utf-8", errors="replace").strip()[:80]
+                break
+            except OSError:
+                pass
+    if not version:
+        lshttpd = root / "bin" / "lshttpd"
+        if lshttpd.is_file():
+            try:
+                proc = subprocess.run(
+                    [str(lshttpd), "-v"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+                version = (proc.stdout or proc.stderr or "").strip().splitlines()[0][:120]
+            except (OSError, subprocess.TimeoutExpired, IndexError):
+                version = ""
+
     active = False
     try:
         proc = subprocess.run(
@@ -352,19 +436,33 @@ def ols_overview() -> dict:
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
         active = False
 
+    ready = ols_ready()
+    mode = str(getattr(settings, "VZONE_OLS_ENABLED", "auto") or "auto")
     return {
         "enabled": ols_enabled(),
+        "enabled_mode": mode,
         "installed": ols_installed(),
+        "ready": ready,
         "active": active,
         "listen": ols_listen(),
-        "version": version,
+        "version": version or ("OpenLiteSpeed" if ols_installed() else ""),
         "vhosts": count,
         "domains_ols": Domain.objects.filter(web_engine=Domain.WebEngine.OLS).count(),
+        "domains_nginx": Domain.objects.filter(web_engine=Domain.WebEngine.NGINX).count(),
+        "default_engine": default_web_engine(),
         "data_dir": str(ols_dir),
         "maps_file": str(ols_maps_file()),
         "hint": (
             None
-            if ols_enabled() and ols_installed()
-            else "Définissez VZONE_OLS_ENABLED=1 puis: sudo bash /opt/vzone-src/scripts/install-openlitespeed.sh"
+            if ready
+            else (
+                "OpenLiteSpeed n'est pas prêt. "
+                "Installez: sudo bash /opt/vzone-src/scripts/install-openlitespeed.sh"
+            )
+        ),
+        "status_message": (
+            "Prêt — les nouveaux domaines utilisent OpenLiteSpeed par défaut (comme cPanel)."
+            if ready
+            else "En attente d'installation ou désactivé."
         ),
     }

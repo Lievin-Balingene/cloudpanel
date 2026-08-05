@@ -244,7 +244,7 @@ def create_domain(
     create_dns_zone: bool = True,
     document_root: str = "",
     notes: str = "",
-    web_engine: str = Domain.WebEngine.NGINX,
+    web_engine: str | None = None,
 ) -> Domain:
     try:
         hostname = normalize_hostname(name)
@@ -295,7 +295,9 @@ def create_domain(
     if not ipv4_address:
         ipv4_address = _default_ipv4()
 
-    engine = (web_engine or Domain.WebEngine.NGINX).strip().lower()
+    from apps.domains.ols_vhosts import default_web_engine, ols_enabled, ols_installed
+
+    engine = (web_engine if web_engine is not None else default_web_engine()).strip().lower()
     if engine not in Domain.WebEngine.values:
         raise VZoneAPIException(
             detail="Moteur web invalide (nginx|ols).",
@@ -303,14 +305,11 @@ def create_domain(
             status_code=400,
         )
     if engine == Domain.WebEngine.OLS:
-        from apps.domains.ols_vhosts import ols_enabled, ols_installed
-
         if not ols_enabled() or not ols_installed():
             raise VZoneAPIException(
                 detail=(
                     "OpenLiteSpeed non disponible. "
-                    "Activez VZONE_OLS_ENABLED=1 et exécutez "
-                    "sudo bash /opt/vzone-src/scripts/install-openlitespeed.sh"
+                    "Exécutez: sudo bash /opt/vzone-src/scripts/install-openlitespeed.sh"
                 ),
                 code="ols_unavailable",
                 status_code=400,

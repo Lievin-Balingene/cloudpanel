@@ -66,7 +66,7 @@ class DomainListCreateView(APIView):
             create_dns_zone=data.get("create_dns_zone", True),
             document_root=data.get("document_root") or "",
             notes=data.get("notes") or "",
-            web_engine=data.get("web_engine") or Domain.WebEngine.NGINX,
+            web_engine=data.get("web_engine"),
         )
         return Response(
             {"success": True, "data": DomainSerializer(domain).data},
@@ -152,6 +152,7 @@ class SubdomainCreateView(APIView):
             parent=parent,
             ipv4_address=serializer.validated_data.get("ipv4_address") or parent.ipv4_address,
             create_dns_zone=False,
+            web_engine=parent.web_engine or None,
         )
         return Response(
             {"success": True, "data": DomainSerializer(domain).data},

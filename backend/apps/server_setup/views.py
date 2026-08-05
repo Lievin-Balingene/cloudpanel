@@ -82,24 +82,47 @@ class OlsReloadView(APIView):
     permission_classes = [IsAuthenticated, IsAdministrator]
 
     def post(self, request: Request) -> Response:
-        from apps.domains.ols_vhosts import ols_enabled, ols_installed, rebuild_ols_maps, reload_ols
+        from apps.domains.ols_vhosts import ols_installed, ols_ready, rebuild_ols_maps, reload_ols
 
-        if not ols_enabled() or not ols_installed():
+        if not ols_installed():
             return Response(
                 {
                     "success": False,
                     "error": {
                         "code": "ols_unavailable",
-                        "message": "OpenLiteSpeed non installé ou désactivé.",
+                        "message": "OpenLiteSpeed non installé.",
                     },
                 },
                 status=400,
             )
-        count = rebuild_ols_maps()
+        count = rebuild_ols_maps() if ols_ready() else 0
         reload_ols()
         return Response(
             {
                 "success": True,
-                "data": {"reloaded": True, "vhosts": count},
+                "data": {"reloaded": True, "vhosts": count, "ready": ols_ready()},
             }
         )
+
+
+class OlsAdoptView(APIView):
+    """Passe les domaines PHP/static existants en OpenLiteSpeed."""
+
+    permission_classes = [IsAuthenticated, IsAdministrator]
+
+    def post(self, request: Request) -> Response:
+        from apps.domains.ols_vhosts import adopt_php_domains_to_ols
+
+        payload = adopt_php_domains_to_ols()
+        if not payload.get("ok"):
+            return Response(
+                {
+                    "success": False,
+                    "error": {
+                        "code": "ols_unavailable",
+                        "message": payload.get("error") or "OLS non prêt",
+                    },
+                },
+                status=400,
+            )
+        return Response({"success": True, "data": payload})

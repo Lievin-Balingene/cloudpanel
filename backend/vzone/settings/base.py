@@ -298,8 +298,9 @@ VZONE_DNS_RELOAD_FLAG = env(
 )
 VZONE_WEB_STACK = env("VZONE_WEB_STACK", "auto")  # auto | live | mock
 
-# OpenLiteSpeed (moteur optionnel derrière Nginx — sites PHP/WordPress)
-VZONE_OLS_ENABLED = env_bool("VZONE_OLS_ENABLED", False)
+# OpenLiteSpeed (backend local derrière Nginx)
+# auto = activé dès qu'OLS est installé ; 1/0 force on/off
+VZONE_OLS_ENABLED = env("VZONE_OLS_ENABLED", "auto")
 VZONE_OLS_LISTEN = env("VZONE_OLS_LISTEN", "127.0.0.1:8088")
 VZONE_OLS_ROOT = env("VZONE_OLS_ROOT", "/usr/local/lsws")
 VZONE_OLS_VHOSTS_DIR = env(
@@ -314,6 +315,8 @@ VZONE_OLS_MAPS_FILE = env(
     "VZONE_OLS_MAPS_FILE",
     str(VZONE_DATA_ROOT / "ols" / "vzone-vhosts.conf"),
 )
+# Nouveaux domaines/sous-domaines en OLS quand le moteur est prêt
+VZONE_OLS_DEFAULT_ENGINE = env_bool("VZONE_OLS_DEFAULT_ENGINE", True)
 
 # Modules activés (extensible à l'installation)
 VZONE_ENABLED_MODULES = env_list(

@@ -124,14 +124,16 @@ if [[ -f "${REPO_DIR}/scripts/install-update-agent.sh" ]]; then
   bash "${REPO_DIR}/scripts/install-update-agent.sh" || echo "[vzone] Avertissement: install-update-agent.sh a échoué"
 fi
 
-# OpenLiteSpeed (opt-in — uniquement si VZONE_OLS_ENABLED=1)
-OLS_FLAG="${VZONE_OLS_ENABLED:-0}"
+# OpenLiteSpeed (opt-in / auto — si installé ou flag)
+OLS_FLAG="${VZONE_OLS_ENABLED:-auto}"
 if [[ -f /etc/vzone/vzone.env ]]; then
   # shellcheck disable=SC1091
   OLS_FLAG="$(grep -E '^VZONE_OLS_ENABLED=' /etc/vzone/vzone.env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '[:space:]' || echo "${OLS_FLAG}")"
 fi
-if [[ "${OLS_FLAG}" =~ ^(1|true|TRUE|yes|YES)$ ]] && [[ -f "${REPO_DIR}/scripts/install-openlitespeed.sh" ]]; then
-  bash "${REPO_DIR}/scripts/install-openlitespeed.sh" || echo "[vzone] Avertissement: install-openlitespeed.sh a échoué"
+if [[ -f /var/lib/vzone/ols/.installed ]] || [[ "${OLS_FLAG}" =~ ^(1|true|TRUE|yes|YES|auto|AUTO)$ ]]; then
+  if [[ -f "${REPO_DIR}/scripts/install-openlitespeed.sh" ]]; then
+    bash "${REPO_DIR}/scripts/install-openlitespeed.sh" || echo "[vzone] Avertissement: install-openlitespeed.sh a échoué"
+  fi
 fi
 
 # WP-CLI / WordPress

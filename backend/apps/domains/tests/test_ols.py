@@ -17,14 +17,19 @@ from apps.domains.vhosts import DomainBackend, _location_body
 
 
 @pytest.mark.django_db
-def test_uses_ols_engine_respects_flag(settings):
-    settings.VZONE_OLS_ENABLED = False
+def test_uses_ols_engine_respects_flag(settings, tmp_path):
+    settings.VZONE_OLS_ENABLED = "0"
     owner = UserFactory(username="olsowner1")
     domain = create_domain(name="ols-flag.test", owner=owner, web_engine=Domain.WebEngine.NGINX)
     domain.web_engine = Domain.WebEngine.OLS
     assert uses_ols_engine(domain) is False
 
-    settings.VZONE_OLS_ENABLED = True
+    settings.VZONE_OLS_ENABLED = "1"
+    # Simulate installed marker
+    marker = tmp_path / "ols" / ".installed"
+    marker.parent.mkdir(parents=True)
+    marker.write_text("1", encoding="utf-8")
+    settings.VZONE_DATA_ROOT = tmp_path
     assert uses_ols_engine(domain) is True
     domain.web_engine = Domain.WebEngine.NGINX
     assert uses_ols_engine(domain) is False
@@ -50,8 +55,10 @@ def test_ols_vhconf_contains_lsphp():
     assert "docRoot" in text
     assert "lsapi:" in text
     assert "autoLoadHtaccess" in text
+    assert "index.html, index.htm, index.php" in text
     block = render_virtualhost_block(domain=domain, docroot="/home/u/public_html")
     assert "virtualhost" in block
+    assert "setUIDMode              2" in block
     maps = render_listener_maps([domain])
     assert "listener vzoneHttp" in maps
     assert "map                     lsphp.test" in maps
@@ -59,8 +66,21 @@ def test_ols_vhconf_contains_lsphp():
 
 @pytest.mark.django_db
 def test_create_ols_domain_rejected_when_disabled(settings):
-    settings.VZONE_OLS_ENABLED = False
+    settings.VZONE_OLS_ENABLED = "0"
     owner = UserFactory(username="olsowner3")
     with pytest.raises(VZoneAPIException) as exc:
         create_domain(name="need-ols.test", owner=owner, web_engine=Domain.WebEngine.OLS)
     assert exc.value.default_code == "ols_unavailable"
+
+
+@pytest.mark.django_db
+def test_default_engine_auto_when_installed(settings, tmp_path):
+    settings.VZONE_OLS_ENABLED = "auto"
+    settings.VZONE_OLS_DEFAULT_ENGINE = True
+    settings.VZONE_DATA_ROOT = tmp_path
+    marker = tmp_path / "ols" / ".installed"
+    marker.parent.mkdir(parents=True)
+    marker.write_text("1", encoding="utf-8")
+    owner = UserFactory(username="olsowner4")
+    domain = create_domain(name="auto-ols.test", owner=owner)
+    assert domain.web_engine == Domain.WebEngine.OLS

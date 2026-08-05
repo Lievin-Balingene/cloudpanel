@@ -96,7 +96,15 @@ chown "${VZONE_USER}:${VZONE_USER}" "${MAPS}"
 
 # Docroot + vhconf par défaut
 mkdir -p "${OLS_DIR}/default"
-echo '<!doctype html><title>V-zone OLS</title><p>OpenLiteSpeed backend</p>' > "${OLS_DIR}/default/index.html"
+cat > "${OLS_DIR}/default/index.html" <<'HTMLEOF'
+<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8"><title>V-zone</title>
+<style>body{font-family:system-ui;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;background:#0b1220;color:#9db0c7}
+.box{text-align:center;padding:2rem}h1{color:#fff;font-size:1.2rem}</style></head>
+<body><div class="box"><h1>OpenLiteSpeed — backend V-zone</h1>
+<p>Aucun vhost mappé pour ce Host. Créez un domaine dans le panel (moteur OpenLiteSpeed).</p>
+</div></body></html>
+HTMLEOF
 if [[ -f "${REPO_DIR}/deploy/openlitespeed/vhconf-default.conf" ]]; then
   install -m 644 "${REPO_DIR}/deploy/openlitespeed/vhconf-default.conf" "${VHCONF_DIR}/vzoneDefault.conf"
 fi
@@ -122,5 +130,19 @@ fi
 echo "1" > "${OLS_DIR}/.installed"
 chown "${VZONE_USER}:${VZONE_USER}" "${OLS_DIR}/.installed"
 
-echo "[vzone] OpenLiteSpeed prêt (listener ${OLS_LISTEN}, vhosts ${VH_DIR})"
-echo "[vzone] Activez dans /etc/vzone/vzone.env : VZONE_OLS_ENABLED=1"
+# Activer dans l'env panel (auto = activé dès qu'installé)
+ENV_FILE="/etc/vzone/vzone.env"
+if [[ -f "${ENV_FILE}" ]]; then
+  if grep -qE '^VZONE_OLS_ENABLED=' "${ENV_FILE}"; then
+    sed -i 's/^VZONE_OLS_ENABLED=.*/VZONE_OLS_ENABLED=auto/' "${ENV_FILE}" || true
+  else
+    printf '\n# OpenLiteSpeed (auto = actif si installé)\nVZONE_OLS_ENABLED=auto\nVZONE_OLS_LISTEN=%s\n' "${OLS_LISTEN}" >> "${ENV_FILE}"
+  fi
+  if ! grep -qE '^VZONE_OLS_DEFAULT_ENGINE=' "${ENV_FILE}"; then
+    echo "VZONE_OLS_DEFAULT_ENGINE=1" >> "${ENV_FILE}"
+  fi
+fi
+
+echo "[vzone] OpenLiteSpeed prêt (listener ${OLS_LISTEN})"
+echo "[vzone] Mode: VZONE_OLS_ENABLED=auto — nouveaux domaines → OLS (comme cPanel)"
+echo "[vzone] Redémarrez l'API: systemctl restart vzone-api"

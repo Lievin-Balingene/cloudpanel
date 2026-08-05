@@ -103,10 +103,9 @@ def provision_account_home(user: User) -> Path:
 
 
 def cpanel_welcome_html(hostname: str, *, account: str = "", document_root: str = "") -> str:
-    """Page d'accueil style cPanel dans public_html / dossier sous-domaine."""
+    """Page d'accueil style cPanel / LiteSpeed (« Site prêt ») pour domaine / sous-domaine."""
     acct = account or hostname
     doc = document_root.strip() or "public_html"
-    # Afficher un chemin relatif lisible si possible
     display = doc
     for marker in ("/homes/", "/home/"):
         if marker in doc.replace("\\", "/"):
@@ -117,24 +116,34 @@ def cpanel_welcome_html(hostname: str, *, account: str = "", document_root: str 
     return (
         "<!DOCTYPE html>\n"
         '<html lang="fr"><head><meta charset="utf-8">'
-        f"<title>{hostname}</title>"
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f"<title>{hostname} — Site prêt</title>"
         "<style>"
-        "body{margin:0;font-family:system-ui,-apple-system,sans-serif;"
-        "background:linear-gradient(160deg,#e8eef4 0%,#f7f9fc 45%,#fff 100%);"
-        "color:#2c3e50;min-height:100vh;display:flex;align-items:center;justify-content:center}"
-        ".box{max-width:36rem;padding:2.5rem;background:#fff;border:1px solid #d5dee8;"
-        "border-radius:12px;box-shadow:0 8px 30px rgba(26,43,60,.08)}"
-        "h1{margin:0 0 .5rem;font-size:1.6rem;color:#1a2b3c}"
-        "p{margin:.5rem 0;color:#6b7c8f;line-height:1.5}"
-        "code{font-size:.85rem;background:#f0f4f8;padding:.15rem .4rem;border-radius:4px;word-break:break-all}"
-        ".ok{display:inline-block;margin-top:1rem;padding:.35rem .75rem;border-radius:999px;"
-        "background:#e8f7ef;color:#0f7a45;font-size:.8rem;font-weight:600}"
+        "body{margin:0;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;"
+        "background:#0b1220;color:#e8eef7;min-height:100vh;"
+        "display:flex;align-items:center;justify-content:center;"
+        "background-image:radial-gradient(ellipse at 20% 0%,#1a3a5c 0%,transparent 50%),"
+        "radial-gradient(ellipse at 80% 100%,#0f2a22 0%,transparent 45%)}"
+        ".box{max-width:28rem;margin:1.5rem;padding:2.25rem 2rem;text-align:center;"
+        "background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);"
+        "border-radius:16px;backdrop-filter:blur(8px)}"
+        ".badge{display:inline-block;margin-bottom:1rem;padding:.4rem .9rem;"
+        "border-radius:999px;background:#12b76a;color:#042f1a;font-size:.75rem;"
+        "font-weight:700;letter-spacing:.04em;text-transform:uppercase}"
+        "h1{margin:0 0 .75rem;font-size:1.45rem;font-weight:650;color:#fff;"
+        "word-break:break-word}"
+        "p{margin:.55rem 0;color:#9db0c7;line-height:1.55;font-size:.95rem}"
+        "code{font-size:.8rem;background:rgba(0,0,0,.35);padding:.12rem .4rem;"
+        "border-radius:4px;color:#c5d4e8;word-break:break-all}"
+        ".hint{margin-top:1.25rem;padding-top:1rem;border-top:1px solid rgba(255,255,255,.1);"
+        "font-size:.82rem;color:#7a8fa8}"
         "</style></head><body><div class=\"box\">"
+        '<div class="badge">Site prêt</div>'
         f"<h1>{hostname}</h1>"
-        f"<p>Compte <code>{acct}</code> — document root <code>{display}</code>.</p>"
-        "<p>Remplacez <code>index.html</code> (ou ajoutez <code>index.php</code>) dans ce dossier "
-        "via le File Manager / FTP : ce sera le site servi pour ce hostname.</p>"
-        '<span class="ok">Site prêt</span>'
+        "<p>Votre site web est actif et prêt à recevoir du contenu.</p>"
+        f"<p>Compte <code>{acct}</code><br>Document root <code>{display}</code></p>"
+        '<p class="hint">Remplacez <code>index.html</code> ou ajoutez <code>index.php</code> '
+        "via le File Manager / FTP.</p>"
         "</div></body></html>\n"
     )
 
