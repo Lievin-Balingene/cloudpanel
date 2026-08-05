@@ -9,7 +9,7 @@ from rest_framework.test import APIClient
 
 from apps.accounts.factories import UserFactory
 from apps.python_apps.models import PythonApp
-from apps.python_apps.services import create_python_app, start_python_app, stop_python_app
+from apps.python_apps.services import _scaffold, create_python_app, start_python_app, stop_python_app
 
 
 @pytest.fixture
@@ -170,3 +170,9 @@ def test_django_passenger_next_to_existing_project(py_root):
     text = passenger.read_text(encoding="utf-8")
     assert "mysite.settings" in text
     assert "virtualenv" in app.venv_path.replace("\\", "/")
+
+    # Comme cPanel : Start / scaffold ne doivent jamais écraser passenger_wsgi.py
+    marker = "# USER CUSTOM PASSENGER\n"
+    passenger.write_text(marker + text, encoding="utf-8")
+    _scaffold(project, mode="wsgi", framework="django")
+    assert passenger.read_text(encoding="utf-8").startswith(marker)

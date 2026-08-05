@@ -253,8 +253,8 @@ def write_app_config(app: PythonApp) -> Path:
 
 def _scaffold(app_root: Path, mode: str, framework: str) -> None:
     """
-    Prépare l'application root (comme cPanel) :
-    passenger_wsgi.py / asgi.py vivent DANS le même dossier que le projet Django (manage.py).
+    Prépare l'application root à la création uniquement (comme cPanel) :
+    passenger_wsgi.py / asgi.py / requirements.txt — jamais écrasés s'ils existent déjà.
     """
     app_root.mkdir(parents=True, exist_ok=True)
     (app_root / "logs").mkdir(exist_ok=True)
@@ -274,21 +274,24 @@ def _scaffold(app_root: Path, mode: str, framework: str) -> None:
             entry.write_text(ASGI_TEMPLATE, encoding="utf-8")
     else:
         entry = app_root / "passenger_wsgi.py"
-        pkg = detect_django_project_package(app_root) if framework == PythonApp.Framework.DJANGO else "project"
-        settings_mod = f"{pkg}.settings"
-        write_passenger = not entry.exists()
-        if framework == PythonApp.Framework.DJANGO and (app_root / "manage.py").exists():
-            # Projet déjà présent : (ré)générer passenger_wsgi aligné sur le package détecté
-            write_passenger = True
-        if write_passenger:
-            entry.write_text(WSGI_TEMPLATE.format(settings_module=settings_mod), encoding="utf-8")
+        # Comme cPanel : créer une seule fois — les modifications utilisateur sont préservées
+        if not entry.exists():
+            pkg = (
+                detect_django_project_package(app_root)
+                if framework == PythonApp.Framework.DJANGO
+                else "project"
+            )
+            entry.write_text(
+                WSGI_TEMPLATE.format(settings_module=f"{pkg}.settings"),
+                encoding="utf-8",
+            )
     readme = app_root / "README.vzone.md"
     if not readme.exists():
         readme.write_text(
             "# Application Python V-zone (style cPanel)\n\n"
             f"Mode: {mode}\nFramework: {framework}\n\n"
-            "Le fichier `passenger_wsgi.py` doit rester dans **ce** répertoire "
-            "(même dossier que `manage.py` pour Django).\n",
+            "Le fichier `passenger_wsgi.py` est créé à la création de l'app uniquement.\n"
+            "Vos modifications ne sont jamais écrasées par Start / Restart / Update.\n",
             encoding="utf-8",
         )
 
@@ -695,13 +698,6 @@ def start_python_app(app: PythonApp) -> PythonApp:
             logger.debug("stop avant start ignoré", exc_info=True)
 
     ensure_runtime_deps(app, app_root, py)
-
-    # Réaligner passenger_wsgi sur le package Django détecté (évite setdefault panel)
-    if app.framework == PythonApp.Framework.DJANGO and app.mode == PythonApp.Mode.WSGI:
-        try:
-            _scaffold(app_root, mode=app.mode, framework=app.framework)
-        except Exception:  # noqa: BLE001
-            logger.debug("scaffold avant start ignoré", exc_info=True)
 
     if app.mode == PythonApp.Mode.WSGI and not (app_root / "passenger_wsgi.py").exists():
         raise VZoneAPIException(
