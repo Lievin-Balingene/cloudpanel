@@ -338,12 +338,13 @@ def _location_body(backend: DomainBackend, *, use_ols: bool = False) -> str:
 
     docroot = backend.docroot or "/var/empty"
     if backend.mode == "php" and backend.php_socket:
+        # Pas de `$uri/` seul : sinon dossier sans index → 403 nginx (directory index).
         return f"""
     root {docroot};
-    index index.php index.html index.htm;
+    index index.html index.htm index.php;
 
     location / {{
-        try_files $uri $uri/ /index.php?$query_string;
+        try_files $uri $uri/index.html $uri/index.htm /index.php?$query_string;
     }}
 
     location ~ \\.php$ {{
@@ -384,11 +385,11 @@ def _location_body(backend: DomainBackend, *, use_ols: bool = False) -> str:
     }}
 """
 
-    # Éviter 403 « directory index forbidden » : toujours un fallback fichier
+    # Éviter 403 « directory index forbidden » : ne pas matcher un dossier nu.
     if default_sock:
         location_root = """
     location / {
-        try_files $uri $uri/ /index.php?$query_string;
+        try_files $uri $uri/index.html $uri/index.htm /index.php?$query_string;
     }
 """
     else:
