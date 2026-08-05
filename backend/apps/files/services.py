@@ -97,6 +97,9 @@ def ensure_cpanel_tree(personal: Path) -> None:
     from apps.domains.fsutils import apply_tree_permissions, secure_directory, try_chown_vzone
 
     personal.mkdir(parents=True, exist_ok=True)
+    # 755 obligatoire : nginx (www-data) doit pouvoir traverser /home/user → public_html
+    # (700/750 provoque 403 Forbidden nginx stock)
+    secure_directory(personal, 0o755)
     for sub in CPANEL_HOME_DIRECTORIES:
         secure_directory(personal / sub, 0o755)
     for sub in CPANEL_SSL_SUBDIRS:
@@ -114,6 +117,14 @@ def ensure_cpanel_tree(personal: Path) -> None:
                 secure_directory(link, 0o755)
     apply_tree_permissions(personal / "public_html", dir_mode=0o755, file_mode=0o644)
     try_chown_vzone(personal)
+    # Re-appliquer après chown (certains FS remettent le mode du home)
+    try:
+        personal.chmod(0o755)
+        pub = personal / "public_html"
+        if pub.is_dir():
+            pub.chmod(0o755)
+    except OSError:
+        pass
 
 
 def personal_home(user: User) -> Path:
