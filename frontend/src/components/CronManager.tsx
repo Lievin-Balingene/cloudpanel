@@ -339,11 +339,11 @@ export function CronManager({ title }: { title: string }) {
                     </td>
                     <td className="px-3 py-2 align-top">
                       <div className="flex justify-end gap-1">
-                        <IconAction title="Edit" onClick={() => startEdit(job)}>
+                        <IconAction label="Modifier" onClick={() => startEdit(job)}>
                           <FileText className="h-3.5 w-3.5" />
                         </IconAction>
                         <IconAction
-                          title={job.is_active ? "Disable" : "Enable"}
+                          label={job.is_active ? "Désactiver" : "Activer"}
                           onClick={() =>
                             updateMut.mutate({
                               id: job.id,
@@ -358,7 +358,7 @@ export function CronManager({ title }: { title: string }) {
                           )}
                         </IconAction>
                         <IconAction
-                          title="Delete"
+                          label="Supprimer"
                           danger
                           onClick={() => {
                             if (window.confirm("Supprimer cette tâche cron ?")) {
