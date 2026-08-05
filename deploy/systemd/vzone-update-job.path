@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch V-zone panel update job requests
+
+[Path]
+PathExistsGlob=/var/lib/vzone/update/jobs/*.request
+MakeDirectory=true
+Unit=vzone-update-job.service
+
+[Install]
+WantedBy=multi-user.target

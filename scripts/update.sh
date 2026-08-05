@@ -119,6 +119,11 @@ if [[ -f "${REPO_DIR}/scripts/install-hostname-agent.sh" ]]; then
   bash "${REPO_DIR}/scripts/install-hostname-agent.sh" || echo "[vzone] Avertissement: install-hostname-agent.sh a échoué"
 fi
 
+# Agent mise à jour panel (WHM → git pull + update.sh)
+if [[ -f "${REPO_DIR}/scripts/install-update-agent.sh" ]]; then
+  bash "${REPO_DIR}/scripts/install-update-agent.sh" || echo "[vzone] Avertissement: install-update-agent.sh a échoué"
+fi
+
 # WP-CLI / WordPress
 if [[ -f "${REPO_DIR}/scripts/install-wp-cli.sh" ]]; then
   bash "${REPO_DIR}/scripts/install-wp-cli.sh" || echo "[vzone] Avertissement: install-wp-cli.sh a échoué"

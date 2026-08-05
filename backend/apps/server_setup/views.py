@@ -7,6 +7,11 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.permissions import IsAdministrator
+from apps.server_setup.panel_update import (
+    enqueue_panel_update,
+    get_job_status,
+    panel_update_overview,
+)
 from apps.server_setup.serializers import ServerSetupSerializer
 from apps.server_setup.services import get_setup_payload, update_setup
 
@@ -34,3 +39,31 @@ class ServerSetupView(APIView):
             apply_hostname=data.get("apply_hostname", False),
         )
         return Response({"success": True, "data": payload})
+
+
+class PanelUpdateOverviewView(APIView):
+    permission_classes = [IsAuthenticated, IsAdministrator]
+
+    def get(self, request: Request) -> Response:
+        return Response({"success": True, "data": panel_update_overview()})
+
+
+class PanelUpdateStartView(APIView):
+    permission_classes = [IsAuthenticated, IsAdministrator]
+
+    def post(self, request: Request) -> Response:
+        branch = str(request.data.get("branch") or "main")
+        skip_pull = bool(request.data.get("skip_pull", False))
+        payload = enqueue_panel_update(
+            requested_by=getattr(request.user, "username", "") or "",
+            branch=branch,
+            skip_pull=skip_pull,
+        )
+        return Response({"success": True, "data": payload}, status=202)
+
+
+class PanelUpdateJobView(APIView):
+    permission_classes = [IsAuthenticated, IsAdministrator]
+
+    def get(self, request: Request, job_id: str) -> Response:
+        return Response({"success": True, "data": get_job_status(job_id)})

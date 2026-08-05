@@ -28,6 +28,7 @@ import {
   ArrowRightLeft,
   UserPlus,
   Clock,
+  Rocket,
 } from "lucide-react";
 import { useAuthStore } from "@/stores/auth";
 import { useThemeStore } from "@/stores/theme";
@@ -81,6 +82,7 @@ const navSections = [
       { to: "/whm/backups", label: "Backup", icon: HardDrive },
       { to: "/whm/monitoring", label: "Service Status", icon: Bell },
       { to: "/whm/resources", label: "Server Information", icon: Activity },
+      { to: "/whm/panel-update", label: "Panel Update", icon: Rocket },
       { to: "/whm/firewall", label: "Firewall", icon: Shield },
       { to: "/whm/security", label: "Security Center", icon: KeyRound },
       { to: "/whm/account-security", label: "Two-Factor Auth", icon: KeyRound },
