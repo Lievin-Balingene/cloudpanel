@@ -326,14 +326,24 @@ def _location_body(backend: DomainBackend) -> str:
     }}
 """
 
+    # Éviter 403 « directory index forbidden » : toujours un fallback fichier
+    if default_sock:
+        location_root = """
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+"""
+    else:
+        location_root = """
+    location / {
+        try_files $uri $uri/index.html $uri/index.htm =404;
+    }
+"""
+
     return f"""
     root {docroot};
     index index.html index.htm index.php;
-
-    location / {{
-        try_files $uri $uri/ =404;
-    }}
-{php_block}
+{location_root}{php_block}
     location ~* \\.(?:css|js|jpg|jpeg|gif|png|ico|svg|woff2?)$ {{
         expires 7d;
         access_log off;
