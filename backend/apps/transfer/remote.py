@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import base64
 import json
+import posixpath
 import re
+import secrets
 import socket
 import ssl
 import time
@@ -374,6 +376,143 @@ class WhmRemoteClient:
             for base in ("/home", "/home2", "/home3", "/root"):
                 add(f"{base}/{name}")
         return paths
+
+    def account_domain(self, username: str) -> str:
+        username = username.strip().lower()
+        for acct in self.list_accounts():
+            if (acct.get("user") or "").lower() == username:
+                return (acct.get("domain") or "").strip().lower().rstrip(".")
+        return ""
+
+    @staticmethod
+    def _rel_to_account_home(username: str, absolute: str) -> str:
+        """Chemin relatif au home cPanel (/home/user)."""
+        home = f"/home/{username.strip().lower()}"
+        abs_norm = absolute.replace("\\", "/")
+        if abs_norm.startswith(home + "/"):
+            return abs_norm[len(home) + 1 :]
+        return posixpath.relpath(abs_norm, home)
+
+    def _cpanel_fileop(
+        self,
+        cpanel_user: str,
+        *,
+        op: str,
+        sourcefiles: str,
+        destfiles: str = "",
+    ) -> None:
+        """Fileman::fileop via WHM API (API 2)."""
+        params: dict[str, Any] = {
+            "user": cpanel_user,
+            "cpanel_jsonapi_user": cpanel_user,
+            "cpanel_jsonapi_apiversion": 2,
+            "cpanel_jsonapi_module": "Fileman",
+            "cpanel_jsonapi_func": "fileop",
+            "op": op,
+            "sourcefiles": sourcefiles,
+            "doubledecode": 1,
+        }
+        if destfiles:
+            params["destfiles"] = destfiles
+        data = self._request("cpanel", params)
+        block = data.get("cpanelresult") or data.get("data") or {}
+        if isinstance(block, dict):
+            err = block.get("error") or block.get("reason")
+            if err and str(err).lower() not in {"", "ok", "success"}:
+                raise VZoneAPIException(
+                    detail=f"Fileman {op}: {err}",
+                    code="whm_cpanel_fileop_failed",
+                    status_code=502,
+                )
+
+    def _cpanel_fileop_cleanup(self, cpanel_user: str, rel_path: str) -> None:
+        for op in ("unlink", "trash"):
+            try:
+                self._cpanel_fileop(
+                    cpanel_user,
+                    op=op,
+                    sourcefiles=rel_path,
+                    destfiles="" if op == "unlink" else rel_path,
+                )
+                return
+            except VZoneAPIException:
+                continue
+
+    def _download_via_public_site(
+        self,
+        username: str,
+        remote_path: str,
+        dest: Path,
+        *,
+        progress: ProgressCb | None = None,
+    ) -> int:
+        """
+        Expose le cpmove via lien dans public_html et télécharge via le domaine du compte.
+        Contourne SSH / URLs WHM 404 quand le site est servi depuis le serveur source.
+        """
+        domain = self.account_domain(username)
+        if not domain:
+            raise VZoneAPIException(
+                detail=f"Domaine introuvable pour le compte {username}.",
+                code="whm_download_failed",
+                status_code=502,
+            )
+        try:
+            import requests
+        except ImportError as exc:
+            raise VZoneAPIException(
+                detail="Bibliothèque requests manquante.",
+                code="whm_http_unavailable",
+                status_code=500,
+            ) from exc
+
+        token = secrets.token_hex(10)
+        filename = f".vz-{token}.tar.gz"
+        rel_dest = f"public_html/{filename}"
+        rel_src = self._rel_to_account_home(username, remote_path)
+
+        linked = False
+        for op in ("link", "copy"):
+            try:
+                if progress:
+                    progress(63, f"Lien public ({op}) {rel_src} → {rel_dest}…")
+                self._cpanel_fileop(username, op=op, sourcefiles=rel_src, destfiles=rel_dest)
+                linked = True
+                break
+            except VZoneAPIException:
+                continue
+        if not linked:
+            raise VZoneAPIException(
+                detail=f"Impossible de publier {remote_path} dans public_html.",
+                code="whm_download_failed",
+                status_code=502,
+            )
+
+        sess = requests.Session()
+        sess.verify = not self.insecure_ssl
+        urls = [
+            f"https://{domain}/{filename}",
+            f"http://{domain}/{filename}",
+            f"https://www.{domain}/{filename}",
+        ]
+        errors: list[str] = []
+        try:
+            for url in urls:
+                try:
+                    if progress:
+                        progress(65, f"GET {url}…")
+                    return self._http_download_file(sess, url, dest, timeout=7200)
+                except VZoneAPIException as exc:
+                    errors.append(f"{url}: {exc.detail}")
+                    dest.unlink(missing_ok=True)
+        finally:
+            self._cpanel_fileop_cleanup(username, rel_dest)
+
+        raise VZoneAPIException(
+            detail="Téléchargement via domaine impossible. " + " ; ".join(errors[:3]),
+            code="whm_download_failed",
+            status_code=502,
+        )
 
     def _paths_from_pkgacct_log(self, session_id: str) -> list[str]:
         """Extrait les chemins cpmove du journal pkgacct WHM."""
@@ -884,20 +1023,36 @@ class WhmRemoteClient:
             return dest
         except VZoneAPIException as exc:
             errors.append(str(exc.detail))
-            hint = _egress_ip_hint()
-            raise VZoneAPIException(
-                detail=(
-                    "Impossible de télécharger le cpmove distant. "
-                    + " | ".join(errors[:4])
-                    + ". Solutions : (1) ouvrir le port SSH "
-                    + str(self.ssh_port)
-                    + " depuis le serveur V-zone"
-                    + _egress_ip_hint()
-                    + " ; (2) uploader l'archive dans l'onglet « Archive cPanel »."
-                ),
-                code="whm_download_failed",
-                status_code=502,
-            ) from exc
+
+        # Repli : lien temporaire dans public_html + GET via le domaine du compte
+        paths = self.resolve_cpmove_paths(username, extra=extra_paths)
+        for remote_path in paths[:4]:
+            try:
+                if progress:
+                    progress(64, f"Téléchargement web {remote_path}…")
+                size = self._download_via_public_site(
+                    username, remote_path, dest, progress=progress
+                )
+                if progress:
+                    progress(90, f"Archive via domaine ({size} octets)")
+                return dest
+            except VZoneAPIException as exc:
+                errors.append(str(exc.detail))
+                dest.unlink(missing_ok=True)
+
+        raise VZoneAPIException(
+            detail=(
+                "Impossible de télécharger le cpmove distant. "
+                + " | ".join(errors[:5])
+                + ". Solutions : (1) ouvrir le port SSH "
+                + str(self.ssh_port)
+                + " depuis le serveur V-zone"
+                + _egress_ip_hint()
+                + " ; (2) uploader l'archive dans l'onglet « Archive cPanel »."
+            ),
+            code="whm_download_failed",
+            status_code=502,
+        )
 
     def start_background_pkgacct(self, username: str) -> str | None:
         data = self._request(

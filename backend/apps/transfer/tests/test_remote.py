@@ -151,6 +151,28 @@ def test_download_cpmove_uses_scp_when_password_auth(tmp_path: Path):
     assert out == dest
 
 
+def test_rel_to_account_home_cpmove_in_home_root():
+    assert WhmRemoteClient._rel_to_account_home("bienve", "/home/cpmove-bienve.tar.gz") == "../cpmove-bienve.tar.gz"
+    assert (
+        WhmRemoteClient._rel_to_account_home("bienve", "/home/bienve/backup-x.tar.gz")
+        == "backup-x.tar.gz"
+    )
+
+
+def test_download_cpmove_falls_back_to_public_site(tmp_path: Path):
+    client = WhmRemoteClient("whm.test", token="secret", insecure_ssl=True)
+    client.auth_method = "basic-password"
+    dest = tmp_path / "cpmove.tar.gz"
+
+    with patch.object(client, "check_ssh_access", return_value={"ok": False, "message": "SSH down"}):
+        with patch.object(client, "_http_download_candidates", side_effect=VZoneAPIException(detail="http fail", code="whm_download_failed")):
+            with patch.object(client, "resolve_cpmove_paths", return_value=["/home/cpmove-u.tar.gz"]):
+                with patch.object(client, "_download_via_public_site", return_value=256) as pub:
+                    out = client.download_cpmove("u", dest)
+    pub.assert_called_once()
+    assert out == dest
+
+
 def test_download_cpmove_falls_back_to_http_when_ssh_down(tmp_path: Path):
     client = WhmRemoteClient("whm.test", token="secret", insecure_ssl=True)
     client.auth_method = "basic-password"
