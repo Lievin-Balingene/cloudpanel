@@ -25,3 +25,4 @@ psutil>=6.0,<7.0
 structlog>=24.4,<26.0
 passlib>=1.7.4,<2.0
 paramiko>=3.4,<4.0
+PyYAML>=6.0,<7.0

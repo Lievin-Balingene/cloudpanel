@@ -32,19 +32,37 @@ export function KubernetesManager({ title }: { title: string }) {
     queryKey: ["k8s-resources"],
     queryFn: () => apiRequest<K8sRes>("/kubernetes/resources/"),
   });
-  const [manifest, setManifest] = useState("");
+  const [manifest, setManifest] = useState(`apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+`);
   const [namespace, setNamespace] = useState("");
   const [output, setOutput] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  const sampleManifest = `apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+`;
+
   const apply = useMutation({
-    mutationFn: () =>
-      runWithProgress("Kubernetes apply", () =>
+    mutationFn: () => {
+      if (!manifest.trim() || !/apiVersion\s*:/i.test(manifest) || !/kind\s*:/i.test(manifest)) {
+        return Promise.reject(
+          new Error(
+            "Manifest invalide : collez un YAML Kubernetes avec apiVersion et kind (pas un simple mot).",
+          ),
+        );
+      }
+      return runWithProgress("Kubernetes apply", () =>
         apiRequest<{ ok: boolean; output: string }>("/kubernetes/apply/", {
           method: "POST",
           body: JSON.stringify({ manifest, namespace }),
         }),
-      ),
+      );
+    },
     onSuccess: (data) => {
       setError(null);
       setOutput(data.output || "Applied.");
@@ -143,10 +161,24 @@ export function KubernetesManager({ title }: { title: string }) {
           >
             Delete YAML
           </button>
+          <button
+            className="vz-btn-secondary"
+            type="button"
+            onClick={() => {
+              setManifest(sampleManifest);
+              setError(null);
+            }}
+          >
+            Exemple YAML
+          </button>
         </div>
+        <p className="text-xs text-cp-muted">
+          Collez un manifeste complet (<code>apiVersion</code> + <code>kind</code>). Un seul mot comme{" "}
+          <code>vzone</code> n’est pas valide.
+        </p>
         <textarea
           className="vz-input min-h-56 font-mono text-xs"
-          placeholder={"apiVersion: v1\nkind: Namespace\nmetadata:\n  name: demo"}
+          placeholder={sampleManifest}
           value={manifest}
           onChange={(e) => setManifest(e.target.value)}
         />

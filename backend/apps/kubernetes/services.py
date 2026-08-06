@@ -258,26 +258,133 @@ def overview_for() -> dict:
     }
 
 
+def _normalize_manifest(manifest: str) -> str:
+    """Nettoie le YAML et vérifie qu'il contient des objets Kubernetes valides."""
+    text = (manifest or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if text.startswith("\ufeff"):
+        text = text.lstrip("\ufeff").strip()
+    if not text:
+        raise VZoneAPIException(
+            detail="Manifest YAML requis.",
+            code="manifest_required",
+            status_code=400,
+        )
+
+    # Rejet rapide des contenus scalaires (ex. juste « vzone »)
+    first = next((ln.strip() for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("#")), "")
+    if first and ":" not in first and not first.startswith("---") and not first.startswith("{"):
+        raise VZoneAPIException(
+            detail=(
+                "Le manifeste n'est pas un objet Kubernetes. "
+                "Exemple attendu : apiVersion / kind / metadata. "
+                f"Reçu : {first[:80]!r}"
+            ),
+            code="manifest_invalid",
+            status_code=400,
+        )
+
+    try:
+        import yaml  # type: ignore
+    except ImportError:
+        # Fallback sans PyYAML : exiger apiVersion + kind
+        low = text.lower()
+        if "apiversion:" not in low.replace(" ", "") and '"apiversion"' not in low:
+            # also allow JSON
+            if '"apiVersion"' not in text and "apiVersion:" not in text:
+                raise VZoneAPIException(
+                    detail="Chaque ressource doit contenir apiVersion et kind.",
+                    code="manifest_invalid",
+                    status_code=400,
+                )
+        if "kind:" not in low and '"kind"' not in text:
+            raise VZoneAPIException(
+                detail="Chaque ressource doit contenir apiVersion et kind.",
+                code="manifest_invalid",
+                status_code=400,
+            )
+        return text if text.endswith("\n") else text + "\n"
+
+    try:
+        docs = list(yaml.safe_load_all(text))
+    except yaml.YAMLError as exc:
+        raise VZoneAPIException(
+            detail=f"YAML invalide : {exc}",
+            code="manifest_yaml_error",
+            status_code=400,
+        ) from exc
+
+    docs = [d for d in docs if d is not None]
+    if not docs:
+        raise VZoneAPIException(
+            detail="Manifest vide : aucun objet Kubernetes (seulement des commentaires ou ---).",
+            code="manifest_empty",
+            status_code=400,
+        )
+
+    for idx, doc in enumerate(docs, start=1):
+        if not isinstance(doc, dict):
+            raise VZoneAPIException(
+                detail=(
+                    f"Document #{idx} : objet Kubernetes attendu (mapping avec apiVersion/kind), "
+                    f"reçu {type(doc).__name__}."
+                ),
+                code="manifest_invalid",
+                status_code=400,
+            )
+        api = doc.get("apiVersion")
+        kind = doc.get("kind")
+        if not api or not kind:
+            raise VZoneAPIException(
+                detail=(
+                    f"Document #{idx} : champs apiVersion et kind obligatoires "
+                    "(ex. apiVersion: v1 / kind: Namespace)."
+                ),
+                code="manifest_invalid",
+                status_code=400,
+            )
+        meta = doc.get("metadata")
+        if meta is not None and not isinstance(meta, dict):
+            raise VZoneAPIException(
+                detail=f"Document #{idx} : metadata doit être un objet.",
+                code="manifest_invalid",
+                status_code=400,
+            )
+
+    return text if text.endswith("\n") else text + "\n"
+
+
 def _apply_like(manifest: str, namespace: str, action: str) -> dict:
-    if not manifest.strip():
-        raise VZoneAPIException(detail="Manifest YAML requis.", code="manifest_required", status_code=400)
+    text = _normalize_manifest(manifest)
     if not should_execute():
         return {"ok": True, "output": f"{action} mock (pas de cluster live)."}
     kubectl = kubectl_bin()
-    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False, encoding="utf-8") as tf:
-        tf.write(manifest)
-        path = tf.name
+    path = ""
     try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            suffix=".yaml",
+            delete=False,
+            encoding="utf-8",
+            newline="\n",
+        ) as tf:
+            tf.write(text)
+            tf.flush()
+            path = tf.name
         cmd = [kubectl, action, "-f", path]
         if namespace.strip():
             cmd.extend(["-n", namespace.strip()])
+        # --validate=false évite certains faux positifs kubectl ancien,
+        # mais on a déjà validé la structure côté panel.
+        if action == "apply":
+            cmd.append("--validate=false")
         result = _run(cmd, timeout=120)
         return {"ok": True, "output": (result.stdout or result.stderr or "").strip()}
     finally:
-        try:
-            Path(path).unlink(missing_ok=True)
-        except OSError:
-            pass
+        if path:
+            try:
+                Path(path).unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def apply_manifest(manifest: str, namespace: str = "") -> dict:
