@@ -6,6 +6,8 @@
 
 ```bash
 sudo bash /opt/vzone-src/scripts/repair-mail-reputation.sh
+# Si Roundcube affiche « SMTP service unavailable » :
+sudo bash /opt/vzone-src/scripts/repair-smtp.sh
 ```
 
 - OpenDKIM signe les mails Roundcube (SMTP :587)

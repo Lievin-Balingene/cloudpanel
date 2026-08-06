@@ -1,6 +1,14 @@
-# Postfix master.cf — V-zone (extrait pertinent + defaults Ubuntu)
-smtp      inet  n       -       y       -       -       smtpd
-submission inet n       -       y       -       -       smtpd
+# Postfix master.cf — V-zone (base Ubuntu/Debian + submission/smtps + OpenDKIM)
+# See master(5) for details.
+
+smtp      inet  n       -       n       -       -       smtpd
+#smtp      inet  n       -       n       -       1       postscreen
+#smtpd     pass  -       -       n       -       -       smtpd
+#dnsblog   unix  -       -       n       -       0       dnsblog
+#tlsproxy  unix  -       -       n       -       0       tlsproxy
+
+# Roundcube / clients : STARTTLS + SASL + OpenDKIM
+submission inet n       -       n       -       -       smtpd
   -o syslog_name=postfix/submission
   -o smtpd_tls_security_level=encrypt
   -o smtpd_sasl_auth_enable=yes
@@ -10,11 +18,12 @@ submission inet n       -       y       -       -       smtpd
   -o smtpd_reject_unlisted_recipient=no
   -o smtpd_client_restrictions=permit_sasl_authenticated,reject
   -o smtpd_relay_restrictions=permit_sasl_authenticated,reject
-# OpenDKIM milter — submission (Roundcube) + smtps
-  -o smtpd_milters=inet:localhost:8891
-  -o non_smtpd_milters=inet:localhost:8891
+  -o smtpd_milters=inet:127.0.0.1:8891
   -o milter_macro_daemon_name=ORIGINATING
-smtps     inet  n       -       y       -       -       smtpd
+  -o milter_default_action=accept
+
+# SMTPS (465)
+smtps     inet  n       -       n       -       -       smtpd
   -o syslog_name=postfix/smtps
   -o smtpd_tls_wrappermode=yes
   -o smtpd_sasl_auth_enable=yes
@@ -22,29 +31,32 @@ smtps     inet  n       -       y       -       -       smtpd
   -o smtpd_sasl_path=private/auth
   -o smtpd_client_restrictions=permit_sasl_authenticated,reject
   -o smtpd_relay_restrictions=permit_sasl_authenticated,reject
-  -o smtpd_milters=inet:localhost:8891
-  -o non_smtpd_milters=inet:localhost:8891
+  -o smtpd_milters=inet:127.0.0.1:8891
   -o milter_macro_daemon_name=ORIGINATING
-pickup    unix  n       -       y       60      1       pickup
-cleanup   unix  n       -       y       -       0       cleanup
+  -o milter_default_action=accept
+
+pickup    unix  n       -       n       60      1       pickup
+cleanup   unix  n       -       n       -       0       cleanup
 qmgr      unix  n       -       n       300     1       qmgr
-tlsmgr    unix  -       -       y       1000?   1       tlsmgr
-rewrite   unix  -       -       y       -       -       trivial-rewrite
-bounce    unix  -       -       y       -       0       bounce
-defer     unix  -       -       y       -       0       bounce
-trace     unix  -       -       y       -       0       bounce
-verify    unix  -       -       y       -       1       verify
-flush     unix  n       -       y       1000?   0       flush
+tlsmgr    unix  -       -       n       1000?   1       tlsmgr
+rewrite   unix  -       -       n       -       -       trivial-rewrite
+bounce    unix  -       -       n       -       0       bounce
+defer     unix  -       -       n       -       0       bounce
+trace     unix  -       -       n       -       0       bounce
+verify    unix  -       -       n       -       1       verify
+flush     unix  n       -       n       1000?   0       flush
 proxymap  unix  -       -       n       -       -       proxymap
 proxywrite unix -       -       n       -       1       proxymap
-smtp      unix  -       -       y       -       -       smtp
-relay     unix  -       -       y       -       -       smtp
-showq     unix  n       -       y       -       -       showq
-error     unix  -       -       y       -       -       error
-retry     unix  -       -       y       -       -       error
-discard   unix  -       -       y       -       -       discard
+smtp      unix  -       -       n       -       -       smtp
+relay     unix  -       -       n       -       -       smtp
+        -o syslog_name=postfix/$service_name
+showq     unix  n       -       n       -       -       showq
+error     unix  -       -       n       -       -       error
+retry     unix  -       -       n       -       -       error
+discard   unix  -       -       n       -       -       discard
 local     unix  -       n       n       -       -       local
 virtual   unix  -       n       n       -       -       virtual
-lmtp      unix  -       -       y       -       -       lmtp
-anvil     unix  -       -       y       -       1       anvil
-scache    unix  -       -       y       -       1       scache
+lmtp      unix  -       -       n       -       -       lmtp
+anvil     unix  -       -       n       -       1       anvil
+scache    unix  -       -       n       -       1       scache
+postlog   unix-dgram n  -       n       -       1       postlogd

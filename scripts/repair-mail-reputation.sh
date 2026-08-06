@@ -106,15 +106,21 @@ if [[ -f "${REPO_DIR}/scripts/vzone-mail-reload.sh" ]]; then
   /usr/local/sbin/vzone-mail-reload || true
 fi
 
-# OpenDKIM conf → maps panel
+# OpenDKIM conf → maps panel (ne pas casser Postfix si tables vides)
 if [[ -f "${REPO_DIR}/deploy/opendkim/opendkim.conf" ]]; then
   install -m 644 "${REPO_DIR}/deploy/opendkim/opendkim.conf" /etc/opendkim.conf
   sed -i "s|__MAPS_DIR__|${MAPS_DIR}|g" /etc/opendkim.conf
+  touch "${MAPS_DIR}/opendkim-KeyTable" "${MAPS_DIR}/opendkim-SigningTable"
+  chgrp opendkim "${MAPS_DIR}/opendkim-KeyTable" "${MAPS_DIR}/opendkim-SigningTable" 2>/dev/null || true
+  chmod 640 "${MAPS_DIR}/opendkim-KeyTable" "${MAPS_DIR}/opendkim-SigningTable" 2>/dev/null || true
   systemctl restart opendkim 2>/dev/null || true
 fi
-if [[ -f "${REPO_DIR}/deploy/postfix/master.cf" ]]; then
+# master.cf complet (sans chroot) — évite « SMTP service unavailable »
+if [[ -f "${REPO_DIR}/scripts/repair-smtp.sh" ]]; then
+  bash "${REPO_DIR}/scripts/repair-smtp.sh" || true
+elif [[ -f "${REPO_DIR}/deploy/postfix/master.cf" ]]; then
   install -m 644 "${REPO_DIR}/deploy/postfix/master.cf" /etc/postfix/master.cf
-  systemctl reload postfix 2>/dev/null || true
+  systemctl restart postfix 2>/dev/null || true
 fi
 
 echo
