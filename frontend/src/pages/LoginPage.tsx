@@ -76,7 +76,7 @@ export function LoginPage() {
             Hébergement maîtrisé, panneau clair.
           </h1>
           <p className="mt-4 text-base leading-relaxed text-white/65">
-            WHM pour les opérateurs, espace client pour vos sites — fichiers, e-mail, bases et apps au même endroit.
+            Admin pour les opérateurs, espace client pour vos sites — fichiers, e-mail, bases et apps au même endroit.
           </p>
         </div>
         <p className="text-xs text-white/40 animate-fade-in" style={{ animationDelay: "160ms" }}>
@@ -97,7 +97,7 @@ export function LoginPage() {
 
           <div className="mb-6">
             <h2 className="font-display text-xl font-semibold text-cp-navy">Connexion</h2>
-            <p className="mt-1 text-sm text-cp-muted">WHM ou compte d&apos;hébergement</p>
+            <p className="mt-1 text-sm text-cp-muted">Admin ou compte d&apos;hébergement</p>
           </div>
 
           <form className="space-y-4" onSubmit={onSubmit} noValidate>

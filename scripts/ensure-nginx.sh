@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Installe Nginx V-zone : panel = default_server (IP OK) + vhosts domaines.
+# Installe Nginx V-zone :
+# - :80/:443 IP = Access Denied
+# - hostnames panel = SPA
+# - ports Admin 9086 / Client 9082 / Webmail 9095
 set -euo pipefail
 
 [[ ${EUID:-0} -eq 0 ]] || { echo "Root requis"; exit 1; }
@@ -18,18 +21,22 @@ if [[ -f "$ENV_FILE" ]]; then
   set +a
 fi
 
-# Vide = panel uniquement via IP / localhost. Ne jamais y mettre un domaine client.
-# Ne PAS utiliser « _ » ici : le catch-all parking est default_server dans vzone.conf.
+# Hostnames panel UNIQUEMENT (pas l'IP publique → Access Denied sur IP:80)
+# localhost pour admin local. Ports dédiés acceptent l'IP.
 PANEL_HOSTS="${VZONE_PANEL_HOSTNAMES:-}"
 PANEL_HOSTS="${PANEL_HOSTS//,/ }"
 HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
 PANEL_NAMES="localhost 127.0.0.1"
 [[ -n "$PANEL_HOSTS" ]] && PANEL_NAMES="${PANEL_NAMES} ${PANEL_HOSTS}"
-[[ -n "$HOST_IP" ]] && PANEL_NAMES="${PANEL_NAMES} ${HOST_IP}"
 PANEL_NAMES="$(echo "$PANEL_NAMES" | xargs)"
 PANEL_PRIMARY="$(echo "$PANEL_HOSTS" | awk '{print $1}')"
 
-echo "[vzone] Panel server_name: ${PANEL_NAMES}"
+ADMIN_PORT="${VZONE_ADMIN_PORT:-9086}"
+CLIENT_PORT="${VZONE_CLIENT_PORT:-9082}"
+WEBMAIL_PORT="${VZONE_WEBMAIL_PORT:-9095}"
+
+echo "[vzone] Panel hostnames (80/443): ${PANEL_NAMES}"
+echo "[vzone] Ports: Admin=${ADMIN_PORT} Client=${CLIENT_PORT} Webmail=${WEBMAIL_PORT}"
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get install -y -qq ssl-cert 2>/dev/null || true
@@ -74,6 +81,33 @@ else
 </body></html>
 HTML
   chmod 644 /var/lib/vzone/suspended/index.html
+fi
+
+# Page Access Denied (IP nue :80/:443)
+DENIED_SRC=""
+for candidate in \
+  "${SCRIPT_DIR}/../deploy/nginx/access-denied.html" \
+  "${VZONE_ROOT}/deploy/nginx/access-denied.html"; do
+  [[ -f "$candidate" ]] && DENIED_SRC="$candidate" && break
+done
+mkdir -p /var/lib/vzone/nginx
+if [[ -n "$DENIED_SRC" ]]; then
+  install -m 644 "$DENIED_SRC" /var/lib/vzone/nginx/access-denied.html
+else
+  echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Access Denied</title></head><body><h1>Access Denied</h1></body></html>' \
+    > /var/lib/vzone/nginx/access-denied.html
+  chmod 644 /var/lib/vzone/nginx/access-denied.html
+fi
+
+# Snippet locations panel SPA
+PANEL_APP_SRC=""
+for candidate in \
+  "${SCRIPT_DIR}/../deploy/nginx/panel-app.inc" \
+  "${VZONE_ROOT}/deploy/nginx/panel-app.inc"; do
+  [[ -f "$candidate" ]] && PANEL_APP_SRC="$candidate" && break
+done
+if [[ -n "$PANEL_APP_SRC" ]]; then
+  install -m 644 "$PANEL_APP_SRC" /etc/nginx/snippets/vzone-panel-app.inc
 fi
 
 install_stub() {
@@ -181,11 +215,52 @@ rm -f /etc/nginx/conf.d/vzone.conf \
       /etc/nginx/sites-enabled/vzone \
       /etc/nginx/sites-available/vzone 2>/dev/null || true
 
+# Ports dédiés Admin / Client / Webmail
+PORTS_SRC=""
+for candidate in \
+  "${SCRIPT_DIR}/../deploy/nginx/vzone-ports.conf" \
+  "${VZONE_ROOT}/deploy/nginx/vzone-ports.conf"; do
+  [[ -f "$candidate" ]] && PORTS_SRC="$candidate" && break
+done
+if [[ -n "$PORTS_SRC" ]]; then
+  PORTS_TMP="$(mktemp)"
+  sed -e "s/__VZONE_ADMIN_PORT__/${ADMIN_PORT}/g" \
+      -e "s/__VZONE_CLIENT_PORT__/${CLIENT_PORT}/g" \
+      -e "s/__VZONE_WEBMAIL_PORT__/${WEBMAIL_PORT}/g" \
+      "$PORTS_SRC" > "$PORTS_TMP"
+  install -m 644 "$PORTS_TMP" /etc/nginx/conf.d/zz-vzone-ports.conf
+  rm -f "$PORTS_TMP"
+  echo "[vzone] Ports installés → zz-vzone-ports.conf"
+fi
+
+# Firewall ports panel
+if command -v ufw >/dev/null 2>&1; then
+  ufw allow "${ADMIN_PORT}/tcp" comment "vzone-admin" 2>/dev/null || ufw allow "${ADMIN_PORT}/tcp" || true
+  ufw allow "${CLIENT_PORT}/tcp" comment "vzone-client" 2>/dev/null || ufw allow "${CLIENT_PORT}/tcp" || true
+  ufw allow "${WEBMAIL_PORT}/tcp" comment "vzone-webmail" 2>/dev/null || ufw allow "${WEBMAIL_PORT}/tcp" || true
+fi
+
+# Persister ports dans env
+if [[ -f "$ENV_FILE" ]]; then
+  for kv in \
+    "VZONE_ADMIN_PORT=${ADMIN_PORT}" \
+    "VZONE_CLIENT_PORT=${CLIENT_PORT}" \
+    "VZONE_WEBMAIL_PORT=${WEBMAIL_PORT}"; do
+    key="${kv%%=*}"
+    if grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
+      sed -i "s|^${key}=.*|${kv}|" "$ENV_FILE"
+    else
+      echo "$kv" >> "$ENV_FILE"
+    fi
+  done
+fi
+
 # Désactiver tout autre default_server concurrent
 for f in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf; do
   [[ -e "$f" ]] || continue
   base="$(basename "$f")"
   [[ "$base" == "zz-vzone-panel.conf" ]] && continue
+  [[ "$base" == "zz-vzone-ports.conf" ]] && continue
   [[ "$base" == "vzone-domains-include.conf" ]] && continue
   [[ "$base" == "vzone-map-upgrade.conf" ]] && continue
   if grep -q "default_server" "$f" 2>/dev/null; then
@@ -275,6 +350,7 @@ fi
 sleep 1
 echo "[vzone] Tests locaux"
 PANEL_OK=1
+# localhost → panel OK
 for url in "http://127.0.0.1/login" "https://127.0.0.1/login"; do
   code="$(curl -sk -o /tmp/vzone-nginx-test.body -w "%{http_code}" "$url" || true)"
   echo "  $url → HTTP ${code}"
@@ -282,18 +358,28 @@ for url in "http://127.0.0.1/login" "https://127.0.0.1/login"; do
     PANEL_OK=0
   fi
 done
+# IP publique sur :80 → Access Denied (403)
 if [[ -n "$HOST_IP" ]]; then
   code="$(curl -sk -o /tmp/vzone-nginx-test.body -w "%{http_code}" -H "Host: ${HOST_IP}" "http://127.0.0.1/login" || true)"
-  echo "  Host ${HOST_IP}/login → HTTP ${code}"
-  [[ "$code" == "200" ]] || PANEL_OK=0
+  echo "  Host ${HOST_IP}/login → HTTP ${code} (attendu 403 Access Denied)"
+  [[ "$code" == "403" ]] || echo "[vzone] Avertissement: IP devrait renvoyer 403" >&2
 fi
+# Hostname panel → OK
 if [[ -n "$PANEL_PRIMARY" ]]; then
   code="$(curl -sk -o /tmp/vzone-nginx-test.body -w "%{http_code}" -H "Host: ${PANEL_PRIMARY}" "http://127.0.0.1/login" || true)"
   echo "  Host ${PANEL_PRIMARY}/login → HTTP ${code}"
   [[ "$code" == "200" ]] || PANEL_OK=0
 fi
+# Ports dédiés
+for port in "$ADMIN_PORT" "$CLIENT_PORT" "$WEBMAIL_PORT"; do
+  code="$(curl -sk -o /tmp/vzone-nginx-test.body -w "%{http_code}" "http://127.0.0.1:${port}/" || true)"
+  echo "  :${port}/ → HTTP ${code}"
+  if [[ "$code" != "200" && "$code" != "302" && "$code" != "301" ]]; then
+    echo "[vzone] Avertissement: port ${port} ne répond pas (code ${code})" >&2
+  fi
+done
 if [[ "${PANEL_OK}" -ne 1 ]]; then
-  echo "[vzone] ERREUR: /login ne renvoie pas HTTP 200" >&2
+  echo "[vzone] ERREUR: /login localhost ne renvoie pas HTTP 200" >&2
   echo "[vzone] Diagnostique:" >&2
   echo "  ls -la ${VZONE_ROOT}/frontend/dist/index.html" >&2
   echo "  nginx -T 2>/dev/null | grep -E 'default_server|root |zz-vzone|try_files' | head -40" >&2
@@ -301,7 +387,8 @@ if [[ "${PANEL_OK}" -ne 1 ]]; then
   echo "[vzone] Réparez: sudo bash /opt/vzone-src/scripts/repair-panel-404.sh" >&2
   exit 1
 fi
-echo "[vzone] Nginx OK — panel accessible via IP / hostnames panel (pas via domaines clients)"
+echo "[vzone] Nginx OK — Admin :${ADMIN_PORT} · Client :${CLIENT_PORT} · Webmail :${WEBMAIL_PORT}"
+echo "[vzone] IP:80 = Access Denied · hostname panel / localhost = OK"
 
 # Régénérer TOUS les vhosts domaines → public_html (évite 7une.info → /login)
 if [[ -x "${VZONE_ROOT}/backend/.venv/bin/python" && -f "$ENV_FILE" ]]; then

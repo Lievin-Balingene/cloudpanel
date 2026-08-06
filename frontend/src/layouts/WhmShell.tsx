@@ -77,7 +77,7 @@ const navSections: NavSection[] = [
       { to: "/whm/accounts", label: "List Accounts", icon: Users, keywords: ["comptes", "users"] },
       {
         to: "/whm/server-setup",
-        label: "Basic WebHost Manager Setup",
+        label: "Basic Server Setup",
         icon: Server,
         keywords: ["hostname", "nameserver", "setup"],
       },
@@ -384,7 +384,7 @@ export function WhmShell() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#d8e0ea] dark:bg-surface-dark">
-      {/* Sidebar style WHM cPanel */}
+      {/* Sidebar V-zone Admin */}
       <aside className="flex h-full w-[248px] shrink-0 flex-col bg-[#2a4a6b] text-white shadow-[2px_0_8px_rgba(0,0,0,0.25)]">
         <div className="shrink-0 px-3 pb-2 pt-3">
           <div className="flex items-center gap-2.5">
@@ -396,8 +396,8 @@ export function WhmShell() {
               height={36}
             />
             <div className="min-w-0">
-              <p className="select-none font-sans text-[22px] font-bold leading-none tracking-tight text-white">
-                WHM
+              <p className="select-none font-sans text-[20px] font-bold leading-none tracking-tight text-white">
+                Admin
               </p>
               <p className="mt-0.5 truncate text-[10px] font-medium uppercase tracking-[0.12em] text-white/55">
                 V-zone
@@ -487,7 +487,7 @@ export function WhmShell() {
         </div>
       </aside>
 
-      {/* Colonne droite : topbar blanche style WHM */}
+      {/* Colonne droite : topbar */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="z-30 shrink-0 border-b border-[#c5d0dc] bg-white shadow-sm dark:border-ink-700 dark:bg-ink-950">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-3 py-1.5 text-[11px] text-[#5a6f85] dark:text-ink-300 sm:px-4">

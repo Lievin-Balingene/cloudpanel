@@ -156,7 +156,7 @@ export function WhmHomePage() {
               Favorites
             </h1>
             <p className="mt-1 text-sm text-slate-500">
-              Raccourcis WHM — comptes, DNS, packages et supervision.
+              Raccourcis Admin — comptes, DNS, packages et supervision.
             </p>
           </div>
 
@@ -343,7 +343,7 @@ export function WhmHomePage() {
                     Product
                   </p>
                   <p className="mt-1 text-[13px] font-medium text-slate-700 dark:text-ink-100">
-                    {stats?.product || "V-zone WHM"}
+                    {stats?.product || "V-zone Admin"}
                   </p>
                 </div>
               </section>
