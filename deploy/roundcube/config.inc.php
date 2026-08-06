@@ -12,9 +12,11 @@ $config['db_prefix'] = '';
 // Plain IMAP local : évite ssl://*:143 (wrong version number)
 $config['imap_host'] = '127.0.0.1:143';
 $config['imap_auth_type'] = 'LOGIN';
-$config['smtp_host'] = 'tls://127.0.0.1:587';
-$config['smtp_user'] = '%u';
-$config['smtp_pass'] = '%p';
+// SMTP local port 25 (mynetworks) — évite TLS/SASL « SMTP unavailable » sur :587
+$config['smtp_host'] = '127.0.0.1:25';
+$config['smtp_user'] = '';
+$config['smtp_pass'] = '';
+$config['smtp_helo_host'] = 'localhost';
 
 $config['support_url'] = '';
 $config['product_name'] = 'V-zone Webmail';
