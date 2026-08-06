@@ -31,7 +31,7 @@ rollback_smtp() {
   echo "Relancez Roundcube — l'envoi doit marcher. DKIM non activé."
 }
 
-echo "=== repair-dkim (0.32.16) — test + rollback ==="
+echo "=== repair-dkim (0.32.17) — test + rollback ==="
 
 # 0) Sauvegarde master sans DKIM
 cp -a /etc/postfix/master.cf "$MASTER_BAK"
@@ -154,13 +154,29 @@ postconf -e "milter_command_timeout=10s"
 postconf -e "smtpd_milters="
 postconf -e "non_smtpd_milters="
 
+# Postfix doit pouvoir ouvrir le socket OpenDKIM
+usermod -aG opendkim postfix 2>/dev/null || true
+# IP publique = host interne (signature)
+PUB_IP="$(postconf -h inet_interfaces 2>/dev/null | tr ' ,' '\n' | grep -E '^[0-9.]+$' | head -1 || true)"
+[[ -z "$PUB_IP" || "$PUB_IP" == "all" ]] && PUB_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+for h in 127.0.0.1 localhost ::1 "$HOSTNAME_FQDN" ${PUB_IP:-}; do
+  [[ -n "$h" ]] || continue
+  grep -qxF "$h" /etc/opendkim/TrustedHosts || echo "$h" >> /etc/opendkim/TrustedHosts
+done
+systemctl restart opendkim
+sleep 1
+chmod 660 "$SOCK" 2>/dev/null || true
+chown opendkim:postfix "$SOCK" 2>/dev/null || true
+
 install -m 644 "${REPO_DIR}/deploy/postfix/master.cf" /etc/postfix/master.cf
+# IMPORTANT: lignes master.cf indentées — matcher "  -o smtpd_milters=" (pas ^-o)
 awk -v milter="$MILTER" '
   BEGIN { subm=0 }
-  /^submission / { subm=1 }
-  /^smtps / { subm=1 }
-  /^pickup / { subm=0 }
-  /^-o smtpd_milters=/ && subm {
+  /^[a-zA-Z]/ {
+    if ($1 == "submission" || $1 == "smtps") subm=1
+    else subm=0
+  }
+  /^[ \t]*-o[ \t]+smtpd_milters=/ && subm {
     print "  -o smtpd_milters=" milter
     print "  -o milter_macro_daemon_name=ORIGINATING"
     next
@@ -168,6 +184,18 @@ awk -v milter="$MILTER" '
   { print }
 ' /etc/postfix/master.cf > /tmp/master.cf.dkim
 mv /tmp/master.cf.dkim /etc/postfix/master.cf
+
+if ! grep -E '^[ \t]*-o[ \t]+smtpd_milters=.*opendkim' /etc/postfix/master.cf >/dev/null; then
+  echo "ERREUR: milter OpenDKIM non injecté dans master.cf"
+  grep -n 'smtpd_milters' /etc/postfix/master.cf || true
+  exit 1
+fi
+if ! grep -q 'milter_macro_daemon_name=ORIGINATING' /etc/postfix/master.cf; then
+  echo "ERREUR: ORIGINATING manquant dans master.cf"
+  exit 1
+fi
+echo "--- master.cf submission (milters) ---"
+awk '/^submission /{p=1} /^[a-zA-Z]/ && !/^submission /{p=0} p' /etc/postfix/master.cf | grep -E 'milter|ORIGINATING' || true
 
 systemctl reload postfix 2>/dev/null || systemctl restart postfix
 sleep 1
