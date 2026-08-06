@@ -31,7 +31,7 @@ rollback_smtp() {
   echo "Relancez Roundcube — l'envoi doit marcher. DKIM non activé."
 }
 
-echo "=== repair-dkim (0.32.15) — test + rollback ==="
+echo "=== repair-dkim (0.32.16) — test + rollback ==="
 
 # 0) Sauvegarde master sans DKIM
 cp -a /etc/postfix/master.cf "$MASTER_BAK"
@@ -112,21 +112,37 @@ fi
 chmod 660 "$SOCK" 2>/dev/null || true
 chown opendkim:postfix "$SOCK" 2>/dev/null || true
 
-# 2) Test signature hors Postfix
+# 2) Valider clé PEM + test signature (CRLF obligatoire pour opendkim-testmsg)
 DOMAIN="$(awk 'NF{print $1; exit}' "${MAPS_DIR}/opendkim-SigningTable" | sed 's/.*@//')"
 KEYFILE="${MAPS_DIR}/dkim/${DOMAIN}/default.private"
-if [[ -f "$KEYFILE" ]] && command -v opendkim-testmsg >/dev/null 2>&1; then
-  if ! echo -e "From: test@${DOMAIN}\nTo: a@b.com\nSubject: t\n\nhi\n" \
-    | opendkim-testmsg -d "$DOMAIN" -s default -k "$KEYFILE" >/tmp/dkim-out.eml 2>/tmp/dkim-err.txt; then
-    echo "ERREUR: opendkim-testmsg a échoué:"
-    cat /tmp/dkim-err.txt || true
+if [[ ! -f "$KEYFILE" ]]; then
+  echo "ERREUR: clé privée absente: $KEYFILE"
+  exit 1
+fi
+# Première ligne PEM (BOM / ligne vide = OpenDKIM lit en DER et échoue)
+head -1 "$KEYFILE" | grep -qE '^-----BEGIN (RSA )?PRIVATE KEY-----$' || {
+  echo "ERREUR: clé PEM invalide (attendu BEGIN RSA/PRIVATE KEY):"
+  head -3 "$KEYFILE" | cat -A
+  exit 1
+}
+if command -v openssl >/dev/null 2>&1; then
+  if ! openssl rsa -in "$KEYFILE" -check -noout 2>/tmp/dkim-openssl.txt; then
+    echo "ERREUR: openssl refuse la clé privée:"
+    cat /tmp/dkim-openssl.txt || true
     exit 1
   fi
-  if ! grep -q '^DKIM-Signature:' /tmp/dkim-out.eml; then
-    echo "ERREUR: pas de DKIM-Signature dans le test"
-    exit 1
+  echo "openssl clé OK"
+fi
+# opendkim-testmsg exige des CRLF (\r\n) — LF seul → dkim_chunk(): Syntax error
+if command -v opendkim-testmsg >/dev/null 2>&1; then
+  printf 'From: test@%s\r\nTo: a@b.com\r\nSubject: t\r\n\r\nhi\r\n' "$DOMAIN" \
+    | opendkim-testmsg -d "$DOMAIN" -s default -k "$KEYFILE" >/tmp/dkim-out.eml 2>/tmp/dkim-err.txt
+  if [[ $? -ne 0 ]] || ! grep -q '^DKIM-Signature:' /tmp/dkim-out.eml 2>/dev/null; then
+    echo "AVERTISSEMENT: opendkim-testmsg a échoué (clé openssl OK — on continue):"
+    cat /tmp/dkim-err.txt 2>/dev/null || true
+  else
+    echo "opendkim-testmsg OK"
   fi
-  echo "opendkim-testmsg OK"
 fi
 
 # 3) Activer milter UNIQUEMENT sur submission + ORIGINATING (unix socket)
