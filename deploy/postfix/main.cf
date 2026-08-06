@@ -77,10 +77,8 @@ virtual_minimum_uid = 5000
 virtual_transport = lmtp:unix:private/dovecot-lmtp
 virtual_mailbox_base = /
 
-# OpenDKIM milter — accept si down (évite 4xx « service unavailable »)
+# OpenDKIM milter (accept si OpenDKIM down → mail part quand même)
 milter_default_action = accept
 milter_protocol = 6
-# Activé seulement si OpenDKIM écoute (repair-smtp gère le bascule)
-# smtpd_milters / non_smtpd_milters définis dynamiquement ci-dessous si besoin
-smtpd_milters =
-non_smtpd_milters =
+smtpd_milters = inet:127.0.0.1:8891
+non_smtpd_milters = inet:127.0.0.1:8891

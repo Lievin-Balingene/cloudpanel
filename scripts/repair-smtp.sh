@@ -46,10 +46,10 @@ postconf -e "smtpd_tls_security_level=may"
 postconf -e "smtpd_tls_auth_only=no"
 postconf -e "smtpd_tls_cert_file=/etc/ssl/certs/ssl-cert-snakeoil.pem"
 postconf -e "smtpd_tls_key_file=/etc/ssl/private/ssl-cert-snakeoil.key"
-# Pas de milter tant que l'envoi ne marche pas (451 sinon)
+postconf -e "milter_default_action=accept"
+# Milters : activés en fin via repair-dkim si OpenDKIM OK
 postconf -e "smtpd_milters="
 postconf -e "non_smtpd_milters="
-postconf -e "milter_default_action=accept"
 
 postfix check 2>&1 | tee /tmp/vzone-postfix-check.txt || true
 
@@ -125,4 +125,10 @@ echo "1) Déconnexion Roundcube + Ctrl+F5"
 echo "2) Reconnexion avec info@7une.info + mot de passe"
 echo "3) Renvoyer un mail"
 echo "Si 535 auth: doveadm auth test info@7une.info 'MOTDEPASSE'"
+
+# Réactiver DKIM (OpenDKIM) après SMTP OK
+if [[ -f "${REPO_DIR}/scripts/repair-dkim.sh" ]]; then
+  echo
+  bash "${REPO_DIR}/scripts/repair-dkim.sh" || true
+fi
 echo "=== OK ==="

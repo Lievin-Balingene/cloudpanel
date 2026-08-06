@@ -6,6 +6,8 @@
 
 ```bash
 sudo bash /opt/vzone-src/scripts/repair-mail-reputation.sh
+# DKIM seul (après SMTP OK) :
+sudo bash /opt/vzone-src/scripts/repair-dkim.sh
 # Si Roundcube affiche « SMTP service unavailable » :
 sudo bash /opt/vzone-src/scripts/repair-smtp.sh
 ```
