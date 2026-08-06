@@ -193,7 +193,7 @@ export function RepairToolsManager({ title }: { title: string }) {
     <div className="space-y-6">
       <PageHeader
         title={title}
-        description="Scripts de réparation d’urgence (hors installation initiale). Lancement root sécurisé via allowlist."
+        subtitle="Scripts de réparation d’urgence (hors installation initiale). Lancement root sécurisé via allowlist."
       />
 
       {isLoading && (
