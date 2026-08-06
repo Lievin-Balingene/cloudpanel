@@ -35,7 +35,7 @@ if [[ -s "${MAPS_DIR}/opendkim-KeyTable" ]]; then
     [[ -f "$src" ]] || continue
     dest_dir="/etc/opendkim/keys/${domain}"
     mkdir -p "$dest_dir"
-    install -m 640 -o opendkim -g opendkim "$src" "${dest_dir}/${selector}.private"
+    install -m 600 -o opendkim -g opendkim "$src" "${dest_dir}/${selector}.private"
     echo "${key_id} ${domain}:${selector}:${dest_dir}/${selector}.private" >> /etc/opendkim/KeyTable
   done < "${MAPS_DIR}/opendkim-KeyTable"
 fi
@@ -44,6 +44,7 @@ if [[ -s "${MAPS_DIR}/opendkim-SigningTable" ]]; then
 fi
 chown opendkim:opendkim /etc/opendkim/KeyTable /etc/opendkim/SigningTable 2>/dev/null || true
 chmod 644 /etc/opendkim/KeyTable /etc/opendkim/SigningTable 2>/dev/null || true
+find /etc/opendkim/keys -type f -name '*.private' -exec chmod 600 {} \; -exec chown opendkim:opendkim {} \; 2>/dev/null || true
 
 for name in valiases virtual_mailboxes vdomains; do
   if [[ -f "${MAPS_DIR}/${name}" ]] && command -v postmap >/dev/null 2>&1; then

@@ -31,7 +31,7 @@ rollback_smtp() {
   echo "SMTP rétabli. DKIM NON actif. Voir /tmp/repair-smtp-rollback.log"
 }
 
-echo "=== repair-dkim (0.32.18) — safe + AUTH test + rollback ==="
+echo "=== repair-dkim (0.32.19) — safe + AUTH test + rollback ==="
 
 # 0) Toujours partir d'un master SANS milter (sauvegarde propre)
 install -m 644 "${REPO_DIR}/deploy/postfix/master.cf" /etc/postfix/master.cf
@@ -76,7 +76,8 @@ if [[ -s "${MAPS_DIR}/opendkim-KeyTable" ]]; then
     [[ -f "$src" ]] || continue
     dest_dir="/etc/opendkim/keys/${domain}"
     mkdir -p "$dest_dir"
-    install -m 640 -o opendkim -g opendkim "$src" "${dest_dir}/${selector}.private"
+    # 600 obligatoire: groupe opendkim multi-users (vzone/postfix) → SafeKeys refuse 640
+    install -m 600 -o opendkim -g opendkim "$src" "${dest_dir}/${selector}.private"
     echo "${key_id} ${domain}:${selector}:${dest_dir}/${selector}.private" >> /etc/opendkim/KeyTable
   done < "${MAPS_DIR}/opendkim-KeyTable"
 fi
@@ -84,8 +85,10 @@ if [[ -s "${MAPS_DIR}/opendkim-SigningTable" ]]; then
   cp -f "${MAPS_DIR}/opendkim-SigningTable" /etc/opendkim/SigningTable
 fi
 chown -R opendkim:opendkim /etc/opendkim
+chmod 755 /etc/opendkim /etc/opendkim/keys
+chmod 755 /etc/opendkim/keys/* 2>/dev/null || true
 chmod 644 /etc/opendkim/KeyTable /etc/opendkim/SigningTable /etc/opendkim/TrustedHosts
-chmod 640 /etc/opendkim/keys/*/*.private 2>/dev/null || true
+find /etc/opendkim/keys -type f -name '*.private' -exec chmod 600 {} \; -exec chown opendkim:opendkim {} \; 2>/dev/null || true
 chown opendkim:opendkim /etc/opendkim.conf
 
 if [[ ! -s /etc/opendkim/KeyTable ]] || [[ ! -s /etc/opendkim/SigningTable ]]; then
@@ -112,6 +115,13 @@ sleep 2
 if ! ss -ltn 2>/dev/null | grep -q ':8891 '; then
   echo "ERREUR: OpenDKIM n'écoute pas sur 127.0.0.1:8891"
   journalctl -u opendkim -n 40 --no-pager || true
+  exit 1
+fi
+# Détecter « key data is not secure » / error loading key avant d'activer le milter Postfix
+if journalctl -u opendkim --since "30 sec ago" --no-pager 2>/dev/null | grep -qiE 'key data is not secure|error loading key'; then
+  echo "ERREUR: OpenDKIM refuse les clés — permissions:"
+  ls -la /etc/opendkim/keys/*/* 2>/dev/null || true
+  journalctl -u opendkim --since "30 sec ago" --no-pager | tail -20 || true
   exit 1
 fi
 echo "opendkim :8891 OK"
