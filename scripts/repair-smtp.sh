@@ -60,33 +60,28 @@ sleep 1
 systemctl start postfix
 systemctl restart dovecot 2>/dev/null || true
 
-# Roundcube : FORCER tls://587 + auth (écrase toute ancienne valeur)
-if [[ -f "$RC_CFG" ]]; then
-  cp -a "$RC_CFG" "${RC_CFG}.bak.$(date +%s)"
-  # Supprimer toutes les lignes smtp_* existantes
-  sed -i "/\$config\['smtp_/d" "$RC_CFG"
-  cat >> "$RC_CFG" <<'PHP'
-
-// V-zone repair-smtp 0.32.10 — STARTTLS obligatoire sur submission
-$config['smtp_host'] = 'tls://127.0.0.1:587';
-$config['smtp_user'] = '%u';
-$config['smtp_pass'] = '%p';
-$config['smtp_conn_options'] = [
-    'ssl' => [
-        'verify_peer'       => false,
-        'verify_peer_name'  => false,
-        'allow_self_signed' => true,
-    ],
-];
-PHP
-  echo "[roundcube] smtp_host forcé:"
-  grep -n "smtp_host\|smtp_user\|smtp_pass\|smtp_conn" "$RC_CFG" | tail -n 20
-else
-  echo "[ERREUR] $RC_CFG manquant — lancez install-roundcube.sh"
+# Roundcube : ne PAS sed-détruire le fichier (cause « Oops »).
+# On délègue à repair-roundcube.sh qui régénère proprement si besoin.
+if [[ -f "${REPO_DIR}/scripts/repair-roundcube.sh" ]]; then
+  FORCE_RC_REWRITE=0 bash "${REPO_DIR}/scripts/repair-roundcube.sh" || true
+fi
+# Forcer smtp tls via sed ligne unique seulement si syntaxe OK
+RC_CFG="${RC_ROOT}/config/config.inc.php"
+if [[ -f "$RC_CFG" ]] && php -l "$RC_CFG" >/dev/null 2>&1; then
+  if grep -q "\$config\['smtp_host'\]" "$RC_CFG"; then
+    sed -i "s|\$config\['smtp_host'\] = '.*'|\$config['smtp_host'] = 'tls://127.0.0.1:587'|" "$RC_CFG"
+  fi
+  if grep -q "\$config\['smtp_user'\]" "$RC_CFG"; then
+    sed -i "s|\$config\['smtp_user'\] = '.*'|\$config['smtp_user'] = '%u'|" "$RC_CFG"
+  fi
+  if grep -q "\$config\['smtp_pass'\]" "$RC_CFG"; then
+    sed -i "s|\$config\['smtp_pass'\] = '.*'|\$config['smtp_pass'] = '%p'|" "$RC_CFG"
+  fi
+  echo "[roundcube] smtp:"
+  grep -n "smtp_host\|smtp_user\|smtp_pass" "$RC_CFG" | head -n 10
 fi
 
-# Vider opcache / recharger PHP
-systemctl restart php8.1-fpm 2>/dev/null || systemctl restart php8.2-fpm 2>/dev/null || systemctl restart php8.3-fpm 2>/dev/null || systemctl reload php*-fpm 2>/dev/null || true
+systemctl restart php8.1-fpm 2>/dev/null || systemctl restart php8.2-fpm 2>/dev/null || systemctl restart php8.3-fpm 2>/dev/null || true
 
 sleep 1
 echo
