@@ -19,7 +19,6 @@ submission inet n       -       n       -       -       smtpd
   -o smtpd_client_restrictions=permit_mynetworks,permit_sasl_authenticated,reject
   -o smtpd_relay_restrictions=permit_mynetworks,permit_sasl_authenticated,reject
   -o smtpd_recipient_restrictions=permit_mynetworks,permit_sasl_authenticated,reject_unauth_destination
-  -o smtpd_milters=inet:127.0.0.1:8891
   -o milter_macro_daemon_name=ORIGINATING
   -o milter_default_action=accept
 
@@ -33,7 +32,6 @@ smtps     inet  n       -       n       -       -       smtpd
   -o smtpd_client_restrictions=permit_mynetworks,permit_sasl_authenticated,reject
   -o smtpd_relay_restrictions=permit_mynetworks,permit_sasl_authenticated,reject
   -o smtpd_recipient_restrictions=permit_mynetworks,permit_sasl_authenticated,reject_unauth_destination
-  -o smtpd_milters=inet:127.0.0.1:8891
   -o milter_macro_daemon_name=ORIGINATING
   -o milter_default_action=accept
 
