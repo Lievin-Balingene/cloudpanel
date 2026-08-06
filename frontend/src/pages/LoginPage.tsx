@@ -57,8 +57,19 @@ export function LoginPage() {
       {/* Brand panel */}
       <aside className="relative z-10 hidden w-[46%] flex-col justify-between p-10 text-white lg:flex xl:p-14">
         <div className="animate-fade-in">
-          <p className="font-display text-4xl font-semibold tracking-tight xl:text-5xl">V-zone</p>
-          <p className="mt-2 text-sm font-medium uppercase tracking-[0.22em] text-white/55">Panel</p>
+          <div className="flex items-center gap-3">
+            <img
+              src="/vzone-mark.svg"
+              alt="V-zone"
+              className="h-12 w-12 rounded-xl shadow-md"
+              width={48}
+              height={48}
+            />
+            <div>
+              <p className="font-display text-4xl font-semibold tracking-tight xl:text-5xl">V-zone</p>
+              <p className="mt-1 text-sm font-medium uppercase tracking-[0.22em] text-white/55">Panel</p>
+            </div>
+          </div>
         </div>
         <div className="max-w-md animate-fade-up" style={{ animationDelay: "80ms" }}>
           <h1 className="font-display text-3xl font-medium leading-tight text-white/95 xl:text-4xl">
@@ -76,9 +87,12 @@ export function LoginPage() {
       {/* Form */}
       <main className="relative z-10 flex flex-1 items-center justify-center p-5 sm:p-8">
         <div className="w-full max-w-[420px] animate-fade-up rounded-2xl border border-white/10 bg-white p-7 shadow-login sm:p-9">
-          <div className="mb-7 lg:hidden">
-            <p className="font-display text-2xl font-semibold text-cp-navy">V-zone</p>
-            <p className="text-xs font-medium uppercase tracking-[0.2em] text-cp-muted">Panel</p>
+          <div className="mb-7 flex items-center gap-2.5 lg:hidden">
+            <img src="/vzone-mark.svg" alt="V-zone" className="h-9 w-9 rounded-lg" width={36} height={36} />
+            <div>
+              <p className="font-display text-2xl font-semibold text-cp-navy">V-zone</p>
+              <p className="text-xs font-medium uppercase tracking-[0.2em] text-cp-muted">Panel</p>
+            </div>
           </div>
 
           <div className="mb-6">

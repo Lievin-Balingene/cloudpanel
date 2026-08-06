@@ -9,6 +9,9 @@ from apps.server_setup.views import (
     PanelUpdateJobView,
     PanelUpdateOverviewView,
     PanelUpdateStartView,
+    RepairJobView,
+    RepairStartView,
+    RepairsOverviewView,
     ServerSetupView,
 )
 
@@ -17,6 +20,9 @@ urlpatterns = [
     path("panel-update/", PanelUpdateOverviewView.as_view(), name="panel-update-overview"),
     path("panel-update/start/", PanelUpdateStartView.as_view(), name="panel-update-start"),
     path("panel-update/jobs/<str:job_id>/", PanelUpdateJobView.as_view(), name="panel-update-job"),
+    path("repairs/", RepairsOverviewView.as_view(), name="repairs-overview"),
+    path("repairs/start/", RepairStartView.as_view(), name="repairs-start"),
+    path("repairs/jobs/<str:job_id>/", RepairJobView.as_view(), name="repairs-job"),
     path("ols/", OlsOverviewView.as_view(), name="ols-overview"),
     path("ols/reload/", OlsReloadView.as_view(), name="ols-reload"),
     path("ols/adopt/", OlsAdoptView.as_view(), name="ols-adopt"),

@@ -132,6 +132,11 @@ if [[ -f "${REPO_DIR}/scripts/install-update-agent.sh" ]]; then
   bash "${REPO_DIR}/scripts/install-update-agent.sh" || echo "[vzone] Avertissement: install-update-agent.sh a échoué"
 fi
 
+# Agent réparations WHM (scripts repair-* allowlistés)
+if [[ -f "${REPO_DIR}/scripts/install-repair-agent.sh" ]]; then
+  bash "${REPO_DIR}/scripts/install-repair-agent.sh" || echo "[vzone] Avertissement: install-repair-agent.sh a échoué"
+fi
+
 # OpenLiteSpeed (opt-in / auto — si installé ou flag)
 OLS_FLAG="${VZONE_OLS_ENABLED:-auto}"
 if [[ -f /etc/vzone/vzone.env ]]; then

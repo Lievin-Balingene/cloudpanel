@@ -12,7 +12,7 @@ export default {
           "orange-soft": "#fff3ec",
           navy: "#152536",
           "navy-soft": "#1e3348",
-          sidebar: "#1f2a36",
+          sidebar: "#2a4a6b",
           header: "#161d26",
           border: "#c5d0dc",
           canvas: "#d8e0ea",

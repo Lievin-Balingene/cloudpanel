@@ -32,6 +32,7 @@ import { WhmKubernetesPage } from "./pages/whm/WhmKubernetesPage";
 import { WhmTerminalPage } from "./pages/whm/WhmTerminalPage";
 import { WhmServerSetupPage } from "./pages/whm/WhmServerSetupPage";
 import { WhmPanelUpdatePage } from "./pages/whm/WhmPanelUpdatePage";
+import { WhmRepairsPage } from "./pages/whm/WhmRepairsPage";
 import { WhmOlsPage } from "./pages/whm/WhmOlsPage";
 import { WhmTransferPage } from "./pages/whm/WhmTransferPage";
 import { ClientHomePage } from "./pages/client/ClientHomePage";
@@ -118,6 +119,7 @@ export default function App() {
         <Route path="packages" element={<WhmPackagesPage />} />
         <Route path="server-setup" element={<WhmServerSetupPage />} />
         <Route path="panel-update" element={<WhmPanelUpdatePage />} />
+        <Route path="repairs" element={<WhmRepairsPage />} />
         <Route path="ols" element={<WhmOlsPage />} />
         <Route path="domains" element={<WhmDomainsPage />} />
         <Route path="files" element={<WhmFilesPage />} />

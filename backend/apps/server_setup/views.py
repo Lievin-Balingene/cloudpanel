@@ -12,6 +12,11 @@ from apps.server_setup.panel_update import (
     get_job_status,
     panel_update_overview,
 )
+from apps.server_setup.repairs import (
+    enqueue_repair,
+    get_repair_job_status,
+    repairs_overview,
+)
 from apps.server_setup.serializers import ServerSetupSerializer
 from apps.server_setup.services import get_setup_payload, update_setup
 
@@ -67,6 +72,32 @@ class PanelUpdateJobView(APIView):
 
     def get(self, request: Request, job_id: str) -> Response:
         return Response({"success": True, "data": get_job_status(job_id)})
+
+
+class RepairsOverviewView(APIView):
+    permission_classes = [IsAuthenticated, IsAdministrator]
+
+    def get(self, request: Request) -> Response:
+        return Response({"success": True, "data": repairs_overview()})
+
+
+class RepairStartView(APIView):
+    permission_classes = [IsAuthenticated, IsAdministrator]
+
+    def post(self, request: Request) -> Response:
+        script_id = str(request.data.get("script_id") or "").strip()
+        payload = enqueue_repair(
+            script_id=script_id,
+            requested_by=getattr(request.user, "username", "") or "",
+        )
+        return Response({"success": True, "data": payload}, status=202)
+
+
+class RepairJobView(APIView):
+    permission_classes = [IsAuthenticated, IsAdministrator]
+
+    def get(self, request: Request, job_id: str) -> Response:
+        return Response({"success": True, "data": get_repair_job_status(job_id)})
 
 
 class OlsOverviewView(APIView):

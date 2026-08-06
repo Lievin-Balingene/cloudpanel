@@ -385,4 +385,52 @@ def overview_for(user: User) -> dict[str, Any]:
         "account": account,
         "services": service_statuses() if user.role == User.Role.ADMINISTRATOR else [],
         "metrics": collect_system_metrics() if user.role != User.Role.CLIENT else None,
+        "statistics": _whm_statistics() if user.role != User.Role.CLIENT else None,
+    }
+
+
+def _whm_statistics() -> dict[str, Any]:
+    """Bloc Statistics style WHM (hostname, OS, load, produit)."""
+    import platform
+    import socket
+
+    from vzone import get_version
+
+    hostname = ""
+    try:
+        from apps.server_setup.services import get_setup_payload
+
+        payload = get_setup_payload()
+        hostname = (payload.get("hostname") or payload.get("os_hostname") or "").strip()
+    except Exception:  # noqa: BLE001
+        hostname = ""
+    if not hostname:
+        try:
+            hostname = socket.getfqdn() or socket.gethostname()
+        except OSError:
+            hostname = platform.node() or "—"
+
+    os_name = platform.system()
+    os_release = platform.release()
+    os_pretty = ""
+    try:
+        os_release_path = Path("/etc/os-release")
+        if os_release_path.is_file():
+            data = {}
+            for line in os_release_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                if "=" in line and not line.startswith("#"):
+                    k, _, v = line.partition("=")
+                    data[k] = v.strip().strip('"')
+            os_pretty = data.get("PRETTY_NAME") or data.get("NAME") or ""
+    except OSError:
+        os_pretty = ""
+    if not os_pretty:
+        os_pretty = f"{os_name} {os_release}".strip()
+
+    return {
+        "hostname": hostname,
+        "operating_system": os_pretty,
+        "product": f"V-zone WHM v{get_version()}",
+        "version": get_version(),
+        "platform": platform.machine() or "",
     }

@@ -7,7 +7,6 @@ import {
   LogOut,
   Moon,
   Sun,
-  LayoutGrid,
   AppWindow,
   FolderOpen,
   Upload,
@@ -372,9 +371,13 @@ export function ClientShell() {
       <header className="sticky top-0 z-20 border-b border-black/20 bg-cp-header text-white shadow-md">
         <div className="flex items-center justify-between px-4 py-2.5">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/20 backdrop-blur">
-              <LayoutGrid className="h-4 w-4" />
-            </div>
+            <img
+              src="/vzone-mark.svg"
+              alt="V-zone"
+              className="h-8 w-8 rounded-lg shadow-sm"
+              width={32}
+              height={32}
+            />
             <div>
               <p className="text-sm font-semibold tracking-wide">V-zone</p>
               <p className="text-[11px] text-white/85">Panneau client</p>

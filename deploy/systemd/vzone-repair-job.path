@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch V-zone repair job requests
+
+[Path]
+PathExistsGlob=/var/lib/vzone/repair/jobs/*.request
+MakeDirectory=true
+Unit=vzone-repair-job.service
+
+[Install]
+WantedBy=multi-user.target

@@ -155,6 +155,13 @@ export interface DashboardOverview {
   } | null;
   services: { name: string; active: boolean }[];
   metrics: SystemMetrics | null;
+  statistics?: {
+    hostname: string;
+    operating_system: string;
+    product: string;
+    version: string;
+    platform?: string;
+  } | null;
 }
 
 export interface HistoryPoint {
