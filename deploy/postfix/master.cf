@@ -1,11 +1,12 @@
-# Postfix master.cf — V-zone (Ubuntu/Debian compatible)
-# chroot=n pour SASL Dovecot + milter fiables
+# Postfix master.cf — V-zone
+# DKIM : milter UNIQUEMENT sur submission/smtps avec ORIGINATING (sinon 451)
 
 smtp      inet  n       -       n       -       -       smtpd
   -o smtpd_tls_security_level=may
+  -o smtpd_milters=
   -o milter_default_action=accept
 
-# Roundcube / clients (STARTTLS + SASL)
+# Roundcube (STARTTLS + SASL + DKIM sign)
 submission inet n       -       n       -       -       smtpd
   -o syslog_name=postfix/submission
   -o smtpd_tls_security_level=encrypt
@@ -18,6 +19,8 @@ submission inet n       -       n       -       -       smtpd
   -o smtpd_relay_restrictions=permit_mynetworks,permit_sasl_authenticated,reject
   -o smtpd_sender_restrictions=permit_mynetworks,permit_sasl_authenticated,reject
   -o smtpd_recipient_restrictions=permit_mynetworks,permit_sasl_authenticated,reject_unauth_destination
+  -o smtpd_milters=inet:127.0.0.1:8891
+  -o milter_macro_daemon_name=ORIGINATING
   -o milter_default_action=accept
 
 smtps     inet  n       -       n       -       -       smtpd
@@ -30,6 +33,8 @@ smtps     inet  n       -       n       -       -       smtpd
   -o smtpd_relay_restrictions=permit_mynetworks,permit_sasl_authenticated,reject
   -o smtpd_sender_restrictions=permit_mynetworks,permit_sasl_authenticated,reject
   -o smtpd_recipient_restrictions=permit_mynetworks,permit_sasl_authenticated,reject_unauth_destination
+  -o smtpd_milters=inet:127.0.0.1:8891
+  -o milter_macro_daemon_name=ORIGINATING
   -o milter_default_action=accept
 
 pickup    unix  n       -       n       60      1       pickup

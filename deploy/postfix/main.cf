@@ -77,8 +77,7 @@ virtual_minimum_uid = 5000
 virtual_transport = lmtp:unix:private/dovecot-lmtp
 virtual_mailbox_base = /
 
-# OpenDKIM milter — DÉSACTIVÉ par défaut (évite 451 Roundcube).
-# Activer via: sudo bash scripts/repair-dkim.sh
+# OpenDKIM — milters vides ici ; signature sur submission uniquement (master.cf + ORIGINATING)
 milter_default_action = accept
 milter_protocol = 6
 smtpd_milters =
