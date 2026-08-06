@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Active DKIM SANS casser le SMTP : test + rollback auto si échec.
-# Prérequis: envoi Roundcube déjà OK (repair-smtp.sh).
+# Active DKIM sans jamais laisser SMTP cassé.
+# - OpenDKIM On-InternalError=accept (pas de 451)
+# - milter inet:8891
+# - test AUTH+DATA obligatoire ; rollback auto si 4xx
+# Prérequis: repair-smtp.sh déjà OK.
 # Usage: sudo bash /opt/vzone-src/scripts/repair-dkim.sh
 set -uo pipefail
 [[ ${EUID:-0} -eq 0 ]] || { echo "Root requis"; exit 1; }
@@ -13,40 +16,35 @@ VZONE_ROOT="${VZONE_ROOT:-/opt/vzone}"
 
 MAPS_DIR="${VZONE_MAIL_MAPS_DIR:-/var/lib/vzone/mail/maps}"
 HOSTNAME_FQDN="$(hostname -f 2>/dev/null || hostname)"
-SOCK="/var/spool/postfix/opendkim/opendkim.sock"
+MILTER="inet:127.0.0.1:8891"
 MASTER_BAK="/etc/postfix/master.cf.vzone-pre-dkim"
+PY="${VZONE_ROOT}/backend/.venv/bin/python"
+[[ -x "$PY" ]] || PY="python3"
 
 rollback_smtp() {
-  echo "[rollback] Coupe milters — SMTP intact"
-  postconf -e "smtpd_milters="
-  postconf -e "non_smtpd_milters="
-  if [[ -f "$MASTER_BAK" ]]; then
-    cp -a "$MASTER_BAK" /etc/postfix/master.cf
-  elif [[ -f "${REPO_DIR}/deploy/postfix/master.cf" ]]; then
+  echo "[rollback] Coupe milters — SMTP prioritaire"
+  bash "${REPO_DIR}/scripts/repair-smtp.sh" >/tmp/repair-smtp-rollback.log 2>&1 || {
+    postconf -e "smtpd_milters=" "non_smtpd_milters=" "milter_default_action=accept"
     install -m 644 "${REPO_DIR}/deploy/postfix/master.cf" /etc/postfix/master.cf
-  fi
-  # Forcer milters vides dans master.cf submission
-  sed -i 's/-o smtpd_milters=.*/-o smtpd_milters=/' /etc/postfix/master.cf 2>/dev/null || true
-  systemctl reload postfix 2>/dev/null || systemctl restart postfix
-  echo "Relancez Roundcube — l'envoi doit marcher. DKIM non activé."
+    systemctl reload postfix 2>/dev/null || systemctl restart postfix
+  }
+  echo "SMTP rétabli. DKIM NON actif. Voir /tmp/repair-smtp-rollback.log"
 }
 
-echo "=== repair-dkim (0.32.17) — test + rollback ==="
+echo "=== repair-dkim (0.32.18) — safe + AUTH test + rollback ==="
 
-# 0) Sauvegarde master sans DKIM
+# 0) Toujours partir d'un master SANS milter (sauvegarde propre)
+install -m 644 "${REPO_DIR}/deploy/postfix/master.cf" /etc/postfix/master.cf
 cp -a /etc/postfix/master.cf "$MASTER_BAK"
+postconf -e "smtpd_milters=" "non_smtpd_milters=" "milter_default_action=accept"
 
-# 1) Préparer OpenDKIM (sans toucher Postfix encore)
-mkdir -p "${MAPS_DIR}/dkim" /var/spool/postfix/opendkim
-chown opendkim:postfix /var/spool/postfix/opendkim
-chmod 750 /var/spool/postfix/opendkim
-
+# 1) OpenDKIM (tables sous /etc/opendkim — lisibles)
+mkdir -p /etc/opendkim/keys "${MAPS_DIR}/dkim"
 install -m 644 "${REPO_DIR}/deploy/opendkim/opendkim.conf" /etc/opendkim.conf
-sed -i "s|__MAPS_DIR__|${MAPS_DIR}|g" /etc/opendkim.conf
-sed -i 's/^Mode.*/Mode                    s/' /etc/opendkim.conf
-
 install -m 644 "${REPO_DIR}/deploy/opendkim/TrustedHosts" /etc/opendkim/TrustedHosts
-for h in 127.0.0.1 localhost ::1 "$HOSTNAME_FQDN"; do
+PUB_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+for h in 127.0.0.1 localhost ::1 "$HOSTNAME_FQDN" ${PUB_IP:-}; do
+  [[ -n "$h" ]] || continue
   grep -qxF "$h" /etc/opendkim/TrustedHosts || echo "$h" >> /etc/opendkim/TrustedHosts
 done
 
@@ -64,112 +62,61 @@ write_mail_maps()
 PY
 fi
 
-chgrp -R opendkim "${MAPS_DIR}/dkim" 2>/dev/null || true
-chmod -R g+rX "${MAPS_DIR}/dkim" 2>/dev/null || true
-find "${MAPS_DIR}/dkim" -name '*.private' -exec chmod 640 {} \; 2>/dev/null || true
-# opendkim doit lire les maps
-chgrp opendkim "${MAPS_DIR}/opendkim-KeyTable" "${MAPS_DIR}/opendkim-SigningTable" 2>/dev/null || true
-chmod 640 "${MAPS_DIR}/opendkim-KeyTable" "${MAPS_DIR}/opendkim-SigningTable" 2>/dev/null || true
-# Accès au répertoire maps
-chmod 750 "$MAPS_DIR" 2>/dev/null || true
-usermod -aG "$(stat -c %G "$MAPS_DIR" 2>/dev/null || echo opendkim)" opendkim 2>/dev/null || true
+# Sync maps panel → /etc/opendkim + clés sous /etc/opendkim/keys/<domaine>/
+: > /etc/opendkim/KeyTable
+: > /etc/opendkim/SigningTable
+if [[ -s "${MAPS_DIR}/opendkim-KeyTable" ]]; then
+  while read -r line; do
+    [[ -z "$line" || "$line" =~ ^# ]] && continue
+    key_id="$(echo "$line" | awk '{print $1}')"
+    rest="$(echo "$line" | awk '{print $2}')"
+    domain="$(echo "$rest" | cut -d: -f1)"
+    selector="$(echo "$rest" | cut -d: -f2)"
+    src="$(echo "$rest" | cut -d: -f3-)"
+    [[ -f "$src" ]] || continue
+    dest_dir="/etc/opendkim/keys/${domain}"
+    mkdir -p "$dest_dir"
+    install -m 640 -o opendkim -g opendkim "$src" "${dest_dir}/${selector}.private"
+    echo "${key_id} ${domain}:${selector}:${dest_dir}/${selector}.private" >> /etc/opendkim/KeyTable
+  done < "${MAPS_DIR}/opendkim-KeyTable"
+fi
+if [[ -s "${MAPS_DIR}/opendkim-SigningTable" ]]; then
+  cp -f "${MAPS_DIR}/opendkim-SigningTable" /etc/opendkim/SigningTable
+fi
+chown -R opendkim:opendkim /etc/opendkim
+chmod 644 /etc/opendkim/KeyTable /etc/opendkim/SigningTable /etc/opendkim/TrustedHosts
+chmod 640 /etc/opendkim/keys/*/*.private 2>/dev/null || true
+chown opendkim:opendkim /etc/opendkim.conf
 
-if [[ ! -s "${MAPS_DIR}/opendkim-SigningTable" ]] || [[ ! -s "${MAPS_DIR}/opendkim-KeyTable" ]]; then
-  echo "ERREUR: tables DKIM vides — activez DKIM dans Email panel d'abord"
+if [[ ! -s /etc/opendkim/KeyTable ]] || [[ ! -s /etc/opendkim/SigningTable ]]; then
+  echo "ERREUR: tables DKIM vides — activez DKIM dans le panel Email d'abord"
   exit 1
 fi
 
-echo "--- SigningTable ---"
-cat "${MAPS_DIR}/opendkim-SigningTable"
-echo "--- KeyTable ---"
-cat "${MAPS_DIR}/opendkim-KeyTable"
+echo "--- SigningTable ---"; cat /etc/opendkim/SigningTable
+echo "--- KeyTable ---"; cat /etc/opendkim/KeyTable
 
-# Vérifier que chaque clé privée existe et est lisible par opendkim
-while read -r _line; do
-  [[ -z "$_line" || "$_line" =~ ^# ]] && continue
-  keypath="$(echo "$_line" | awk -F: '{print $NF}')"
-  if [[ ! -f "$keypath" ]]; then
-    echo "ERREUR: clé absente: $keypath"
-    exit 1
-  fi
-  if ! sudo -u opendkim test -r "$keypath" 2>/dev/null; then
-    echo "ERREUR: opendkim ne peut pas lire $keypath"
-    ls -la "$keypath"
-    exit 1
-  fi
-done < "${MAPS_DIR}/opendkim-KeyTable"
+# openssl check
+while read -r line; do
+  [[ -z "$line" || "$line" =~ ^# ]] && continue
+  kp="$(echo "$line" | awk -F: '{print $NF}')"
+  openssl rsa -in "$kp" -check -noout >/dev/null 2>&1 || {
+    echo "ERREUR: clé invalide $kp"; exit 1;
+  }
+done < /etc/opendkim/KeyTable
+echo "openssl clés OK"
 
 systemctl enable --now opendkim
-rm -f "$SOCK"
 systemctl restart opendkim
 sleep 2
-
-if [[ ! -S "$SOCK" ]]; then
-  echo "ERREUR: socket $SOCK absent"
+if ! ss -ltn 2>/dev/null | grep -q ':8891 '; then
+  echo "ERREUR: OpenDKIM n'écoute pas sur 127.0.0.1:8891"
   journalctl -u opendkim -n 40 --no-pager || true
   exit 1
 fi
-chmod 660 "$SOCK" 2>/dev/null || true
-chown opendkim:postfix "$SOCK" 2>/dev/null || true
+echo "opendkim :8891 OK"
 
-# 2) Valider clé PEM + test signature (CRLF obligatoire pour opendkim-testmsg)
-DOMAIN="$(awk 'NF{print $1; exit}' "${MAPS_DIR}/opendkim-SigningTable" | sed 's/.*@//')"
-KEYFILE="${MAPS_DIR}/dkim/${DOMAIN}/default.private"
-if [[ ! -f "$KEYFILE" ]]; then
-  echo "ERREUR: clé privée absente: $KEYFILE"
-  exit 1
-fi
-# Première ligne PEM (BOM / ligne vide = OpenDKIM lit en DER et échoue)
-head -1 "$KEYFILE" | grep -qE '^-----BEGIN (RSA )?PRIVATE KEY-----$' || {
-  echo "ERREUR: clé PEM invalide (attendu BEGIN RSA/PRIVATE KEY):"
-  head -3 "$KEYFILE" | cat -A
-  exit 1
-}
-if command -v openssl >/dev/null 2>&1; then
-  if ! openssl rsa -in "$KEYFILE" -check -noout 2>/tmp/dkim-openssl.txt; then
-    echo "ERREUR: openssl refuse la clé privée:"
-    cat /tmp/dkim-openssl.txt || true
-    exit 1
-  fi
-  echo "openssl clé OK"
-fi
-# opendkim-testmsg exige des CRLF (\r\n) — LF seul → dkim_chunk(): Syntax error
-if command -v opendkim-testmsg >/dev/null 2>&1; then
-  printf 'From: test@%s\r\nTo: a@b.com\r\nSubject: t\r\n\r\nhi\r\n' "$DOMAIN" \
-    | opendkim-testmsg -d "$DOMAIN" -s default -k "$KEYFILE" >/tmp/dkim-out.eml 2>/tmp/dkim-err.txt
-  if [[ $? -ne 0 ]] || ! grep -q '^DKIM-Signature:' /tmp/dkim-out.eml 2>/dev/null; then
-    echo "AVERTISSEMENT: opendkim-testmsg a échoué (clé openssl OK — on continue):"
-    cat /tmp/dkim-err.txt 2>/dev/null || true
-  else
-    echo "opendkim-testmsg OK"
-  fi
-fi
-
-# 3) Activer milter UNIQUEMENT sur submission + ORIGINATING (unix socket)
-MILTER="local:${SOCK}"
-postconf -e "milter_default_action=accept"
-postconf -e "milter_protocol=6"
-postconf -e "milter_connect_timeout=5s"
-postconf -e "milter_command_timeout=10s"
-postconf -e "smtpd_milters="
-postconf -e "non_smtpd_milters="
-
-# Postfix doit pouvoir ouvrir le socket OpenDKIM
-usermod -aG opendkim postfix 2>/dev/null || true
-# IP publique = host interne (signature)
-PUB_IP="$(postconf -h inet_interfaces 2>/dev/null | tr ' ,' '\n' | grep -E '^[0-9.]+$' | head -1 || true)"
-[[ -z "$PUB_IP" || "$PUB_IP" == "all" ]] && PUB_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
-for h in 127.0.0.1 localhost ::1 "$HOSTNAME_FQDN" ${PUB_IP:-}; do
-  [[ -n "$h" ]] || continue
-  grep -qxF "$h" /etc/opendkim/TrustedHosts || echo "$h" >> /etc/opendkim/TrustedHosts
-done
-systemctl restart opendkim
-sleep 1
-chmod 660 "$SOCK" 2>/dev/null || true
-chown opendkim:postfix "$SOCK" 2>/dev/null || true
-
-install -m 644 "${REPO_DIR}/deploy/postfix/master.cf" /etc/postfix/master.cf
-# IMPORTANT: lignes master.cf indentées — matcher "  -o smtpd_milters=" (pas ^-o)
+# 2) Injecter milter submission/smtps + ORIGINATING
 awk -v milter="$MILTER" '
   BEGIN { subm=0 }
   /^[a-zA-Z]/ {
@@ -179,54 +126,113 @@ awk -v milter="$MILTER" '
   /^[ \t]*-o[ \t]+smtpd_milters=/ && subm {
     print "  -o smtpd_milters=" milter
     print "  -o milter_macro_daemon_name=ORIGINATING"
+    print "  -o milter_default_action=accept"
     next
   }
   { print }
 ' /etc/postfix/master.cf > /tmp/master.cf.dkim
 mv /tmp/master.cf.dkim /etc/postfix/master.cf
 
-if ! grep -E '^[ \t]*-o[ \t]+smtpd_milters=.*opendkim' /etc/postfix/master.cf >/dev/null; then
-  echo "ERREUR: milter OpenDKIM non injecté dans master.cf"
-  grep -n 'smtpd_milters' /etc/postfix/master.cf || true
-  exit 1
+if ! grep -qE 'smtpd_milters=inet:127.0.0.1:8891' /etc/postfix/master.cf; then
+  echo "ERREUR: milter non injecté"; rollback_smtp; exit 1
 fi
-if ! grep -q 'milter_macro_daemon_name=ORIGINATING' /etc/postfix/master.cf; then
-  echo "ERREUR: ORIGINATING manquant dans master.cf"
-  exit 1
-fi
-echo "--- master.cf submission (milters) ---"
-awk '/^submission /{p=1} /^[a-zA-Z]/ && !/^submission /{p=0} p' /etc/postfix/master.cf | grep -E 'milter|ORIGINATING' || true
+
+postconf -e "milter_default_action=accept" "milter_protocol=6" \
+  "milter_connect_timeout=5s" "milter_command_timeout=15s" \
+  "smtpd_milters=" "non_smtpd_milters="
 
 systemctl reload postfix 2>/dev/null || systemctl restart postfix
 sleep 1
 
-# 4) Test SMTP :587 STARTTLS (sans auth) — milter ne doit pas faire planter le dialogue EHLO/STARTTLS
-if ! python3 - <<'PY'
-import socket, ssl, sys
+# 3) Test AUTH + DATA (là où Roundcube casse) — rollback si 4xx
+export VZONE_ROOT MAPS_DIR
+set +e
+"$PY" <<'PY'
+import os, ssl, sys
+from pathlib import Path
+
+root = os.environ.get("VZONE_ROOT", "/opt/vzone")
+sys.path.insert(0, str(Path(root) / "backend"))
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "vzone.settings.production")
 try:
-    raw = socket.create_connection(("127.0.0.1", 587), 5)
-    raw.recv(256)
-    raw.sendall(b"EHLO localhost\r\n"); raw.recv(1024)
-    raw.sendall(b"STARTTLS\r\n")
-    r = raw.recv(256).decode(errors="replace")
-    if not r.startswith("220"):
-        print("STARTTLS fail", r); sys.exit(1)
-    ctx = ssl.create_default_context(); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE
-    s = ctx.wrap_socket(raw, server_hostname="127.0.0.1")
-    s.sendall(b"EHLO localhost\r\n"); s.recv(1024)
-    s.sendall(b"QUIT\r\n"); s.close()
-    print("SMTP_DIALOG_OK")
+    import django
+    django.setup()
+    from apps.email.models import Mailbox
+    box = (
+        Mailbox.objects.filter(is_active=True, is_suspended=False)
+        .select_related("mail_domain")
+        .first()
+    )
+    if not box:
+        print("NO_MAILBOX")
+        sys.exit(2)
+    user = box.address
+    password = box.get_password_plain() if hasattr(box, "get_password_plain") else None
+    if not password:
+        print("NO_PASSWORD", user)
+        sys.exit(2)
 except Exception as e:
-    print("SMTP_DIALOG_FAIL", e); sys.exit(1)
+    print("DJANGO_FAIL", e)
+    sys.exit(2)
+
+import smtplib
+from email.message import EmailMessage
+
+msg = EmailMessage()
+msg["From"] = user
+msg["To"] = user
+msg["Subject"] = "vzone-dkim-probe"
+msg.set_content("dkim probe — safe to ignore")
+
+try:
+    with smtplib.SMTP("127.0.0.1", 587, timeout=20) as s:
+        s.ehlo()
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        s.starttls(context=context)
+        s.ehlo()
+        s.login(user, password)
+        s.send_message(msg)
+    print("AUTH_DATA_OK", user)
+except smtplib.SMTPDataError as e:
+    print("SMTP_DATA_FAIL", e.smtp_code, e.smtp_error)
+    sys.exit(1)
+except smtplib.SMTPResponseException as e:
+    print("SMTP_FAIL", getattr(e, "smtp_code", "?"), e)
+    sys.exit(1)
+except Exception as e:
+    print("SMTP_FAIL", e)
+    sys.exit(1)
 PY
-then
-  echo "ECHEC: dialogue SMTP cassé après activation milter"
+auth_rc=$?
+set -u
+# pipefail already on; do not re-enable -e (script uses set -uo pipefail)
+
+if [[ "$auth_rc" -eq 1 ]]; then
+  echo "ECHEC: AUTH/DATA SMTP après milter — rollback"
+  journalctl -u opendkim -u postfix --since "2 min ago" --no-pager 2>/dev/null | tail -40 || true
   rollback_smtp
   exit 1
+elif [[ "$auth_rc" -eq 2 ]]; then
+  echo "AVERTISSEMENT: pas de boîte/mot de passe pour test AUTH"
+  echo "Milter actif avec On-InternalError=accept. Si Roundcube fail → repair-smtp (timer auto)."
+else
+  echo "AUTH_DATA_OK — milter n'a pas cassé l'envoi"
+fi
+
+# 4) Timer garde SMTP
+if [[ -f "${REPO_DIR}/deploy/systemd/vzone-smtp-guard.timer" ]]; then
+  sed "s|/opt/vzone-src|${REPO_DIR}|g" \
+    "${REPO_DIR}/deploy/systemd/vzone-smtp-guard.service" > /etc/systemd/system/vzone-smtp-guard.service
+  install -m 644 "${REPO_DIR}/deploy/systemd/vzone-smtp-guard.timer" /etc/systemd/system/vzone-smtp-guard.timer
+  chmod 755 "${REPO_DIR}/scripts/vzone-smtp-guard.sh"
+  systemctl daemon-reload
+  systemctl enable --now vzone-smtp-guard.timer 2>/dev/null || true
 fi
 
 echo
-echo "DKIM milter activé sur submission ($MILTER) + ORIGINATING"
-echo "Testez Roundcube MAINTENANT."
-echo "Si « SMTP unavailable » → sudo bash ${REPO_DIR}/scripts/repair-smtp.sh"
+echo "DKIM milter: $MILTER (On-InternalError=accept)"
+echo "Si Roundcube fail encore → sudo bash ${REPO_DIR}/scripts/repair-smtp.sh"
+echo "Le timer vzone-smtp-guard coupe auto les milters si 451 revient."
 echo "=== repair-dkim OK ==="

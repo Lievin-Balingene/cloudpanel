@@ -1,0 +1,8 @@
+[Unit]
+Description=V-zone SMTP guard (coupe milters DKIM si 451)
+After=postfix.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/vzone-src/scripts/vzone-smtp-guard.sh
+Nice=10

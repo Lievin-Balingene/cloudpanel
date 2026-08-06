@@ -88,9 +88,13 @@ fi
 if [[ -f "${REPO_DIR}/scripts/install-mail.sh" ]]; then
   bash "${REPO_DIR}/scripts/install-mail.sh" || echo "[vzone] Avertissement: install-mail.sh a échoué"
 fi
-# DKIM / SPF / tables OpenDKIM (Roundcube → spam sinon)
+# DKIM / SPF / tables OpenDKIM (clés+DNS ; milters OFF — SMTP prioritaire)
 if [[ -f "${REPO_DIR}/scripts/repair-mail-reputation.sh" ]]; then
   bash "${REPO_DIR}/scripts/repair-mail-reputation.sh" || echo "[vzone] Avertissement: repair-mail-reputation.sh a échoué"
+fi
+# Ceinture: SMTP sans milters après chaque update
+if [[ -f "${REPO_DIR}/scripts/repair-smtp.sh" ]]; then
+  bash "${REPO_DIR}/scripts/repair-smtp.sh" || echo "[vzone] Avertissement: repair-smtp.sh a échoué"
 fi
 
 # phpMyAdmin + MariaDB + PHP-FPM

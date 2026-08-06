@@ -106,21 +106,25 @@ if [[ -f "${REPO_DIR}/scripts/vzone-mail-reload.sh" ]]; then
   /usr/local/sbin/vzone-mail-reload || true
 fi
 
-# OpenDKIM conf → maps panel (ne pas casser Postfix si tables vides)
+# OpenDKIM daemon seulement — JAMAIS activer milters ici (SMTP d'abord)
 if [[ -f "${REPO_DIR}/deploy/opendkim/opendkim.conf" ]]; then
+  mkdir -p /etc/opendkim/keys
   install -m 644 "${REPO_DIR}/deploy/opendkim/opendkim.conf" /etc/opendkim.conf
-  sed -i "s|__MAPS_DIR__|${MAPS_DIR}|g" /etc/opendkim.conf
   touch "${MAPS_DIR}/opendkim-KeyTable" "${MAPS_DIR}/opendkim-SigningTable"
+  touch /etc/opendkim/KeyTable /etc/opendkim/SigningTable
   chgrp opendkim "${MAPS_DIR}/opendkim-KeyTable" "${MAPS_DIR}/opendkim-SigningTable" 2>/dev/null || true
   chmod 640 "${MAPS_DIR}/opendkim-KeyTable" "${MAPS_DIR}/opendkim-SigningTable" 2>/dev/null || true
   systemctl restart opendkim 2>/dev/null || true
 fi
-# master.cf complet (sans chroot) — évite « SMTP service unavailable »
-if [[ -f "${REPO_DIR}/scripts/repair-smtp.sh" ]]; then
-  bash "${REPO_DIR}/scripts/repair-smtp.sh" || true
-elif [[ -f "${REPO_DIR}/deploy/postfix/master.cf" ]]; then
-  install -m 644 "${REPO_DIR}/deploy/postfix/master.cf" /etc/postfix/master.cf
-  systemctl restart postfix 2>/dev/null || true
+# Ne pas toucher aux milters Postfix ici (évite d'activer/désactiver DKIM au hasard).
+# SMTP: géré par repair-smtp.sh / vzone-smtp-guard. DKIM milter: repair-dkim.sh uniquement.
+if [[ -f "${REPO_DIR}/deploy/systemd/vzone-smtp-guard.timer" ]]; then
+  sed "s|/opt/vzone-src|${REPO_DIR}|g" \
+    "${REPO_DIR}/deploy/systemd/vzone-smtp-guard.service" > /etc/systemd/system/vzone-smtp-guard.service
+  install -m 644 "${REPO_DIR}/deploy/systemd/vzone-smtp-guard.timer" /etc/systemd/system/vzone-smtp-guard.timer
+  chmod 755 "${REPO_DIR}/scripts/vzone-smtp-guard.sh"
+  systemctl daemon-reload
+  systemctl enable --now vzone-smtp-guard.timer 2>/dev/null || true
 fi
 
 echo

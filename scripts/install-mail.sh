@@ -92,9 +92,9 @@ else
   fi
 fi
 
-# --- OpenDKIM ---
+# --- OpenDKIM (daemon prêt ; milters Postfix OFF par défaut — jamais casser SMTP) ---
+mkdir -p /etc/opendkim/keys
 install -m 644 "${REPO_DIR}/deploy/opendkim/opendkim.conf" /etc/opendkim.conf
-sed -i "s|__MAPS_DIR__|${MAPS_DIR}|g" /etc/opendkim.conf
 install -m 644 "${REPO_DIR}/deploy/opendkim/TrustedHosts" /etc/opendkim/TrustedHosts
 grep -qxF "127.0.0.1" /etc/opendkim/TrustedHosts || echo "127.0.0.1" >> /etc/opendkim/TrustedHosts
 grep -qxF "localhost" /etc/opendkim/TrustedHosts || echo "localhost" >> /etc/opendkim/TrustedHosts
@@ -105,19 +105,29 @@ touch "${MAPS_DIR}/opendkim-KeyTable" "${MAPS_DIR}/opendkim-SigningTable"
 touch /etc/opendkim/KeyTable /etc/opendkim/SigningTable
 chown -R opendkim:opendkim /etc/opendkim /etc/opendkim.conf
 chgrp opendkim "${MAPS_DIR}/opendkim-KeyTable" "${MAPS_DIR}/opendkim-SigningTable" 2>/dev/null || true
-chmod 640 "${MAPS_DIR}/opendkim-KeyTable" "${MAPS_DIR}/opendkim-SigningTable" /etc/opendkim/KeyTable /etc/opendkim/SigningTable
+chmod 644 /etc/opendkim/KeyTable /etc/opendkim/SigningTable
+chmod 640 "${MAPS_DIR}/opendkim-KeyTable" "${MAPS_DIR}/opendkim-SigningTable" 2>/dev/null || true
 usermod -aG opendkim "${VZONE_USER}" 2>/dev/null || true
-ln -sfn "$MAPS_DIR/dkim" /etc/opendkim/keys/vzone
+usermod -aG opendkim postfix 2>/dev/null || true
 if [[ -s "$MAPS_DIR/opendkim-KeyTable" ]]; then
   cp -f "$MAPS_DIR/opendkim-KeyTable" /etc/opendkim/KeyTable
   cp -f "$MAPS_DIR/opendkim-SigningTable" /etc/opendkim/SigningTable
   chown opendkim:opendkim /etc/opendkim/KeyTable /etc/opendkim/SigningTable
 fi
 
-# Socket milter
-mkdir -p /var/spool/postfix/opendkim
-chown opendkim:postfix /var/spool/postfix/opendkim
-chmod 750 /var/spool/postfix/opendkim
+# Garantir milters vides + garde SMTP
+postconf -e "smtpd_milters=" "non_smtpd_milters=" "milter_default_action=accept" 2>/dev/null || true
+if [[ -f "${REPO_DIR}/deploy/postfix/master.cf" ]]; then
+  install -m 644 "${REPO_DIR}/deploy/postfix/master.cf" /etc/postfix/master.cf
+fi
+if [[ -f "${REPO_DIR}/deploy/systemd/vzone-smtp-guard.timer" ]]; then
+  sed "s|/opt/vzone-src|${REPO_DIR}|g" \
+    "${REPO_DIR}/deploy/systemd/vzone-smtp-guard.service" > /etc/systemd/system/vzone-smtp-guard.service
+  install -m 644 "${REPO_DIR}/deploy/systemd/vzone-smtp-guard.timer" /etc/systemd/system/vzone-smtp-guard.timer
+  chmod 755 "${REPO_DIR}/scripts/vzone-smtp-guard.sh"
+  systemctl daemon-reload
+  systemctl enable --now vzone-smtp-guard.timer 2>/dev/null || true
+fi
 
 # Agent reload mail (API non-root → flag → systemd)
 install -m 755 "${REPO_DIR}/scripts/vzone-mail-reload.sh" /usr/local/sbin/vzone-mail-reload
