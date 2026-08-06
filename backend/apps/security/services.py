@@ -54,12 +54,23 @@ def update_policy(**fields: Any) -> SecurityPolicy:
 
 
 def client_ip(request) -> str | None:  # type: ignore[no-untyped-def]
-    forwarded = request.META.get("HTTP_X_FORWARDED_FOR") if request else None
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    if request:
-        return request.META.get("REMOTE_ADDR")
-    return None
+    """
+    IP client pour lockout / allowlist.
+    Derrière nginx local : X-Real-IP (écrasé par le proxy) — pas spoofable de l'extérieur.
+    Connexion directe : REMOTE_ADDR uniquement.
+    """
+    if not request:
+        return None
+    remote = (request.META.get("REMOTE_ADDR") or "").strip() or None
+    if remote in {"127.0.0.1", "::1"}:
+        real = (request.META.get("HTTP_X_REAL_IP") or "").strip()
+        if real:
+            return real
+        if bool(getattr(settings, "VZONE_TRUST_X_FORWARDED_FOR", False)):
+            forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
+            if forwarded:
+                return forwarded.split(",")[0].strip() or None
+    return remote
 
 
 def _ip_in_cidr(ip: str, cidr: str) -> bool:

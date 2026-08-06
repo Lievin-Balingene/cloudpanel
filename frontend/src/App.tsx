@@ -56,10 +56,24 @@ import { ClientWordPressPage } from "./pages/client/ClientWordPressPage";
 import { ClientKubernetesPage } from "./pages/client/ClientKubernetesPage";
 import { ClientTerminalPage } from "./pages/client/ClientTerminalPage";
 import { useAuthStore } from "./stores/auth";
+import {
+  detectPortalSync,
+  homePathFor,
+  roleAllowedOnPortal,
+} from "./lib/portal";
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const token = useAuthStore((s) => s.accessToken);
-  const mustChange = useAuthStore((s) => s.user?.must_change_password);
+  const user = useAuthStore((s) => s.user);
+  const clearSession = useAuthStore((s) => s.clearSession);
+  const mustChange = user?.must_change_password;
+  const portal = detectPortalSync();
+  const wrongPortal = Boolean(token && user && !roleAllowedOnPortal(user.role, portal));
+
+  if (wrongPortal) {
+    clearSession();
+    return <Navigate to="/login" replace />;
+  }
   if (!token) return <Navigate to="/login" replace />;
   if (mustChange) return <Navigate to="/change-password" replace />;
   return <>{children}</>;
@@ -67,12 +81,16 @@ function RequireAuth({ children }: { children: ReactNode }) {
 
 function RequireWhm({ children }: { children: ReactNode }) {
   const role = useAuthStore((s) => s.user?.role);
+  const portal = detectPortalSync();
+  if (portal === "client") return <Navigate to="/panel" replace />;
   if (role === "client") return <Navigate to="/panel" replace />;
   return <>{children}</>;
 }
 
 function RequireClient({ children }: { children: ReactNode }) {
   const role = useAuthStore((s) => s.user?.role);
+  const portal = detectPortalSync();
+  if (portal === "admin") return <Navigate to="/whm" replace />;
   if (role === "administrator" || role === "reseller") {
     return <Navigate to="/whm" replace />;
   }
@@ -84,8 +102,7 @@ function PostLoginRedirect() {
   const mustChange = useAuthStore((s) => s.user?.must_change_password);
   if (!role) return <Navigate to="/login" replace />;
   if (mustChange) return <Navigate to="/change-password" replace />;
-  if (role === "client") return <Navigate to="/panel" replace />;
-  return <Navigate to="/whm" replace />;
+  return <Navigate to={homePathFor(role, detectPortalSync())} replace />;
 }
 
 export default function App() {

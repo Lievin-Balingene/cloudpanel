@@ -1,9 +1,17 @@
 # Locations communes du panel SPA + API (inclus depuis vzone.conf / vzone-ports.conf)
+# Attendu: set $vzone_portal admin|client|shared; dans le server parent.
 client_max_body_size 2048m;
 client_body_timeout 3600s;
 
 root /opt/vzone/frontend/dist;
 index index.html;
+
+# Indique au SPA quel portail est actif (admin / client / shared)
+location = /portal.json {
+    default_type application/json;
+    add_header Cache-Control "no-store";
+    return 200 '{"portal":"$vzone_portal"}';
+}
 
 location /assets/ {
     try_files $uri =404;
@@ -19,6 +27,7 @@ location ^~ /api/v1/files/upload/ {
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Vzone-Portal $vzone_portal;
     proxy_set_header Connection "";
     client_max_body_size 2048m;
     client_body_timeout 3600s;
@@ -36,6 +45,7 @@ location /api/ {
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Vzone-Portal $vzone_portal;
     proxy_set_header Connection "";
     proxy_connect_timeout 60s;
     proxy_send_timeout 300s;
@@ -52,6 +62,7 @@ location /ws/ {
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Vzone-Portal $vzone_portal;
     proxy_read_timeout 86400;
 }
 
@@ -61,6 +72,7 @@ location /admin/ {
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Vzone-Portal $vzone_portal;
 }
 
 location /static/ {

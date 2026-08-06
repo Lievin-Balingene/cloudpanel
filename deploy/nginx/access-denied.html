@@ -4,73 +4,143 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="robots" content="noindex,nofollow" />
-  <title>Access Denied</title>
+  <title>Default Web Site Page</title>
   <style>
+    /* Style proche de la page SORRY! cPanel (cgi-sys/defaultwebpage.cgi) */
     * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
     body {
-      margin: 0;
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 1.5rem;
-      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-      background: #f5f5f5;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 14px;
+      line-height: 1.55;
       color: #333;
-    }
-    .wrap {
-      width: 100%;
-      max-width: 560px;
       background: #fff;
-      border: 1px solid #d9d9d9;
-      box-shadow: 0 1px 3px rgba(0,0,0,.08);
-      padding: 2rem 1.75rem;
     }
-    h1 {
-      margin: 0 0 1rem;
-      font-size: 1.75rem;
+    a { color: #ff6c2c; text-decoration: underline; }
+    a:hover { color: #e55a1a; }
+    .page {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 48px 28px 64px;
+    }
+    .sorry {
+      margin: 0 0 18px;
+      font-size: 48px;
+      font-weight: 700;
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+      color: #ff6c2c;
+    }
+    .intro {
+      margin: 0 0 22px;
+      font-size: 15px;
+      color: #444;
+    }
+    .lead {
+      margin: 0 0 8px;
+      font-size: 15px;
       font-weight: 700;
       color: #222;
     }
-    p {
-      margin: 0 0 0.85rem;
-      font-size: 0.95rem;
-      line-height: 1.55;
-      color: #444;
+    .reason {
+      margin: 0 0 22px;
     }
-    .note {
-      margin-top: 1.25rem;
-      padding-top: 1rem;
-      border-top: 1px solid #eee;
-      font-size: 0.85rem;
-      color: #777;
+    .reason h2 {
+      margin: 0 0 6px;
+      font-size: 16px;
+      font-weight: 700;
+      color: #222;
     }
-    code {
-      font-family: Consolas, "Courier New", monospace;
-      font-size: 0.88em;
-      background: #f0f0f0;
-      padding: 0.1em 0.35em;
-      border-radius: 3px;
+    .reason p {
+      margin: 0;
+      color: #555;
+    }
+    .reason p + p { margin-top: 8px; }
+    .footer {
+      margin-top: 40px;
+      padding-top: 22px;
+      border-top: 1px solid #e6e6e6;
+      text-align: center;
+      color: #888;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    .footer .brand {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-bottom: 6px;
+      color: #1a2f45;
+      font-weight: 700;
+      font-size: 15px;
+      text-decoration: none;
+    }
+    .footer .brand svg {
+      width: 22px;
+      height: 22px;
+      border-radius: 5px;
+    }
+    .footer .copy {
+      margin: 0;
+      color: #999;
+      font-size: 12px;
+    }
+    @media (max-width: 560px) {
+      .page { padding: 32px 18px 48px; }
+      .sorry { font-size: 40px; }
     }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <h1>Access Denied</h1>
-    <p>
-      You have attempted to access a restricted area of this server using an IP address
-      (or a hostname that is not configured for this service).
+  <div class="page">
+    <h1 class="sorry">SORRY!</h1>
+
+    <p class="intro">
+      If you are the owner of this website, please contact your hosting provider:
+      <a href="mailto:__WEBMASTER_EMAIL__">__WEBMASTER_EMAIL__</a>
     </p>
-    <p>
-      Direct IP access to this website is not permitted. Please use the correct domain name
-      and service port provided by your hosting administrator.
-    </p>
-    <p class="note">
-      FR — Accès refusé : l’accès direct par adresse IP n’est pas autorisé.
-      Utilisez le nom de domaine et le port du service (Admin, Client ou Webmail).
-      <br /><br />
-      Ports V-zone : Admin <code>:9086</code> · Client <code>:9082</code> · Webmail <code>:9095</code>
-    </p>
+
+    <p class="lead">It is possible you have reached this page because:</p>
+
+    <div class="reason">
+      <h2>The IP address has changed.</h2>
+      <p>
+        The IP address for this domain may have changed recently. Check your DNS settings
+        to verify that the domain is set up correctly. It may take 8–24 hours for DNS changes
+        to propagate. It may be possible to restore access to this site by following these
+        instructions for clearing your DNS cache.
+      </p>
+    </div>
+
+    <div class="reason">
+      <h2>There has been a server misconfiguration.</h2>
+      <p>
+        You must verify that your hosting provider has the correct IP address configured for
+        your web server settings and DNS records. A restart of the web server may be required
+        for new settings to take effect.
+      </p>
+    </div>
+
+    <div class="reason">
+      <h2>The site may have moved to a different server.</h2>
+      <p>
+        The URL for this domain may have changed or the hosting provider may have moved the
+        account to a different server.
+      </p>
+    </div>
+
+    <div class="footer">
+      <a class="brand" href="https://__SERVER_HOSTNAME__/" rel="noopener">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" aria-hidden="true">
+          <rect width="64" height="64" rx="14" fill="#1a2f45"/>
+          <path d="M18 18 L32 46 L46 18" fill="none" stroke="#fff" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="32" cy="46" r="3.2" fill="#ff6c2c"/>
+        </svg>
+        V-zone
+      </a>
+      <p class="copy">Copyright &copy; __COPYRIGHT_YEAR__ V-zone. All rights reserved.</p>
+    </div>
   </div>
 </body>
 </html>

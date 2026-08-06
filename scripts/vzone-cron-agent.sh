@@ -65,6 +65,29 @@ def process(req: Path) -> None:
             write_result(result, {"ok": False, "error": "filename invalide"})
             return
 
+        # Chaque ligne active doit tourner sous le username du compte (anti escalade)
+        for raw in content.splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) < 7:
+                write_result(result, {"ok": False, "error": f"ligne cron invalide: {line[:80]}"})
+                return
+            run_user = parts[5]
+            if run_user != username:
+                write_result(
+                    result,
+                    {
+                        "ok": False,
+                        "error": f"utilisateur cron refusé ({run_user} != {username})",
+                    },
+                )
+                return
+            if run_user in {"root", "vzone", "www-data", "nobody"}:
+                write_result(result, {"ok": False, "error": f"utilisateur privilégié interdit: {run_user}"})
+                return
+
         target = CRON_D / filename
         # Assurer le dossier logs du compte
         if home.startswith("/home/") and ".." not in home:

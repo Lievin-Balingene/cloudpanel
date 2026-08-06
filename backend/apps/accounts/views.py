@@ -98,13 +98,17 @@ class TwoFactorSetupView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request: Request) -> Response:
+        from apps.accounts.services import _totp_plain, provisioning_uri
+
         uri = provisioning_uri(request.user)
+        # Secret en clair uniquement pendant l'enrollment (2FA pas encore active)
+        secret = "" if request.user.two_factor_enabled else _totp_plain(request.user)
         return Response(
             {
                 "success": True,
                 "data": {
-                    "otpauth_uri": uri,
-                    "secret": request.user.two_factor_secret,
+                    "otpauth_uri": uri if not request.user.two_factor_enabled else "",
+                    "secret": secret,
                     "two_factor_enabled": request.user.two_factor_enabled,
                 },
             }
@@ -249,12 +253,20 @@ class SuspendUserView(APIView):
     permission_classes = [IsAuthenticated, CanManageUsers]
 
     def post(self, request: Request, pk: int) -> Response:
+        # Même scope que UserDetailView (anti-IDOR : pas de get() global)
+        qs = User.objects.all()
+        if request.user.role == User.Role.ADMINISTRATOR:
+            pass
+        elif request.user.role == User.Role.RESELLER:
+            qs = qs.filter(parent=request.user)
+        else:
+            return Response(status=status.HTTP_403_FORBIDDEN)
+
         try:
-            target = User.objects.get(pk=pk)
+            target = qs.get(pk=pk)
         except User.DoesNotExist:
             return Response(status=status.HTTP_404_NOT_FOUND)
-        if request.user.role == User.Role.RESELLER and target.parent_id != request.user.pk:
-            return Response(status=status.HTTP_403_FORBIDDEN)
+
         if target.pk == request.user.pk:
             return Response(
                 {
@@ -266,6 +278,8 @@ class SuspendUserView(APIView):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if target.role == User.Role.ADMINISTRATOR and request.user.role != User.Role.ADMINISTRATOR:
+            return Response(status=status.HTTP_403_FORBIDDEN)
         suspended = request.data.get("suspended", True)
         if isinstance(suspended, str):
             suspended = suspended.lower() in {"1", "true", "yes"}
@@ -283,8 +297,25 @@ class SuspendUserView(APIView):
 
 
 class RefreshTokenView(TokenRefreshView):
-    """Rafraîchissement JWT standard encapsulé."""
+    """Rafraîchissement JWT — refuse si le rôle ne correspond pas au port (Admin/Client)."""
 
     def post(self, request: Request, *args, **kwargs) -> Response:
+        from rest_framework_simplejwt.exceptions import TokenError
+        from rest_framework_simplejwt.tokens import RefreshToken
+
+        from apps.accounts.models import User
+        from apps.security.portal import assert_role_allowed_on_portal, request_portal
+
+        portal = request_portal(request)
+        raw = request.data.get("refresh") or ""
+        if raw and portal in {"admin", "client", "webmail"}:
+            try:
+                token = RefreshToken(raw)
+                user = User.objects.get(pk=token.get("user_id"))
+            except (TokenError, User.DoesNotExist, KeyError, TypeError, ValueError):
+                user = None
+            if user is not None:
+                assert_role_allowed_on_portal(user, portal)
+
         response = super().post(request, *args, **kwargs)
         return Response({"success": True, "data": response.data}, status=response.status_code)

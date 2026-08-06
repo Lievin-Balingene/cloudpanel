@@ -83,7 +83,7 @@ HTML
   chmod 644 /var/lib/vzone/suspended/index.html
 fi
 
-# Page Access Denied (IP nue :80/:443)
+# Page Access Denied (IP nue :80/:443) — style « SORRY! » cPanel
 DENIED_SRC=""
 for candidate in \
   "${SCRIPT_DIR}/../deploy/nginx/access-denied.html" \
@@ -91,10 +91,20 @@ for candidate in \
   [[ -f "$candidate" ]] && DENIED_SRC="$candidate" && break
 done
 mkdir -p /var/lib/vzone/nginx
+SERVER_HOSTNAME_FQDN="$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo server.vzonecloud.com)"
+SERVER_HOSTNAME_FQDN="${PANEL_PRIMARY:-$SERVER_HOSTNAME_FQDN}"
+WEBMASTER_EMAIL="${VZONE_WEBMASTER_EMAIL:-webmaster@${SERVER_HOSTNAME_FQDN}}"
+COPYRIGHT_YEAR="$(date +%Y)"
 if [[ -n "$DENIED_SRC" ]]; then
-  install -m 644 "$DENIED_SRC" /var/lib/vzone/nginx/access-denied.html
+  sed \
+    -e "s|__WEBMASTER_EMAIL__|${WEBMASTER_EMAIL}|g" \
+    -e "s|__SERVER_HOSTNAME__|${SERVER_HOSTNAME_FQDN}|g" \
+    -e "s|__COPYRIGHT_YEAR__|${COPYRIGHT_YEAR}|g" \
+    "$DENIED_SRC" > /var/lib/vzone/nginx/access-denied.html
+  chmod 644 /var/lib/vzone/nginx/access-denied.html
+  echo "[vzone] Page Access Denied (SORRY!) → webmaster=${WEBMASTER_EMAIL}"
 else
-  echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Access Denied</title></head><body><h1>Access Denied</h1></body></html>' \
+  echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>SORRY!</title></head><body><h1>SORRY!</h1></body></html>' \
     > /var/lib/vzone/nginx/access-denied.html
   chmod 644 /var/lib/vzone/nginx/access-denied.html
 fi

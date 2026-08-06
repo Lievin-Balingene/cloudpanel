@@ -9,7 +9,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts.models import User
-from apps.core.permissions import IsResellerOrAdmin
+from apps.core.permissions import IsAdministrator, IsResellerOrAdmin
 from apps.security.models import AccountLockout, IpAccessRule, LoginAttempt
 from apps.security.serializers import (
     AccountLockoutSerializer,
@@ -31,14 +31,14 @@ from apps.security.services import (
 
 
 class SecurityOverviewView(APIView):
-    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrator]
 
     def get(self, request: Request) -> Response:
         return Response({"success": True, "data": overview_for(request.user)})
 
 
 class SecurityPolicyView(APIView):
-    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrator]
 
     def get(self, request: Request) -> Response:
         return Response({"success": True, "data": SecurityPolicySerializer(get_policy()).data})
@@ -51,7 +51,7 @@ class SecurityPolicyView(APIView):
 
 
 class IpAccessRuleListCreateView(APIView):
-    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrator]
 
     def get(self, request: Request) -> Response:
         qs = IpAccessRule.objects.all()
@@ -68,7 +68,7 @@ class IpAccessRuleListCreateView(APIView):
 
 
 class IpAccessRuleDetailView(APIView):
-    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrator]
 
     def delete(self, request: Request, pk: int) -> Response:
         rule = get_object_or_404(IpAccessRule, pk=pk)
@@ -77,7 +77,7 @@ class IpAccessRuleDetailView(APIView):
 
 
 class LoginAttemptListView(APIView):
-    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrator]
 
     def get(self, request: Request) -> Response:
         qs = LoginAttempt.objects.all()[:100]
@@ -85,7 +85,7 @@ class LoginAttemptListView(APIView):
 
 
 class AccountLockoutListView(APIView):
-    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrator]
 
     def get(self, request: Request) -> Response:
         qs = AccountLockout.objects.all()[:100]
@@ -93,7 +93,7 @@ class AccountLockoutListView(APIView):
 
 
 class AccountUnlockView(APIView):
-    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrator]
 
     def post(self, request: Request) -> Response:
         key = (request.data.get("key") or "").strip()

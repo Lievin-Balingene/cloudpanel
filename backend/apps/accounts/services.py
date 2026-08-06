@@ -91,6 +91,12 @@ def provision_account_home(user: User) -> Path:
     user.save(
         update_fields=["username", "system_username", "home_directory", "updated_at"]
     )
+    try:
+        from apps.accounts.linux_users import ensure_linux_user
+
+        ensure_linux_user(user, home=home)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Provision OS user skip pour %s: %s", user.username, exc)
     logger.info("Home provisionné pour %s → %s", user.username, home)
     return home
 
@@ -287,23 +293,43 @@ def generate_totp_secret() -> str:
     return pyotp.random_base32()
 
 
+def _totp_plain(user: User) -> str:
+    """Déchiffre le secret TOTP (compat clair historique)."""
+    raw = user.two_factor_secret or ""
+    if not raw:
+        return ""
+    if raw.startswith("gAAAA"):
+        from apps.databases.crypto import decrypt_secret
+
+        return decrypt_secret(raw) or ""
+    return raw
+
+
+def _store_totp_secret(user: User, plain: str) -> None:
+    from apps.databases.crypto import encrypt_secret
+
+    user.two_factor_secret = encrypt_secret(plain) if plain else ""
+
+
 def verify_totp(user: User, otp: str) -> bool:
-    if not user.two_factor_secret:
+    secret = _totp_plain(user)
+    if not secret:
         return False
-    totp = pyotp.TOTP(user.two_factor_secret)
+    totp = pyotp.TOTP(secret)
     return totp.verify(otp, valid_window=1)
 
 
 def provisioning_uri(user: User) -> str:
-    if not user.two_factor_secret:
-        user.two_factor_secret = generate_totp_secret()
+    secret = _totp_plain(user)
+    if not secret:
+        secret = generate_totp_secret()
+        _store_totp_secret(user, secret)
         user.save(update_fields=["two_factor_secret"])
-    totp = pyotp.TOTP(user.two_factor_secret)
+    totp = pyotp.TOTP(secret)
     return totp.provisioning_uri(name=user.email, issuer_name="V-zone Panel")
 
 
 def _client_ip(request) -> str | None:  # type: ignore[no-untyped-def]
-    forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.META.get("REMOTE_ADDR")
+    from apps.security.services import client_ip
+
+    return client_ip(request)

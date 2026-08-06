@@ -8,7 +8,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.permissions import IsResellerOrAdmin
+from apps.core.permissions import IsAdministrator
 from apps.firewall.models import Fail2BanBan, Fail2BanJail, FirewallEventLog, FirewallRule
 from apps.firewall.serializers import (
     BanIpSerializer,
@@ -34,14 +34,14 @@ from apps.firewall.services import (
 
 
 class FirewallOverviewView(APIView):
-    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrator]
 
     def get(self, request: Request) -> Response:
         return Response({"success": True, "data": overview_for(request.user)})
 
 
 class FirewallRuleListCreateView(APIView):
-    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrator]
 
     def get(self, request: Request) -> Response:
         qs = FirewallRule.objects.all()
@@ -59,7 +59,7 @@ class FirewallRuleListCreateView(APIView):
 
 
 class FirewallRuleDetailView(APIView):
-    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrator]
 
     def get(self, request: Request, pk: int) -> Response:
         rule = get_object_or_404(FirewallRule, pk=pk)
@@ -79,7 +79,7 @@ class FirewallRuleDetailView(APIView):
 
 
 class FirewallRuleApplyView(APIView):
-    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrator]
 
     def post(self, request: Request, pk: int) -> Response:
         rule = get_object_or_404(FirewallRule, pk=pk)
@@ -88,7 +88,7 @@ class FirewallRuleApplyView(APIView):
 
 
 class Fail2BanJailListView(APIView):
-    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrator]
 
     def get(self, request: Request) -> Response:
         sync = request.query_params.get("sync", "0") == "1"
@@ -101,7 +101,7 @@ class Fail2BanJailListView(APIView):
 
 
 class Fail2BanBanListView(APIView):
-    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrator]
 
     def get(self, request: Request) -> Response:
         qs = Fail2BanBan.objects.select_related("jail", "created_by")
@@ -116,7 +116,7 @@ class Fail2BanBanListView(APIView):
 
 
 class Fail2BanBanView(APIView):
-    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrator]
 
     def post(self, request: Request) -> Response:
         serializer = BanIpSerializer(data=request.data)
@@ -135,7 +135,7 @@ class Fail2BanBanView(APIView):
 
 
 class Fail2BanUnbanView(APIView):
-    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrator]
 
     def post(self, request: Request) -> Response:
         serializer = UnbanIpSerializer(data=request.data)
@@ -150,7 +150,7 @@ class Fail2BanUnbanView(APIView):
 
 
 class Fail2BanSyncView(APIView):
-    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrator]
 
     def post(self, request: Request) -> Response:
         jails = sync_fail2ban(actor=request.user)
@@ -158,7 +158,7 @@ class Fail2BanSyncView(APIView):
 
 
 class FirewallEventLogListView(APIView):
-    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrator]
 
     def get(self, request: Request) -> Response:
         qs = FirewallEventLog.objects.select_related("actor")[:100]

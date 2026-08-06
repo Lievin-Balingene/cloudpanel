@@ -105,6 +105,33 @@ def _validate_command(command: str) -> str:
             code="command_too_long",
             status_code=400,
         )
+    # Anti escalade : pas de sudo/su ni chemins système sensibles
+    lowered = cmd.lower()
+    blocked = (
+        "sudo",
+        "pkexec",
+        "runuser",
+        "doas",
+        "/etc/passwd",
+        "/etc/shadow",
+        "/etc/sudoers",
+        "/root/",
+        "chmod 777 /",
+        "chown root",
+    )
+    for token in blocked:
+        if token in lowered:
+            raise VZoneAPIException(
+                detail=f"Commande refusée (motif sécurité: {token}).",
+                code="command_forbidden",
+                status_code=400,
+            )
+    if re.search(r"(^|[\s;|&`])su(\s|$)", cmd):
+        raise VZoneAPIException(
+            detail="Commande refusée (su).",
+            code="command_forbidden",
+            status_code=400,
+        )
     return cmd
 
 
@@ -113,11 +140,28 @@ def apply_common_schedule(common: str) -> tuple[str, str, str, str, str] | None:
 
 
 def cron_run_user() -> str:
+    """Déprécié — les jobs doivent tourner sous system_username du compte."""
     return str(getattr(settings, "VZONE_CRON_RUN_USER", None) or "vzone")
 
 
 def system_user_for(owner: User) -> str:
     return (owner.system_username or owner.username or "").strip().lower()
+
+
+def _cron_run_as(owner: User) -> str:
+    """UID Linux du compte — jamais root/vzone pour un client."""
+    from apps.accounts.linux_users import ensure_linux_user, jail_username_for
+    from apps.accounts.services import RESERVED_USERNAMES
+
+    name = jail_username_for(owner)
+    if name in RESERVED_USERNAMES or name in {"root", "vzone"}:
+        raise VZoneAPIException(
+            detail="Compte système invalide pour cron.",
+            code="invalid_cron_user",
+            status_code=400,
+        )
+    ensure_linux_user(owner)
+    return name
 
 
 def jobs_dir() -> Path:
@@ -132,7 +176,7 @@ def jobs_dir() -> Path:
 def build_cron_d_content(owner: User, jobs: list[CronJob]) -> str:
     """Génère le fichier /etc/cron.d/vzone-<user> (format cron.d = 6 champs + user)."""
     home = user_home(owner)
-    run_as = cron_run_user()
+    run_as = _cron_run_as(owner)
     mailto = ""
     for job in jobs:
         if job.is_active and job.email_to:
@@ -149,7 +193,7 @@ def build_cron_d_content(owner: User, jobs: list[CronJob]) -> str:
     if mailto:
         lines.append(f"MAILTO={mailto}")
     else:
-        lines.append("MAILTO=\"\"")
+        lines.append('MAILTO=""')
     lines.append("")
 
     active = [j for j in jobs if j.is_active]
@@ -162,12 +206,10 @@ def build_cron_d_content(owner: User, jobs: list[CronJob]) -> str:
     for job in active:
         label = (job.label or f"job-{job.pk}").replace("\n", " ").strip()
         lines.append(f"# VZONE_ID={job.pk} {label}")
-        # cd home puis commande ; logs dans ~/logs/cron-<id>.log
         cmd = (
             f"cd {home} && ( {job.command} ) "
             f">>{log_dir}/cron-{job.pk}.log 2>&1"
         )
-        # Échapper % pour cron (sauf dans quotes — on les double)
         cmd_safe = cmd.replace("%", "\\%")
         lines.append(
             f"{job.minute} {job.hour} {job.day} {job.month} {job.weekday} "

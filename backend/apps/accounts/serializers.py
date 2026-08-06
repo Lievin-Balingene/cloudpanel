@@ -352,6 +352,20 @@ class LoginSerializer(serializers.Serializer):
                 status_code=403,
             )
 
+        # Portail lié au port nginx (X-Vzone-Portal) — rejette le mauvais rôle
+        from apps.security.portal import assert_role_allowed_on_portal, request_portal
+
+        try:
+            assert_role_allowed_on_portal(user, request_portal(request))
+        except VZoneAPIException as exc:
+            record_login_attempt(
+                email=email,
+                ip=ip,
+                success=False,
+                message=f"wrong portal {request_portal(request)}",
+            )
+            raise exc
+
         if user.two_factor_enabled:
             from apps.accounts.services import verify_totp
 
@@ -371,6 +385,10 @@ class LoginSerializer(serializers.Serializer):
                     status_code=401,
                     extra={"requires_2fa": True},
                 )
+        else:
+            from apps.security.services import assert_admin_2fa_if_required
+
+            assert_admin_2fa_if_required(user)
 
         record_login_attempt(email=email, ip=ip, success=True, message="ok")
         attrs["user"] = user

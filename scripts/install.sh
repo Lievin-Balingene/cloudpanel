@@ -125,6 +125,7 @@ deploy_application() {
 
   SECRET_KEY="$(openssl rand -hex 48)"
   ADMIN_PASS="$(openssl rand -base64 18 | tr -d '/+=' | head -c 16)"
+  FTP_SECRET="$(openssl rand -hex 32)"
   cat > /etc/vzone/vzone.env <<EOF
 VZONE_ENV=production
 VZONE_SECRET_KEY=${SECRET_KEY}
@@ -141,6 +142,9 @@ VZONE_CHANNELS_REDIS_URL=redis://127.0.0.1:6379/2
 VZONE_DATA_ROOT=${VZONE_DATA}
 VZONE_LOG_ROOT=${VZONE_LOG}
 VZONE_HOME_ROOT=/home
+VZONE_FTP_AUTH_SECRET=${FTP_SECRET}
+VZONE_LINUX_USER_PROVISION=auto
+VZONE_TERMINAL_FALLBACK_SAME_UID=false
 VZONE_SECURE_SSL_REDIRECT=false
 VZONE_VERSION=${VZONE_VERSION}
 VZONE_ENABLED_MODULES=core,accounts,packages,dns,dashboard,domains,files,ftp,email,databases,python_apps,node_apps,php,git_deploy,docker_mgmt,backups,monitoring,firewall,security

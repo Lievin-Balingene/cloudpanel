@@ -23,6 +23,7 @@ def cron_settings(tmp_path, settings):
     settings.VZONE_DATA_ROOT.mkdir(parents=True, exist_ok=True)
     settings.VZONE_CRON_JOBS_DIR = str(tmp_path / "cron" / "jobs")
     settings.VZONE_CRON_PROVISION_MODE = "mock"
+    settings.VZONE_LINUX_USER_PROVISION = "mock"
     return settings
 
 
@@ -40,7 +41,7 @@ def test_create_cron_job_common_preset(cron_settings):
     assert CronJob.objects.filter(owner=user).count() == 1
     text = build_cron_d_content(user, [job])
     assert "VZONE_ID=" in text
-    assert "vzone" in text
+    assert "cronuser" in text
     assert "public_html/cron.php" in text
 
 

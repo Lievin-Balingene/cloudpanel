@@ -105,6 +105,7 @@ MIDDLEWARE = [
     "apps.core.middleware.RequestIDMiddleware",
     "apps.core.middleware.AuditMiddleware",
     "apps.security.middleware.ForcePasswordChangeMiddleware",
+    "apps.security.portal_middleware.PortalIsolationMiddleware",
 ]
 
 ROOT_URLCONF = "vzone.urls"
@@ -428,6 +429,10 @@ VZONE_FTP_VIRTUAL_USERS_FILE = env(
     str(VZONE_DATA_ROOT / "ftp" / "virtual_users"),
 )
 VZONE_FTP_AUTH_SECRET = env("VZONE_FTP_AUTH_SECRET", "")
+VZONE_TRUST_X_FORWARDED_FOR = env_bool("VZONE_TRUST_X_FORWARDED_FOR", False)
+VZONE_LINUX_USER_PROVISION = env("VZONE_LINUX_USER_PROVISION", "auto")  # auto|live|mock
+VZONE_TERMINAL_FALLBACK_SAME_UID = env_bool("VZONE_TERMINAL_FALLBACK_SAME_UID", False)
+VZONE_TERMINAL_ALLOW_ADMIN = env_bool("VZONE_TERMINAL_ALLOW_ADMIN", False)
 VZONE_CRON_JOBS_DIR = env("VZONE_CRON_JOBS_DIR", str(VZONE_DATA_ROOT / "cron" / "jobs"))
 VZONE_CRON_PROVISION_MODE = env("VZONE_CRON_PROVISION_MODE", "auto")  # auto|live|mock
 VZONE_CRON_RUN_USER = env("VZONE_CRON_RUN_USER", "vzone")

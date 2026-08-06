@@ -32,7 +32,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_suspended = models.BooleanField(default=False)
     must_change_password = models.BooleanField(default=False)
     two_factor_enabled = models.BooleanField(default=False)
-    two_factor_secret = models.CharField(max_length=64, blank=True, default="")
+    two_factor_secret = models.CharField(max_length=255, blank=True, default="")
     module_permissions = models.JSONField(
         default=list,
         blank=True,

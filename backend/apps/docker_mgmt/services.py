@@ -59,9 +59,16 @@ def docker_binary() -> str:
 
 def _assert_docker_quota(owner: User) -> None:
     quota = getattr(owner, "quota", None)
-    if quota is None:
-        return
-    limit = quota.docker_containers
+    limit = int(getattr(quota, "docker_containers", 0) or 0) if quota is not None else 0
+    try:
+        from apps.packages.models import PackageAssignment
+
+        assignment = PackageAssignment.objects.filter(user=owner).select_related("package").first()
+        if assignment and assignment.package is not None:
+            limit = int(assignment.package.docker_containers or 0)
+    except Exception:  # noqa: BLE001
+        pass
+
     if limit == 0 and owner.role == User.Role.ADMINISTRATOR:
         return
     used = DockerContainer.objects.filter(owner=owner).exclude(status=DockerContainer.Status.REMOVED).count()
@@ -75,6 +82,31 @@ def _assert_docker_quota(owner: User) -> None:
             detail="Docker non inclus dans le package.",
             extra={"limit": 0, "used": used},
         )
+
+
+def _sanitize_ports(owner: User, ports: dict | None) -> dict:
+    """Interdit aux non-admins les ports host privilégiés (<1024) et ports panel."""
+    cleaned: dict = {}
+    reserved = {80, 443, 22, 25, 53, 3306, 5432, 8000, 9082, 9086, 9095}
+    for host_port, container_port in (ports or {}).items():
+        try:
+            hp = int(str(host_port).split(":")[-1])
+            cp = int(container_port)
+        except (TypeError, ValueError) as exc:
+            raise VZoneAPIException(
+                detail=f"Port invalide: {host_port}:{container_port}",
+                code="invalid_port",
+                status_code=400,
+            ) from exc
+        if owner.role != User.Role.ADMINISTRATOR:
+            if hp < 1024 or hp in reserved:
+                raise VZoneAPIException(
+                    detail=f"Port hôte {hp} réservé / privilégié.",
+                    code="port_forbidden",
+                    status_code=403,
+                )
+        cleaned[str(hp)] = cp
+    return cleaned
 
 
 def _add_log(container: DockerContainer, event_type: str, *, success: bool = True, message: str = "") -> None:
@@ -192,6 +224,7 @@ def create_container(
     start_now: bool = True,
 ) -> DockerContainer:
     _assert_docker_quota(owner)
+    ports = _sanitize_ports(owner, ports)
     slug = name.strip().lower().replace(" ", "-")
     if not NAME_RE.match(slug):
         raise VZoneAPIException(detail="Nom de conteneur invalide.", code="invalid_name", status_code=400)

@@ -8,7 +8,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.permissions import IsResellerOrAdmin
+from apps.core.permissions import IsAdministrator
 from apps.monitoring.models import AlertEvent, AlertRule
 from apps.monitoring.serializers import (
     AlertEventSerializer,
@@ -28,14 +28,14 @@ from apps.monitoring.services import (
 
 
 class MonitoringOverviewView(APIView):
-    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrator]
 
     def get(self, request: Request) -> Response:
         return Response({"success": True, "data": overview_for(request.user)})
 
 
 class AlertRuleListCreateView(APIView):
-    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrator]
 
     def get(self, request: Request) -> Response:
         qs = AlertRule.objects.all()
@@ -53,7 +53,7 @@ class AlertRuleListCreateView(APIView):
 
 
 class AlertRuleDetailView(APIView):
-    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrator]
 
     def get(self, request: Request, pk: int) -> Response:
         rule = get_object_or_404(AlertRule, pk=pk)
@@ -73,7 +73,7 @@ class AlertRuleDetailView(APIView):
 
 
 class AlertEventListView(APIView):
-    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrator]
 
     def get(self, request: Request) -> Response:
         qs = AlertEvent.objects.select_related("rule", "acknowledged_by")
@@ -88,7 +88,7 @@ class AlertEventListView(APIView):
 
 
 class AlertEventAcknowledgeView(APIView):
-    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrator]
 
     def post(self, request: Request, pk: int) -> Response:
         event = get_object_or_404(AlertEvent.objects.select_related("rule"), pk=pk)
@@ -97,7 +97,7 @@ class AlertEventAcknowledgeView(APIView):
 
 
 class AlertEventResolveView(APIView):
-    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrator]
 
     def post(self, request: Request, pk: int) -> Response:
         event = get_object_or_404(AlertEvent.objects.select_related("rule"), pk=pk)
@@ -108,7 +108,7 @@ class AlertEventResolveView(APIView):
 class MonitoringEvaluateView(APIView):
     """Évaluation manuelle des règles (WHM)."""
 
-    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+    permission_classes = [IsAuthenticated, IsAdministrator]
 
     def post(self, request: Request) -> Response:
         result = evaluate_rules()

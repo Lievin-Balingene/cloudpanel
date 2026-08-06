@@ -22,7 +22,7 @@ def home_root(tmp_path, settings):
     settings.VZONE_HOME_ROOT = tmp_path / "homes"
     settings.VZONE_HOME_ROOT.mkdir(parents=True, exist_ok=True)
     settings.VZONE_FTP_VIRTUAL_USERS_FILE = str(tmp_path / "ftp" / "virtual_users")
-    settings.VZONE_FTP_AUTH_SECRET = ""
+    settings.VZONE_FTP_AUTH_SECRET = "test-ftp-secret"
     return settings.VZONE_HOME_ROOT
 
 
@@ -76,6 +76,7 @@ def test_ftp_auth_and_logs(api: APIClient, home_root):
         reverse("ftp-auth"),
         {"username": account.username, "password": "FtpPass123!", "ip_address": "203.0.113.50"},
         format="json",
+        HTTP_X_VZONE_FTP_SECRET="test-ftp-secret",
     )
     assert ok.status_code == 200
     assert ok.json()["data"]["directory"] == account.directory
@@ -84,8 +85,16 @@ def test_ftp_auth_and_logs(api: APIClient, home_root):
         reverse("ftp-auth"),
         {"username": account.username, "password": "wrong-pass", "ip_address": "203.0.113.50"},
         format="json",
+        HTTP_X_VZONE_FTP_SECRET="test-ftp-secret",
     )
     assert bad.status_code == 401
+
+    nosecret = api.post(
+        reverse("ftp-auth"),
+        {"username": account.username, "password": "FtpPass123!"},
+        format="json",
+    )
+    assert nosecret.status_code == 403
 
     api.force_authenticate(user=user)
     logs = api.get(reverse("ftp-log-list"))

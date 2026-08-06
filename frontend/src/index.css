@@ -141,12 +141,22 @@ html.dark body {
     background: #fff;
   }
 
-  /* Fond login atmosphérique */
+  /* Fond login — partagé / chooser */
   .vz-login-bg {
     background:
       radial-gradient(ellipse 80% 60% at 10% 20%, rgba(26, 95, 180, 0.35), transparent 55%),
       radial-gradient(ellipse 70% 50% at 90% 80%, rgba(30, 51, 72, 0.55), transparent 50%),
       linear-gradient(145deg, #0f1c2a 0%, #152536 45%, #1a2f44 100%);
+  }
+
+  /* Admin (WHM) — fond sombre uni */
+  .vz-login-bg-admin {
+    background: #1a252f;
+  }
+
+  /* Client (cPanel) — fond gris clair */
+  .vz-login-bg-client {
+    background: #e8eaed;
   }
 
   .vz-login-grid {

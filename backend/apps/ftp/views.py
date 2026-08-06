@@ -40,11 +40,16 @@ class FtpAuthThrottle(AnonRateThrottle):
 
 
 def _check_ftp_secret(request: Request) -> bool:
-    configured = getattr(settings, "VZONE_FTP_AUTH_SECRET", "")
+    """Échec fermé : sans secret configuré, l'auth FTP interne est refusée."""
+    configured = (getattr(settings, "VZONE_FTP_AUTH_SECRET", "") or "").strip()
     if not configured:
-        return True
+        return False
     secret = request.headers.get("X-Vzone-Ftp-Secret") or request.data.get("secret")
-    return secret == configured
+    if not secret or not isinstance(secret, str):
+        return False
+    import secrets as _secrets
+
+    return _secrets.compare_digest(secret, configured)
 
 
 class FtpAccountListCreateView(APIView):

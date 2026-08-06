@@ -137,6 +137,22 @@ if [[ -f "${REPO_DIR}/scripts/install-repair-agent.sh" ]]; then
   bash "${REPO_DIR}/scripts/install-repair-agent.sh" || echo "[vzone] Avertissement: install-repair-agent.sh a échoué"
 fi
 
+# Sudoers terminal (drop privileges → comptes vzone-clients)
+if [[ -f "${REPO_DIR}/scripts/ensure-terminal-sudoers.sh" ]]; then
+  bash "${REPO_DIR}/scripts/ensure-terminal-sudoers.sh" || echo "[vzone] Avertissement: ensure-terminal-sudoers.sh a échoué"
+fi
+
+# Secret FTP interne si manquant (fail-closed sinon)
+if [[ -f /etc/vzone/vzone.env ]] && ! grep -q '^VZONE_FTP_AUTH_SECRET=.\+' /etc/vzone/vzone.env 2>/dev/null; then
+  FTP_SECRET="$(openssl rand -hex 32)"
+  if grep -q '^VZONE_FTP_AUTH_SECRET=' /etc/vzone/vzone.env; then
+    sed -i "s|^VZONE_FTP_AUTH_SECRET=.*|VZONE_FTP_AUTH_SECRET=${FTP_SECRET}|" /etc/vzone/vzone.env
+  else
+    echo "VZONE_FTP_AUTH_SECRET=${FTP_SECRET}" >> /etc/vzone/vzone.env
+  fi
+  echo "[vzone] VZONE_FTP_AUTH_SECRET généré"
+fi
+
 # OpenLiteSpeed (opt-in / auto — si installé ou flag)
 OLS_FLAG="${VZONE_OLS_ENABLED:-auto}"
 if [[ -f /etc/vzone/vzone.env ]]; then

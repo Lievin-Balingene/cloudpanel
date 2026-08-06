@@ -63,8 +63,9 @@ export function WebTerminalManager({ title }: { title: string }) {
 
   const wsUrl = useMemo(() => {
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
-    return `${proto}://${window.location.host}/ws/terminal/?token=${encodeURIComponent(token || "")}`;
-  }, [token]);
+    // Token via subprotocol (évite certains logs query) — fallback query pour compat
+    return `${proto}://${window.location.host}/ws/terminal/`;
+  }, []);
 
   useEffect(() => {
     if (!access?.allowed || !token || !terminalHostRef.current) return;
@@ -98,7 +99,7 @@ export function WebTerminalManager({ title }: { title: string }) {
     fitAddonRef.current = fitAddon;
     setStatus("Connexion…");
 
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(wsUrl, token ? ["vzone", `access_token.${token}`] : ["vzone"]);
     wsRef.current = ws;
     let disposed = false;
     let resizeObserver: ResizeObserver | null = null;
