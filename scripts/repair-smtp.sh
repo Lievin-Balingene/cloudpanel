@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Répare l'envoi Roundcube (SMTP unavailable → sendmail/PHP mail).
+# Fix Roundcube 530 STARTTLS + 554 Access denied + 451 unavailable
 # Usage: sudo bash /opt/vzone-src/scripts/repair-smtp.sh
 set -uo pipefail
 [[ ${EUID:-0} -eq 0 ]] || { echo "Root requis"; exit 1; }
@@ -12,23 +12,23 @@ ENV_FILE="${ENV_FILE:-/etc/vzone/vzone.env}"
 MAPS_DIR="${VZONE_MAIL_MAPS_DIR:-/var/lib/vzone/mail/maps}"
 HOSTNAME_FQDN="$(hostname -f 2>/dev/null || hostname)"
 RC_ROOT="${VZONE_ROUNDCUBE_ROOT:-/opt/vzone/roundcube}"
+RC_CFG="${RC_ROOT}/config/config.inc.php"
 
-echo "=== repair-smtp (0.32.9) ==="
+echo "=== repair-smtp (0.32.10) — tls://127.0.0.1:587 ==="
 
-mkdir -p "$MAPS_DIR/dkim"
-for f in opendkim-KeyTable opendkim-SigningTable valiases virtual_mailboxes vdomains; do
+mkdir -p "$MAPS_DIR"
+for f in valiases virtual_mailboxes vdomains; do
   touch "${MAPS_DIR}/${f}"
+  postmap "${MAPS_DIR}/${f}" 2>/dev/null || true
 done
-postmap "${MAPS_DIR}/valiases" 2>/dev/null || true
-postmap "${MAPS_DIR}/virtual_mailboxes" 2>/dev/null || true
-postmap "${MAPS_DIR}/vdomains" 2>/dev/null || true
 
+# Cert snakeoil
 if [[ ! -f /etc/ssl/certs/ssl-cert-snakeoil.pem ]]; then
   apt-get install -y -qq ssl-cert 2>/dev/null || true
   make-ssl-cert generate-default-snakeoil --force-overwrite 2>/dev/null || true
 fi
 
-# Postfix conf
+# Postfix
 if [[ -f "${REPO_DIR}/deploy/postfix/main.cf" ]]; then
   install -m 644 "${REPO_DIR}/deploy/postfix/main.cf" /etc/postfix/main.cf
   sed -i "s|__HOSTNAME__|${HOSTNAME_FQDN}|g" /etc/postfix/main.cf
@@ -37,111 +37,97 @@ fi
 if [[ -f "${REPO_DIR}/deploy/postfix/master.cf" ]]; then
   install -m 644 "${REPO_DIR}/deploy/postfix/master.cf" /etc/postfix/master.cf
 fi
-sed -i '/^postlog[[:space:]]/d' /etc/postfix/master.cf 2>/dev/null || true
-sed -i '/smtpd_milters=/d' /etc/postfix/master.cf 2>/dev/null || true
 
-postconf -e "compatibility_level=2" 2>/dev/null || true
-postconf -e "mynetworks=127.0.0.0/8 [::1]/128" 2>/dev/null || true
-postconf -e "inet_interfaces=all" 2>/dev/null || true
-postconf -e "inet_protocols=ipv4" 2>/dev/null || true
-postconf -e "smtpd_milters=" 2>/dev/null || true
-postconf -e "non_smtpd_milters=" 2>/dev/null || true
-postconf -e "milter_default_action=accept" 2>/dev/null || true
-# sendmail compatible (PHP mail())
-postconf -e "mailbox_size_limit=0" 2>/dev/null || true
+postconf -e "compatibility_level=2"
+postconf -e "mynetworks=127.0.0.0/8 [::1]/128"
+postconf -e "inet_interfaces=all"
+postconf -e "inet_protocols=ipv4"
+postconf -e "smtpd_tls_security_level=may"
+postconf -e "smtpd_tls_auth_only=no"
+postconf -e "smtpd_tls_cert_file=/etc/ssl/certs/ssl-cert-snakeoil.pem"
+postconf -e "smtpd_tls_key_file=/etc/ssl/private/ssl-cert-snakeoil.key"
+# Pas de milter tant que l'envoi ne marche pas (451 sinon)
+postconf -e "smtpd_milters="
+postconf -e "non_smtpd_milters="
+postconf -e "milter_default_action=accept"
 
-if ! postfix check >/tmp/vzone-postfix-check.txt 2>&1; then
-  echo "[warn] postfix check KO"
-  cat /tmp/vzone-postfix-check.txt || true
-  if [[ -f /usr/share/postfix/master.cf.dist ]]; then
-    cp -a /usr/share/postfix/master.cf.dist /etc/postfix/master.cf
-  fi
-fi
+postfix check 2>&1 | tee /tmp/vzone-postfix-check.txt || true
 
-# OpenDKIM (optionnel)
-if [[ -f "${REPO_DIR}/deploy/opendkim/opendkim.conf" ]]; then
-  install -m 644 "${REPO_DIR}/deploy/opendkim/opendkim.conf" /etc/opendkim.conf
-  sed -i "s|__MAPS_DIR__|${MAPS_DIR}|g" /etc/opendkim.conf
-fi
-
-# --- Roundcube : smtp_host vide = PHP mail() / sendmail ---
-RC_CFG="${RC_ROOT}/config/config.inc.php"
-if [[ -f "$RC_CFG" ]]; then
-  echo "[roundcube] smtp_host='' (PHP mail / sendmail)"
-  cp -a "$RC_CFG" "${RC_CFG}.bak.$(date +%s)" 2>/dev/null || true
-  sed -i "/\$config\['smtp_host'\]/d" "$RC_CFG"
-  sed -i "/\$config\['smtp_user'\]/d" "$RC_CFG"
-  sed -i "/\$config\['smtp_pass'\]/d" "$RC_CFG"
-  sed -i "/\$config\['smtp_port'\]/d" "$RC_CFG"
-  sed -i "/\$config\['smtp_server'\]/d" "$RC_CFG"
-  sed -i "/\$config\['smtp_helo_host'\]/d" "$RC_CFG"
-  # Bloc unique en fin de fichier
-  cat >> "$RC_CFG" <<'PHP'
-
-// V-zone repair-smtp 0.32.9 — envoi via sendmail (pas de socket SMTP)
-$config['smtp_host'] = '';
-$config['smtp_user'] = '';
-$config['smtp_pass'] = '';
-PHP
-  grep -n "smtp_host" "$RC_CFG" || true
-else
-  echo "[ERREUR] Config Roundcube introuvable: $RC_CFG"
-fi
-
-# sendmail doit pointer vers postfix
-if [[ -x /usr/sbin/sendmail ]]; then
-  echo "sendmail: $(readlink -f /usr/sbin/sendmail 2>/dev/null || echo /usr/sbin/sendmail)"
-fi
-# php.ini sendmail_path
-for ini in /etc/php/*/fpm/php.ini /etc/php/*/cli/php.ini; do
-  [[ -f "$ini" ]] || continue
-  if grep -qE '^;?sendmail_path' "$ini"; then
-    sed -i 's|^;?sendmail_path.*|sendmail_path = /usr/sbin/sendmail -t -i|' "$ini" 2>/dev/null \
-      || sed -i 's|^sendmail_path.*|sendmail_path = /usr/sbin/sendmail -t -i|' "$ini" || true
-  else
-    echo 'sendmail_path = /usr/sbin/sendmail -t -i' >> "$ini"
-  fi
-done
-
-systemctl reload php*-fpm 2>/dev/null || systemctl restart php8.1-fpm 2>/dev/null || systemctl restart php8.3-fpm 2>/dev/null || true
-systemctl restart php8.1-fpm 2>/dev/null || systemctl restart php8.2-fpm 2>/dev/null || systemctl restart php8.3-fpm 2>/dev/null || true
-
-echo "[postfix] restart…"
 systemctl enable postfix dovecot 2>/dev/null || true
 systemctl stop postfix 2>/dev/null || true
 pkill -x master 2>/dev/null || true
 sleep 1
-systemctl start postfix 2>/dev/null || postfix start 2>/dev/null || true
+systemctl start postfix
 systemctl restart dovecot 2>/dev/null || true
-systemctl restart opendkim 2>/dev/null || true
+
+# Roundcube : FORCER tls://587 + auth (écrase toute ancienne valeur)
+if [[ -f "$RC_CFG" ]]; then
+  cp -a "$RC_CFG" "${RC_CFG}.bak.$(date +%s)"
+  # Supprimer toutes les lignes smtp_* existantes
+  sed -i "/\$config\['smtp_/d" "$RC_CFG"
+  cat >> "$RC_CFG" <<'PHP'
+
+// V-zone repair-smtp 0.32.10 — STARTTLS obligatoire sur submission
+$config['smtp_host'] = 'tls://127.0.0.1:587';
+$config['smtp_user'] = '%u';
+$config['smtp_pass'] = '%p';
+$config['smtp_conn_options'] = [
+    'ssl' => [
+        'verify_peer'       => false,
+        'verify_peer_name'  => false,
+        'allow_self_signed' => true,
+    ],
+];
+PHP
+  echo "[roundcube] smtp_host forcé:"
+  grep -n "smtp_host\|smtp_user\|smtp_pass\|smtp_conn" "$RC_CFG" | tail -n 20
+else
+  echo "[ERREUR] $RC_CFG manquant — lancez install-roundcube.sh"
+fi
+
+# Vider opcache / recharger PHP
+systemctl restart php8.1-fpm 2>/dev/null || systemctl restart php8.2-fpm 2>/dev/null || systemctl restart php8.3-fpm 2>/dev/null || systemctl reload php*-fpm 2>/dev/null || true
 
 sleep 1
 echo
-echo "===== DIAGNOSTIC ====="
-systemctl is-active postfix dovecot 2>/dev/null || true
-ss -lntp 2>/dev/null | grep -E ':25 |:587 ' || true
-echo "smtp_host in config:"
-grep -n "smtp_host" "${RC_CFG}" 2>/dev/null | tail -n 5 || true
+echo "===== DIAG ====="
+systemctl is-active postfix dovecot
+ss -lntp | grep -E ':25 |:587 ' || true
+echo "postconf submission TLS:"
+postconf -h smtpd_tls_security_level smtpd_tls_cert_file mynetworks | cat
 
 echo
-echo "===== TEST sendmail ====="
-if echo -e "Subject: vzone-smtp-test\nFrom: root@${HOSTNAME_FQDN}\nTo: root\n\nrepair-smtp test\n" \
-  | /usr/sbin/sendmail -t -i 2>/tmp/vzone-sendmail.err; then
-  echo "sendmail: OK"
-  mailq 2>/dev/null | head -n 15 || true
-else
-  echo "sendmail: FAIL"
-  cat /tmp/vzone-sendmail.err || true
-fi
+echo "===== TEST STARTTLS :587 ====="
+python3 - <<'PY'
+import socket, ssl, sys
+try:
+    raw = socket.create_connection(("127.0.0.1", 587), 5)
+    print(raw.recv(256).decode(errors="replace").strip())
+    raw.sendall(b"EHLO localhost\r\n")
+    print(raw.recv(1024).decode(errors="replace").split("\n")[0].strip())
+    raw.sendall(b"STARTTLS\r\n")
+    resp = raw.recv(256).decode(errors="replace").strip()
+    print("STARTTLS:", resp)
+    if not resp.startswith("220"):
+        sys.exit(2)
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    s = ctx.wrap_socket(raw, server_hostname="127.0.0.1")
+    s.sendall(b"EHLO localhost\r\n")
+    print(s.recv(1024).decode(errors="replace").split("\n")[0].strip())
+    print("TLS_OK")
+    s.sendall(b"QUIT\r\n")
+    s.close()
+except Exception as e:
+    print("TLS_FAIL:", e)
+    sys.exit(1)
+PY
 
 echo
-echo "===== Roundcube errors (si présent) ====="
-tail -n 30 "${RC_ROOT}/logs/errors.log" 2>/dev/null || echo "(pas de errors.log)"
-
-echo
-echo "=== IMPORTANT ==="
-echo "1) Déconnectez-vous de Roundcube puis reconnectez-vous (session)"
-echo "2) Ctrl+F5 sur /webmail/"
-echo "3) Renvoyez un mail"
-echo "Si échec, collez: tail -n 50 ${RC_ROOT}/logs/errors.log"
-echo "=== repair-smtp OK ==="
+echo "=== Suite ==="
+echo "1) Déconnexion Roundcube + Ctrl+F5"
+echo "2) Reconnexion avec info@7une.info + mot de passe"
+echo "3) Renvoyer un mail"
+echo "Si 535 auth: doveadm auth test info@7une.info 'MOTDEPASSE'"
+echo "=== OK ==="

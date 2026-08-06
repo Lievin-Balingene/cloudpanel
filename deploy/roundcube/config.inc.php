@@ -8,13 +8,14 @@ $config['db_dsnw'] = '__DB_DSN__';
 // Doit rester vide : SQL/mysql.initial.sql crée session, users, etc. sans préfixe.
 $config['db_prefix'] = '';
 
-// IMAP local (Dovecot). Envoi via PHP mail()/sendmail → Postfix pickup
-// (évite TLS/SASL/port 587 « SMTP service unavailable »).
+// IMAP local (Dovecot)
 $config['imap_host'] = '127.0.0.1:143';
 $config['imap_auth_type'] = 'LOGIN';
-$config['smtp_host'] = '';
-$config['smtp_user'] = '';
-$config['smtp_pass'] = '';
+
+// SMTP submission local avec STARTTLS (obligatoire sur :587)
+$config['smtp_host'] = 'tls://127.0.0.1:587';
+$config['smtp_user'] = '%u';
+$config['smtp_pass'] = '%p';
 
 $config['support_url'] = '';
 $config['product_name'] = 'V-zone Webmail';
@@ -36,10 +37,8 @@ $config['log_driver'] = 'file';
 $config['temp_dir'] = '__TEMP_DIR__';
 $config['mime_types'] = null;
 
-// Installé sous /webmail/
 $config['request_path'] = '/webmail/';
 
-// Certificats snakeoil / auto-signés en local
 $config['imap_conn_options'] = [
     'ssl' => [
         'verify_peer'       => false,

@@ -1,13 +1,11 @@
-# Postfix master.cf — V-zone (base Ubuntu/Debian + submission/smtps + OpenDKIM)
-# See master(5) for details.
+# Postfix master.cf — V-zone (Ubuntu/Debian compatible)
+# chroot=n pour SASL Dovecot + milter fiables
 
 smtp      inet  n       -       n       -       -       smtpd
-#smtp      inet  n       -       n       -       1       postscreen
-#smtpd     pass  -       -       n       -       -       smtpd
-#dnsblog   unix  -       -       n       -       0       dnsblog
-#tlsproxy  unix  -       -       n       -       0       tlsproxy
+  -o smtpd_tls_security_level=may
+  -o milter_default_action=accept
 
-# Roundcube / clients : STARTTLS + SASL + OpenDKIM
+# Roundcube / clients (STARTTLS + SASL)
 submission inet n       -       n       -       -       smtpd
   -o syslog_name=postfix/submission
   -o smtpd_tls_security_level=encrypt
@@ -18,11 +16,10 @@ submission inet n       -       n       -       -       smtpd
   -o smtpd_reject_unlisted_recipient=no
   -o smtpd_client_restrictions=permit_mynetworks,permit_sasl_authenticated,reject
   -o smtpd_relay_restrictions=permit_mynetworks,permit_sasl_authenticated,reject
+  -o smtpd_sender_restrictions=permit_mynetworks,permit_sasl_authenticated,reject
   -o smtpd_recipient_restrictions=permit_mynetworks,permit_sasl_authenticated,reject_unauth_destination
-  -o milter_macro_daemon_name=ORIGINATING
   -o milter_default_action=accept
 
-# SMTPS (465)
 smtps     inet  n       -       n       -       -       smtpd
   -o syslog_name=postfix/smtps
   -o smtpd_tls_wrappermode=yes
@@ -31,8 +28,8 @@ smtps     inet  n       -       n       -       -       smtpd
   -o smtpd_sasl_path=private/auth
   -o smtpd_client_restrictions=permit_mynetworks,permit_sasl_authenticated,reject
   -o smtpd_relay_restrictions=permit_mynetworks,permit_sasl_authenticated,reject
+  -o smtpd_sender_restrictions=permit_mynetworks,permit_sasl_authenticated,reject
   -o smtpd_recipient_restrictions=permit_mynetworks,permit_sasl_authenticated,reject_unauth_destination
-  -o milter_macro_daemon_name=ORIGINATING
   -o milter_default_action=accept
 
 pickup    unix  n       -       n       60      1       pickup
@@ -49,7 +46,6 @@ proxymap  unix  -       -       n       -       -       proxymap
 proxywrite unix -       -       n       -       1       proxymap
 smtp      unix  -       -       n       -       -       smtp
 relay     unix  -       -       n       -       -       smtp
-        -o syslog_name=postfix/$service_name
 showq     unix  n       -       n       -       -       showq
 error     unix  -       -       n       -       -       error
 retry     unix  -       -       n       -       -       error
@@ -59,4 +55,3 @@ virtual   unix  -       n       n       -       -       virtual
 lmtp      unix  -       -       n       -       -       lmtp
 anvil     unix  -       -       n       -       1       anvil
 scache    unix  -       -       n       -       1       scache
-# postlog/unix-dgram : uniquement Postfix récent — omis pour Ubuntu 20.04
