@@ -97,8 +97,14 @@ def default_document_root(
     return str(home / host)
 
 
-def provision_document_root(docroot: str, *, hostname: str, domain_type: str) -> Path:
-    """Crée le docroot avec permissions 755 et index.html de bienvenue."""
+def provision_document_root(
+    docroot: str,
+    *,
+    hostname: str,
+    domain_type: str,
+    create_welcome_index: bool = False,
+) -> Path:
+    """Crée le docroot avec permissions 755. index.html optionnel (opt-in WHM)."""
     root = Path(docroot)
     # Assure aussi l'arbre home parent
     secure_directory(root, 0o755)
@@ -110,15 +116,16 @@ def provision_document_root(docroot: str, *, hostname: str, domain_type: str) ->
         site_base = root.parent
         secure_directory(site_base / "logs", 0o755)
 
-    index = root / "index.html"
-    if not index.exists():
-        from apps.accounts.services import cpanel_welcome_html
+    if create_welcome_index:
+        index = root / "index.html"
+        if not index.exists():
+            from apps.accounts.services import cpanel_welcome_html
 
-        index.write_text(
-            cpanel_welcome_html(hostname, document_root=str(root)),
-            encoding="utf-8",
-        )
-        secure_file(index, 0o644)
+            index.write_text(
+                cpanel_welcome_html(hostname, document_root=str(root)),
+                encoding="utf-8",
+            )
+            secure_file(index, 0o644)
 
     apply_tree_permissions(root, dir_mode=0o755, file_mode=0o644)
     try_chown_vzone(root)
@@ -245,6 +252,7 @@ def create_domain(
     document_root: str = "",
     notes: str = "",
     web_engine: str | None = None,
+    create_welcome_index: bool = False,
 ) -> Domain:
     try:
         hostname = normalize_hostname(name)
@@ -322,7 +330,12 @@ def create_domain(
             owner, hostname, domain_type=domain_type, parent=parent
         )
         if domain_type not in {Domain.DomainType.ALIAS, Domain.DomainType.PARKED}:
-            provision_document_root(docroot, hostname=hostname, domain_type=domain_type)
+            provision_document_root(
+                docroot,
+                hostname=hostname,
+                domain_type=domain_type,
+                create_welcome_index=create_welcome_index,
+            )
         else:
             Path(docroot).mkdir(parents=True, exist_ok=True)
     except OSError as exc:

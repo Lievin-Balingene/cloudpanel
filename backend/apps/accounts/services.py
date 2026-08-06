@@ -79,14 +79,7 @@ def provision_account_home(user: User) -> Path:
     home = personal_home(user)
     try:
         ensure_cpanel_tree(home)
-        # index.html de bienvenue : laissé au domaine primaire (create) si possible ;
-        # sinon page minimale pour public_html.
-        index = home / "public_html" / "index.html"
-        if not index.exists():
-            index.write_text(
-                cpanel_welcome_html(sys_name, account=sys_name),
-                encoding="utf-8",
-            )
+        # Pas d'index.html par défaut (OLS / sites vides) — opt-in WHM uniquement.
     except OSError as exc:
         raise VZoneAPIException(
             detail=f"Impossible de créer le home {home}: {exc}",
@@ -148,10 +141,15 @@ def cpanel_welcome_html(hostname: str, *, account: str = "", document_root: str 
     )
 
 
-def provision_primary_domain_for_account(user: User, domain_name: str) -> object:
+def provision_primary_domain_for_account(
+    user: User,
+    domain_name: str,
+    *,
+    create_welcome_index: bool = False,
+) -> object:
     """
     Crée le domaine principal du compte (cPanel) :
-    Domain primary → ~/public_html, zone DNS + A @/www, vhost nginx.
+    Domain primary → ~/public_html, zone DNS + A @/www, vhost.
     """
     from apps.domains.models import Domain
     from apps.domains.services import create_domain
@@ -173,16 +171,18 @@ def provision_primary_domain_for_account(user: User, domain_name: str) -> object
         owner=user,
         domain_type=Domain.DomainType.PRIMARY,
         create_dns_zone=True,
+        create_welcome_index=create_welcome_index,
     )
-    # Page d'accueil avec le vrai hostname (remplace éventuellement l'index générique)
-    try:
-        index = Path(domain.document_root) / "index.html"
-        index.write_text(
-            cpanel_welcome_html(domain.name, account=user.username),
-            encoding="utf-8",
-        )
-    except OSError as exc:
-        logger.warning("Impossible d'écrire index.html pour %s: %s", domain.name, exc)
+    if create_welcome_index:
+        try:
+            index = Path(domain.document_root) / "index.html"
+            if not index.exists():
+                index.write_text(
+                    cpanel_welcome_html(domain.name, account=user.username),
+                    encoding="utf-8",
+                )
+        except OSError as exc:
+            logger.warning("Impossible d'écrire index.html pour %s: %s", domain.name, exc)
 
     # Sync vhost immédiat (en plus de on_commit) pour que le site réponde tout de suite
     try:

@@ -44,6 +44,7 @@ export function WhmCreateAccountPage() {
     password: "",
     email: "",
     package_id: "",
+    create_welcome_index: false,
   });
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -65,6 +66,7 @@ export function WhmCreateAccountPage() {
         password: form.password,
         role: "client",
         domain,
+        create_welcome_index: form.create_welcome_index,
       };
       if (form.package_id) payload.package_id = Number(form.package_id);
       const user = await runWithProgress(
@@ -138,7 +140,9 @@ export function WhmCreateAccountPage() {
         <p className="px-4 py-3 text-sm text-cp-muted">
           Comme cPanel : le <strong className="text-cp-text">domaine principal</strong> est
           obligatoire. V-zone crée le home, <code className="font-mono text-xs">public_html</code>,
-          la zone DNS et le vhost nginx.
+          la zone DNS et le vhost (OpenLiteSpeed / Nginx). Aucun{" "}
+          <code className="font-mono text-xs">index.html</code> n&apos;est créé sauf si vous le
+          demandez ci-dessous.
         </p>
       </div>
 
@@ -257,6 +261,33 @@ export function WhmCreateAccountPage() {
               </option>
             ))}
           </select>
+        </div>
+
+        <div className="border-b border-cp-border bg-cp-orange-soft px-4 py-2 text-xs font-bold uppercase tracking-wide text-cp-orange-dark dark:border-ink-800 dark:bg-ink-900 dark:text-cp-orange">
+          Document Root
+        </div>
+
+        <div className="whm-form-row">
+          <div>
+            <p className="whm-form-label">Page d&apos;accueil</p>
+            <p className="whm-form-hint">
+              Optionnel — laissez décoché pour un dossier vide (WordPress / OLS)
+            </p>
+          </div>
+          <label className="flex cursor-pointer items-start gap-2 text-sm text-cp-text">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={form.create_welcome_index}
+              onChange={(e) =>
+                setForm({ ...form, create_welcome_index: e.target.checked })
+              }
+            />
+            <span>
+              Créer <code className="font-mono text-xs">index.html</code> (« Site prêt ») dans{" "}
+              <code className="font-mono text-xs">public_html</code>
+            </span>
+          </label>
         </div>
 
         <div className="flex flex-wrap items-center justify-end gap-2 bg-cp-canvas/60 px-4 py-3 dark:bg-ink-900/40">

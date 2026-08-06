@@ -162,6 +162,11 @@ class UserCreateSerializer(serializers.ModelSerializer):
     # Domaine principal cPanel (obligatoire pour client/revendeur)
     domain = serializers.CharField(required=False, allow_blank=True, default="")
     package_id = serializers.IntegerField(required=False, allow_null=True)
+    create_welcome_index = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="Si true, écrit index.html « Site prêt » dans public_html.",
+    )
 
     class Meta:
         model = User
@@ -177,6 +182,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
             "quota",
             "domain",
             "package_id",
+            "create_welcome_index",
         )
 
     def validate_username(self, value: str) -> str:
@@ -243,6 +249,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
         password = validated_data.pop("password")
         domain_name = (validated_data.pop("domain", None) or "").strip()
         package_id = validated_data.pop("package_id", None)
+        create_welcome_index = bool(validated_data.pop("create_welcome_index", False))
 
         user = User.objects.create_user(password=password, **validated_data)
         if quota_data:
@@ -273,7 +280,11 @@ class UserCreateSerializer(serializers.ModelSerializer):
 
         if domain_name and user.role in {User.Role.CLIENT, User.Role.RESELLER}:
             try:
-                provision_primary_domain_for_account(user, domain_name)
+                provision_primary_domain_for_account(
+                    user,
+                    domain_name,
+                    create_welcome_index=create_welcome_index,
+                )
             except VZoneAPIException as exc:
                 # Compte créé mais domaine KO — remonter clairement
                 raise serializers.ValidationError({"domain": str(exc.detail)}) from exc

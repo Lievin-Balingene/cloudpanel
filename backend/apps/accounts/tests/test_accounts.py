@@ -124,9 +124,27 @@ def test_reseller_creates_client_only(api: APIClient, tmp_path, settings):
     assert (home / "etc").is_dir()
     assert (home / "ssl").is_dir()
     assert (home / ".trash").is_dir()
-    assert (home / "public_html" / "index.html").is_file()
-    index_html = (home / "public_html" / "index.html").read_text(encoding="utf-8")
-    assert "newclient.example.com" in index_html
+    # Pas d'index.html par défaut (opt-in create_welcome_index)
+    assert not (home / "public_html" / "index.html").exists()
+
+    with_index = api.post(
+        reverse("user-list"),
+        {
+            "email": "withindex@vzone.test",
+            "username": "withidx",
+            "password": "TestPassword123!",
+            "role": "client",
+            "domain": "withindex.example.com",
+            "create_welcome_index": True,
+        },
+        format="json",
+    )
+    assert with_index.status_code == 201, with_index.content
+    idx_home = settings.VZONE_HOME_ROOT / "withidx"
+    assert (idx_home / "public_html" / "index.html").is_file()
+    assert "withindex.example.com" in (idx_home / "public_html" / "index.html").read_text(
+        encoding="utf-8"
+    )
 
     from apps.domains.models import Domain
     from apps.dns.models import DnsRecord, DnsZone

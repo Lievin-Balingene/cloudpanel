@@ -50,7 +50,7 @@ def test_create_domain_creates_dns_zone(api: APIClient, tmp_path, settings):
     # Primary → ~/public_html (home admin)
     assert domain.document_root.endswith("public_html")
     assert Path(domain.document_root).is_dir()
-    assert (Path(domain.document_root) / "index.html").is_file()
+    assert not (Path(domain.document_root) / "index.html").exists()
 
 
 @pytest.mark.integration
@@ -119,7 +119,7 @@ def test_subdomain_dns_without_parent_fk(tmp_path, settings):
     assert sub.dns_zone_id == parent.dns_zone_id
     assert sub.document_root.replace("\\", "/").endswith("/app.apex-heal.test")
     assert Path(sub.document_root).is_dir()
-    assert (Path(sub.document_root) / "index.html").is_file()
+    assert not (Path(sub.document_root) / "index.html").exists()
 
 
 
