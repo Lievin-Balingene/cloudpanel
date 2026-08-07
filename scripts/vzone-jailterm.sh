@@ -78,11 +78,22 @@ UID_NUM="$(id -u "$USERNAME")"
 GID_NUM="$(id -g "$USERNAME")"
 
 if [[ "$MODE" == "check" ]]; then
-  if command -v bwrap >/dev/null 2>&1; then
+  if ! command -v bwrap >/dev/null 2>&1; then
     exit 0
   fi
-  # Fallback sans bwrap toujours possible (restreint)
-  exit 0
+  # Valide bwrap + --unshare-user (sinon erreur au démarrage shell)
+  if bwrap \
+    --unshare-user \
+    --uid "$UID_NUM" \
+    --gid "$GID_NUM" \
+    --ro-bind /usr /usr \
+    --bind "$HOME_DIR" "$HOME_DIR" \
+    --chdir "$HOME_DIR" \
+    -- /bin/true 2>/dev/null; then
+    exit 0
+  fi
+  echo "bwrap --unshare-user échoué (user namespaces ?)" >&2
+  exit 4
 fi
 
 # Environnement minimal — jamais d'escalade
@@ -113,6 +124,7 @@ fi
 # Binds de base (usr-merge Debian/Ubuntu + classiques)
 BWRAP_ARGS=(
   --die-with-parent
+  --unshare-user
   --unshare-pid
   --unshare-ipc
   --unshare-uts

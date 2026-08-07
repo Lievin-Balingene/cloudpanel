@@ -292,7 +292,8 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
             "USER": "root",
             "LOGNAME": "root",
         }
-        self._spawn_pty(["sudo", "-n", str(ROOTTERM)], env=env, cwd="/root")
+        # cwd=/tmp : le process vzone ne peut pas ouvrir /root (Permission denied)
+        self._spawn_pty(["sudo", "-n", str(ROOTTERM)], env=env, cwd="/tmp")
 
     def _start_jail_pty(
         self,
