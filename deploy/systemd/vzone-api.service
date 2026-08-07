@@ -18,7 +18,9 @@ StartLimitIntervalSec=60
 StartLimitBurst=10
 KillMode=process
 TasksMax=infinity
-NoNewPrivileges=true
+# false : terminal web + vzone-mkhome via sudoers (/etc/sudoers.d/vzone-panel).
+# true bloquerait setuid/sudo (« no new privileges »).
+NoNewPrivileges=false
 PrivateTmp=true
 # Relancer les apps Python clientes après démarrage API (évite 502 nginx → ports morts)
 ExecStartPost=/bin/bash -c 'sleep 2; cd /opt/vzone/backend && .venv/bin/python manage.py reconcile_python_apps || true'

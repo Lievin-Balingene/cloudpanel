@@ -292,10 +292,18 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
         debug = bool(getattr(settings, "DEBUG", False))
         if not use_sudo and not (fallback and debug):
             detail = prep_err or f"sudo -n -u {jail} /bin/true a échoué: {sudo_err}"
-            raise RuntimeError(
-                f"{detail} — sudo bash /opt/vzone-src/scripts/ensure-mkhome-sudoers.sh "
-                f"&& sudo /usr/local/sbin/vzone-mkhome {jail}"
-            )
+            if "no new privileges" in (sudo_err or "").lower():
+                detail = (
+                    f"{detail} — NoNewPrivileges systemd bloque sudo : "
+                    "mettez à jour deploy/systemd/vzone-api.service puis "
+                    "systemctl daemon-reload && systemctl restart vzone-api"
+                )
+            else:
+                detail = (
+                    f"{detail} — sudo bash /opt/vzone-src/scripts/ensure-mkhome-sudoers.sh "
+                    f"&& sudo /usr/local/sbin/vzone-mkhome {jail}"
+                )
+            raise RuntimeError(detail)
 
         # cwd doit être accessible au process vzone (avant setuid via sudo)
         start_cwd = str(cwd) if os.access(cwd, os.X_OK) else "/tmp"
