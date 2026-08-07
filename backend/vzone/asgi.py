@@ -5,7 +5,6 @@ import os
 
 from channels.auth import AuthMiddlewareStack
 from channels.routing import ProtocolTypeRouter, URLRouter
-from channels.security.websocket import AllowedHostsOriginValidator
 from django.core.asgi import get_asgi_application
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "vzone.settings.development")
@@ -14,11 +13,11 @@ django_asgi_app = get_asgi_application()
 
 from vzone.routing import websocket_urlpatterns  # noqa: E402
 
+# Pas d'AllowedHostsOriginValidator : accès style cPanel via domaine:9082/9086
+# (Origin = domaine client ∉ ALLOWED_HOSTS). Le terminal est protégé par JWT.
 application = ProtocolTypeRouter(
     {
         "http": django_asgi_app,
-        "websocket": AllowedHostsOriginValidator(
-            AuthMiddlewareStack(URLRouter(websocket_urlpatterns))
-        ),
+        "websocket": AuthMiddlewareStack(URLRouter(websocket_urlpatterns)),
     }
 )

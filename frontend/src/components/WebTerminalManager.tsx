@@ -63,7 +63,6 @@ export function WebTerminalManager({ title }: { title: string }) {
 
   const wsUrl = useMemo(() => {
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
-    // Token via subprotocol (évite certains logs query) — fallback query pour compat
     return `${proto}://${window.location.host}/ws/terminal/`;
   }, []);
 
@@ -99,7 +98,8 @@ export function WebTerminalManager({ title }: { title: string }) {
     fitAddonRef.current = fitAddon;
     setStatus("Connexion…");
 
-    const ws = new WebSocket(wsUrl, token ? ["vzone", `access_token.${token}`] : ["vzone"]);
+    const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+    const ws = new WebSocket(`${wsUrl}${qs}`);
     wsRef.current = ws;
     let disposed = false;
     let resizeObserver: ResizeObserver | null = null;
@@ -144,18 +144,26 @@ export function WebTerminalManager({ title }: { title: string }) {
       term.write(String(evt.data || ""));
     };
 
-    ws.onclose = () => {
+    ws.onclose = (evt) => {
       if (disposed) return;
       setConnected(false);
       setStatus("Déconnecté");
-      term.writeln("\r\n\x1b[1;31m[session fermée]\x1b[0m");
+      const why =
+        evt.code === 4401
+          ? "auth refusée"
+          : evt.code === 4403
+            ? "accès SSH non autorisé (package)"
+            : evt.code === 4500
+              ? "shell indisponible (sudo / compte OS)"
+              : `code ${evt.code}`;
+      term.writeln(`\r\n\x1b[1;31m[session fermée — ${why}]\x1b[0m`);
     };
 
     ws.onerror = () => {
       if (disposed) return;
       setConnected(false);
       setStatus("Erreur de connexion");
-      term.writeln("\r\n\x1b[1;31m[erreur WebSocket]\x1b[0m");
+      term.writeln("\r\n\x1b[1;31m[erreur WebSocket — vérifiez le réseau / Origin]\x1b[0m");
     };
 
     resizeObserver = new ResizeObserver(() => sendResize());

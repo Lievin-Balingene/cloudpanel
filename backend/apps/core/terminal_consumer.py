@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import pty
 import shlex
@@ -22,6 +23,7 @@ from rest_framework_simplejwt.tokens import AccessToken
 from apps.packages.models import PackageAssignment
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 @database_sync_to_async
@@ -38,18 +40,30 @@ def _resolve_user_and_access(user_id: int) -> tuple[object | None, bool]:
 
 
 @database_sync_to_async
-def _prepare_jail(user: object) -> tuple[str, str]:
-    """Retourne (username OS, home) après ensure du compte Linux."""
-    from apps.accounts.linux_users import ensure_linux_user, jail_username_for
+def _prepare_jail(user: object) -> tuple[str, str, str | None]:
+    """Retourne (username OS, home, erreur_ou_None)."""
+    from apps.accounts.linux_users import (
+        ensure_linux_user,
+        jail_username_for,
+        linux_user_exists,
+        provision_home_via_root,
+    )
     from apps.files.services import personal_home
 
     jail = jail_username_for(user)  # type: ignore[arg-type]
     home = str(personal_home(user))  # type: ignore[arg-type]
+    err: str | None = None
     try:
         ensure_linux_user(user, home=Path(home))  # type: ignore[arg-type]
-    except Exception:  # noqa: BLE001
-        pass
-    return jail, home
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ensure_linux_user: %s", exc)
+    if not linux_user_exists(jail):
+        try:
+            provision_home_via_root(jail)
+        except Exception as exc:  # noqa: BLE001
+            err = f"compte OS absent ({jail}): {exc}"
+            logger.warning(err)
+    return jail, home, err
 
 
 def _jail_username(user: object) -> str:
@@ -90,25 +104,31 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
         if user is None or not allowed:
             await self.close(code=4403)
             return
-        # Pas de terminal admin OS : évite shell vzone/root via compte administrateur panel
         if getattr(user, "role", None) == "administrator":
             if not getattr(settings, "VZONE_TERMINAL_ALLOW_ADMIN", False):
                 await self.close(code=4403)
                 return
         self.user = user
-        # Accepter un sous-protocole annoncé par le client (auth)
-        chosen = None
-        for proto in self.scope.get("subprotocols") or []:
-            p = str(proto)
-            if p == "vzone" or p.startswith("access_token."):
-                chosen = p if p == "vzone" else "vzone"
-                break
-        await self.accept(subprotocol=chosen)
+
+        subs = [str(p) for p in (self.scope.get("subprotocols") or [])]
+        if "vzone" in subs:
+            await self.accept(subprotocol="vzone")
+        else:
+            await self.accept()
+
         try:
-            jail, home = await _prepare_jail(user)
-            self._start_pty(jail=jail, home=Path(home))
-        except Exception:  # noqa: BLE001
-            await self.send(text_data="\r\n[terminal] unable to start shell (privilege drop failed)\r\n")
+            jail, home, prep_err = await _prepare_jail(user)
+            self._start_pty(jail=jail, home=Path(home), prep_err=prep_err)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("terminal start failed")
+            msg = str(exc)[:300]
+            await self.send(
+                text_data=(
+                    "\r\n[terminal] impossible de démarrer le shell\r\n"
+                    f"[terminal] {msg}\r\n"
+                    "[terminal] Vérifiez: sudo bash /opt/vzone-src/scripts/ensure-mkhome-sudoers.sh\r\n"
+                )
+            )
             await self.close(code=4500)
             return
         self._reader_task = asyncio.create_task(self._read_pty())
@@ -196,14 +216,13 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
             f"PS1='{jail_q}:\\w\\$ '\n"
             "export PS1\n"
             f"cd {home_q} 2>/dev/null || true\n"
-            # Réduire surface si l'utilisateur tente de remonter
             "umask 0077\n"
         )
         fd, path = tempfile.mkstemp(prefix="vzone-term-", suffix=".bashrc")
         os.close(fd)
         Path(path).write_text(content, encoding="utf-8")
         try:
-            os.chmod(path, 0o600)
+            os.chmod(path, 0o644)
         except OSError:
             pass
         self._rcfile = path
@@ -226,7 +245,13 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
         except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
             return False
 
-    def _start_pty(self, *, jail: str | None = None, home: Path | None = None) -> None:
+    def _start_pty(
+        self,
+        *,
+        jail: str | None = None,
+        home: Path | None = None,
+        prep_err: str | None = None,
+    ) -> None:
         shell = (getattr(settings, "VZONE_TERMINAL_SHELL", "/bin/bash") or "/bin/bash").strip()
         jail = jail or _jail_username(self.user)
         cwd = home or _jail_home(self.user, jail)
@@ -240,9 +265,14 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
         fallback = bool(getattr(settings, "VZONE_TERMINAL_FALLBACK_SAME_UID", False))
         debug = bool(getattr(settings, "DEBUG", False))
         if not use_sudo and not (fallback and debug):
+            detail = prep_err or "sudo -n -u <user> true a échoué"
             raise RuntimeError(
-                "sudo -u jail indisponible — installez /etc/sudoers.d/vzone-terminal"
+                f"{detail} — installez: sudo bash /opt/vzone-src/scripts/ensure-mkhome-sudoers.sh "
+                f"puis recréez le compte OS (vzone-mkhome {jail})"
             )
+
+        # cwd doit être accessible au process vzone (avant setuid via sudo)
+        start_cwd = str(cwd) if os.access(cwd, os.X_OK) else "/tmp"
 
         master_fd, slave_fd = pty.openpty()
         self._resize(120, 34, master_fd=master_fd)
@@ -255,6 +285,8 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
         env["HOSTNAME"] = jail
         env["VZONE_JAIL_USER"] = jail
         env["PROMPT_COMMAND"] = ""
+        # sudo lit souvent un env minimal
+        env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
         rcfile = self._write_rcfile(jail=jail, home=cwd)
 
         if use_sudo:
@@ -268,7 +300,7 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
                 stdin=slave_fd,
                 stdout=slave_fd,
                 stderr=slave_fd,
-                cwd=str(cwd),
+                cwd=start_cwd,
                 env=env,
                 preexec_fn=os.setsid,
                 close_fds=True,
@@ -303,17 +335,18 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
                 pass
 
     def _extract_token(self) -> str | None:
+        # Query string en premier (fiable ; JWT trop long pour Sec-WebSocket-Protocol)
+        raw = (self.scope.get("query_string") or b"").decode("utf-8", errors="ignore")
+        params = parse_qs(raw)
+        token = (params.get("token") or [None])[0]
+        if token:
+            return token
         headers = {k.decode().lower(): v.decode() for k, v in (self.scope.get("headers") or [])}
         auth = headers.get("authorization", "")
         if auth.lower().startswith("bearer "):
             return auth.split(" ", 1)[1].strip() or None
-        # Subprotocol: ["vzone", "<jwt>"] ou ["access_token.<jwt>"]
         for proto in self.scope.get("subprotocols") or []:
             p = str(proto)
             if p.startswith("access_token."):
                 return p.split(".", 1)[1] or None
-            if p not in {"vzone", "terminal"} and len(p) > 20:
-                return p
-        raw = (self.scope.get("query_string") or b"").decode("utf-8", errors="ignore")
-        params = parse_qs(raw)
-        return (params.get("token") or [None])[0]
+        return None
