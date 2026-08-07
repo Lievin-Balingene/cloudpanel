@@ -65,6 +65,38 @@ def _ensure_clients_group() -> None:
         logger.warning("groupadd %s: %s", CLIENTS_GROUP, exc)
 
 
+def provision_home_via_root(username: str) -> None:
+    """Appelle /usr/local/sbin/vzone-mkhome via sudo (création /home sous root)."""
+    helper = Path("/usr/local/sbin/vzone-mkhome")
+    if not helper.is_file():
+        raise VZoneAPIException(
+            detail="Helper vzone-mkhome absent. Installez: sudo bash scripts/ensure-mkhome-sudoers.sh",
+            code="mkhome_missing",
+            status_code=500,
+        )
+    try:
+        proc = subprocess.run(
+            ["sudo", "-n", str(helper), username],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
+        raise VZoneAPIException(
+            detail=f"sudo vzone-mkhome échoué: {exc}",
+            code="mkhome_failed",
+            status_code=500,
+        ) from exc
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        raise VZoneAPIException(
+            detail=f"vzone-mkhome: {err or proc.returncode}",
+            code="mkhome_failed",
+            status_code=500,
+        )
+
+
 def ensure_linux_user(user: User, *, home: Path | None = None) -> str:
     """
     Garantit un UID Linux distinct du service vzone pour cron/terminal.
@@ -85,17 +117,33 @@ def ensure_linux_user(user: User, *, home: Path | None = None) -> str:
     if linux_user_exists(username):
         return username
 
+    from apps.files.services import personal_home
+
+    home_path = Path(home) if home else personal_home(user)
+
+    # Préférer le helper root (useradd + ACL) — le panel n'est pas root
+    helper = Path("/usr/local/sbin/vzone-mkhome")
+    if helper.is_file():
+        try:
+            provision_home_via_root(username)
+            if linux_user_exists(username):
+                return username
+        except VZoneAPIException as exc:
+            logger.warning("mkhome via root: %s", exc)
+
     if mode == "auto" and not Path("/usr/sbin/useradd").is_file() and not Path("/usr/bin/useradd").is_file():
         logger.warning("useradd indisponible — compte OS non créé pour %s", username)
         return username
 
-    from apps.files.services import personal_home
-
-    home_path = Path(home) if home else personal_home(user)
-    home_path.mkdir(parents=True, exist_ok=True)
+    try:
+        home_path.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
     _ensure_clients_group()
 
     cmd = [
+        "sudo",
+        "-n",
         "useradd",
         "-M",
         "-d",
@@ -110,25 +158,11 @@ def ensure_linux_user(user: User, *, home: Path | None = None) -> str:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False)
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
         logger.error("useradd %s failed: %s", username, exc)
-        raise VZoneAPIException(
-            detail=f"Impossible de créer le compte système {username}.",
-            code="linux_user_failed",
-            status_code=500,
-        ) from exc
+        return username
 
     if proc.returncode != 0 and not linux_user_exists(username):
-        err = (proc.stderr or proc.stdout or "").strip()
-        raise VZoneAPIException(
-            detail=f"useradd {username}: {err or proc.returncode}",
-            code="linux_user_failed",
-            status_code=500,
-        )
-
-    try:
-        pw = pwd.getpwnam(username)
-        os.chown(home_path, pw.pw_uid, pw.pw_gid)
-    except (KeyError, OSError) as exc:
-        logger.warning("chown home %s: %s", home_path, exc)
+        logger.warning("useradd %s: %s", username, (proc.stderr or proc.stdout or "").strip())
+        return username
 
     logger.info("Compte Linux créé: %s home=%s", username, home_path)
     return username

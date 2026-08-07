@@ -79,13 +79,31 @@ def provision_account_home(user: User) -> Path:
     home = personal_home(user)
     try:
         ensure_cpanel_tree(home)
-        # Pas d'index.html par défaut (OLS / sites vides) — opt-in WHM uniquement.
     except OSError as exc:
-        raise VZoneAPIException(
-            detail=f"Impossible de créer le home {home}: {exc}",
-            code="home_provision_failed",
-            status_code=500,
-        ) from exc
+        # /home est souvent root:root 755 — fallback via sudo vzone-mkhome
+        if getattr(exc, "errno", None) == 13 or "Permission denied" in str(exc):
+            from apps.accounts.linux_users import provision_home_via_root
+
+            try:
+                provision_home_via_root(sys_name)
+                ensure_cpanel_tree(home)
+            except Exception as inner:  # noqa: BLE001
+                raise VZoneAPIException(
+                    detail=(
+                        f"Impossible de créer le home {home}: {exc}. "
+                        f"Helper root: {inner}. "
+                        "Sur le serveur: sudo bash /opt/vzone-src/scripts/ensure-mkhome-sudoers.sh "
+                        "&& sudo bash /opt/vzone-src/scripts/ensure-homes.sh"
+                    ),
+                    code="home_provision_failed",
+                    status_code=500,
+                ) from inner
+        else:
+            raise VZoneAPIException(
+                detail=f"Impossible de créer le home {home}: {exc}",
+                code="home_provision_failed",
+                status_code=500,
+            ) from exc
 
     user.home_directory = str(home)
     user.save(

@@ -1,0 +1,11 @@
+# Homes + terminal : helpers root allowlistés pour le user panel « vzone ».
+# Installé par scripts/ensure-mkhome-sudoers.sh
+
+Defaults:vzone !requiretty
+
+# Création home /home/<user> + useradd jail
+vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-mkhome
+
+# Terminal web — shell uniquement pour le groupe vzone-clients
+Cmnd_Alias VZONE_TERM_SHELLS = /bin/bash, /usr/bin/bash, /bin/true, /usr/bin/true
+vzone ALL=(%vzone-clients) NOPASSWD: VZONE_TERM_SHELLS

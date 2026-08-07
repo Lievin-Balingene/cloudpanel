@@ -142,6 +142,11 @@ if [[ -f "${REPO_DIR}/scripts/ensure-terminal-sudoers.sh" ]]; then
   bash "${REPO_DIR}/scripts/ensure-terminal-sudoers.sh" || echo "[vzone] Avertissement: ensure-terminal-sudoers.sh a échoué"
 fi
 
+# Helper root création /home/<user> (évite Permission denied Errno 13)
+if [[ -f "${REPO_DIR}/scripts/ensure-mkhome-sudoers.sh" ]]; then
+  bash "${REPO_DIR}/scripts/ensure-mkhome-sudoers.sh" || echo "[vzone] Avertissement: ensure-mkhome-sudoers.sh a échoué"
+fi
+
 # Secret FTP interne si manquant (fail-closed sinon)
 if [[ -f /etc/vzone/vzone.env ]] && ! grep -q '^VZONE_FTP_AUTH_SECRET=.\+' /etc/vzone/vzone.env 2>/dev/null; then
   FTP_SECRET="$(openssl rand -hex 32)"

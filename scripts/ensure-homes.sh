@@ -49,9 +49,16 @@ ensure_cpanel_home() {
 
 mkdir -p "${TARGET_HOME}"
 
+# Le process panel (vzone) DOIT pouvoir créer /home/<user>
 if command -v setfacl >/dev/null 2>&1; then
   setfacl -m "u:${VZONE_USER}:rwx" "${TARGET_HOME}" || true
   setfacl -d -m "u:${VZONE_USER}:rwx" "${TARGET_HOME}" || true
+  echo "[vzone] ACL u:${VZONE_USER}:rwx sur ${TARGET_HOME}"
+else
+  # Sans ACL : groupe vzone + setgid (sinon Errno 13 Permission denied)
+  chown "root:${VZONE_USER}" "${TARGET_HOME}" 2>/dev/null || true
+  chmod 2775 "${TARGET_HOME}" 2>/dev/null || true
+  echo "[vzone] ${TARGET_HOME} → root:${VZONE_USER} 2775 (fallback sans setfacl)"
 fi
 
 ensure_cpanel_home "${TARGET_HOME}/admin"
