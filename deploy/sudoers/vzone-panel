@@ -1,12 +1,14 @@
-# Homes + terminal : helpers root allowlistés pour le user panel « vzone ».
+# Homes + terminal jailé : helpers root allowlistés pour le user panel « vzone ».
 # Installé par scripts/ensure-mkhome-sudoers.sh
+#
+# Les clients N'ONT PAS sudo, PAS de bash libre via sudoers panel.
+# Le terminal passe uniquement par vzone-jailterm (bubblewrap → UID client + home only).
 
 Defaults:vzone !requiretty
 Defaults:vzone !authenticate
 
-# Création home /home/<user> + useradd jail + membership groupe
+# Création home + membership groupe
 vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-mkhome
 
-# Terminal web — shell uniquement pour le groupe vzone-clients
-Cmnd_Alias VZONE_TERM_SHELLS = /bin/bash, /usr/bin/bash, /bin/sh, /usr/bin/sh, /bin/true, /usr/bin/true
-vzone ALL=(%vzone-clients) NOPASSWD: VZONE_TERM_SHELLS
+# Terminal web jailé (argument = username client validé dans le helper)
+vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-jailterm, /usr/local/sbin/vzone-jailterm *

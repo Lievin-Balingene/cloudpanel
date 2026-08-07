@@ -1,6 +1,2 @@
-# Terminal web : vzone peut lancer un shell UNIQUEMENT pour les comptes du groupe vzone-clients.
-# Installé par scripts/ensure-terminal-sudoers.sh — ne pas élargir à (ALL) ou root.
-
-Defaults:vzone !requiretty
-Cmnd_Alias VZONE_TERM_SHELLS = /bin/bash, /usr/bin/bash, /bin/true, /usr/bin/true
-vzone ALL=(%vzone-clients) NOPASSWD: VZONE_TERM_SHELLS
+# Ancien fichier — remplacé par deploy/sudoers/vzone-panel
+# (terminal = vzone-jailterm jailé, plus de bash libre pour %vzone-clients)

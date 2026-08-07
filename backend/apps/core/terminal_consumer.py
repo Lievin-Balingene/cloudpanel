@@ -1,4 +1,4 @@
-"""Web terminal consumer (PTY) with package SSH authorization + drop privileges."""
+"""Web terminal consumer — shell client jailé (vzone-jailterm / bubblewrap)."""
 from __future__ import annotations
 
 import asyncio
@@ -6,10 +6,8 @@ import json
 import logging
 import os
 import pty
-import shlex
 import signal
 import subprocess
-import tempfile
 import termios
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -24,6 +22,8 @@ from apps.packages.models import PackageAssignment
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
+
+JAILTERM = Path("/usr/local/sbin/vzone-jailterm")
 
 
 @database_sync_to_async
@@ -58,7 +58,6 @@ def _prepare_jail(user: object) -> tuple[str, str, str | None]:
         ensure_linux_user(user, home=Path(home))  # type: ignore[arg-type]
     except Exception as exc:  # noqa: BLE001
         logger.warning("ensure_linux_user: %s", exc)
-    # Toujours rappeler mkhome si compte/groupe manquant (idempotent côté membership)
     if not linux_user_exists(jail) or not user_in_clients_group(jail):
         try:
             provision_home_via_root(jail)
@@ -130,12 +129,12 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
             self._start_pty(jail=jail, home=Path(home), prep_err=prep_err)
         except Exception as exc:  # noqa: BLE001
             logger.exception("terminal start failed")
-            msg = str(exc)[:300]
+            msg = str(exc)[:400]
             await self.send(
                 text_data=(
-                    "\r\n[terminal] impossible de démarrer le shell\r\n"
+                    "\r\n[terminal] impossible de démarrer le shell jailé\r\n"
                     f"[terminal] {msg}\r\n"
-                    "[terminal] Vérifiez: sudo bash /opt/vzone-src/scripts/ensure-mkhome-sudoers.sh\r\n"
+                    "[terminal] sudo bash /opt/vzone-src/scripts/ensure-mkhome-sudoers.sh\r\n"
                 )
             )
             await self.close(code=4500)
@@ -156,12 +155,6 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
         if fd is not None:
             try:
                 os.close(fd)
-            except OSError:
-                pass
-        rc = getattr(self, "_rcfile", None)
-        if rc:
-            try:
-                Path(rc).unlink(missing_ok=True)
             except OSError:
                 pass
 
@@ -210,56 +203,24 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
                 return
             await self.send(text_data=chunk.decode("utf-8", errors="ignore"))
 
-    def _write_rcfile(self, *, jail: str, home: Path) -> Path:
-        home_q = shlex.quote(str(home))
-        jail_q = shlex.quote(jail)
-        content = (
-            "# V-zone web terminal — identité jail\n"
-            f"export HOME={home_q}\n"
-            f"export USER={jail_q}\n"
-            f"export LOGNAME={jail_q}\n"
-            f"export USERNAME={jail_q}\n"
-            f"export HOSTNAME={jail_q}\n"
-            f"export VZONE_JAIL_USER={jail_q}\n"
-            "unset PROMPT_COMMAND\n"
-            f"PS1='{jail_q}:\\w\\$ '\n"
-            "export PS1\n"
-            f"cd {home_q} 2>/dev/null || true\n"
-            "umask 0077\n"
-        )
-        fd, path = tempfile.mkstemp(prefix="vzone-term-", suffix=".bashrc")
-        os.close(fd)
-        Path(path).write_text(content, encoding="utf-8")
+    def _jailterm_probe(self, jail: str) -> tuple[bool, str]:
+        """Vérifie sudo -n vzone-jailterm --check <jail>."""
+        if not JAILTERM.is_file():
+            return False, f"{JAILTERM} absent — ensure-mkhome-sudoers.sh"
         try:
-            os.chmod(path, 0o644)
-        except OSError:
-            pass
-        self._rcfile = path
-        return Path(path)
-
-    def _shell_command(self, *, jail: str, shell: str, rcfile: Path) -> list[str]:
-        if jail in {"root", "vzone"}:
-            raise RuntimeError("jail user privilégié interdit")
-        return ["sudo", "-n", "-u", jail, "--", shell, "--noprofile", "--rcfile", str(rcfile), "-i"]
-
-    def _sudo_probe(self, jail: str) -> tuple[bool, str]:
-        """Teste sudo -n -u jail /bin/true ; retourne (ok, détail)."""
-        last = "sudo indisponible"
-        for true_bin in ("/bin/true", "/usr/bin/true"):
-            try:
-                proc = subprocess.run(
-                    ["sudo", "-n", "-u", jail, "--", true_bin],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                    check=False,
-                )
-            except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
-                return False, str(exc)
-            if proc.returncode == 0:
-                return True, ""
-            last = (proc.stderr or proc.stdout or "").strip() or f"exit {proc.returncode}"
-        return False, last
+            proc = subprocess.run(
+                ["sudo", "-n", str(JAILTERM), "--check", jail],
+                capture_output=True,
+                text=True,
+                timeout=8,
+                check=False,
+            )
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
+            return False, str(exc)
+        if proc.returncode == 0:
+            return True, ""
+        err = (proc.stderr or proc.stdout or "").strip() or f"exit {proc.returncode}"
+        return False, err
 
     def _start_pty(
         self,
@@ -268,8 +229,10 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
         home: Path | None = None,
         prep_err: str | None = None,
     ) -> None:
-        shell = (getattr(settings, "VZONE_TERMINAL_SHELL", "/bin/bash") or "/bin/bash").strip()
         jail = jail or _jail_username(self.user)
+        if jail in {"root", "vzone"}:
+            raise RuntimeError("compte privilégié interdit dans le terminal client")
+
         cwd = home or _jail_home(self.user, jail)
         if not cwd.exists():
             try:
@@ -277,25 +240,21 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
             except OSError:
                 cwd = Path("/tmp")
 
-        use_sudo, sudo_err = self._sudo_probe(jail)
-        # Dernier recours : re-provision mkhome puis re-test (groupe manquant)
-        if not use_sudo:
+        ok, jail_err = self._jailterm_probe(jail)
+        if not ok:
             try:
                 from apps.accounts.linux_users import provision_home_via_root
 
                 provision_home_via_root(jail)
-                use_sudo, sudo_err = self._sudo_probe(jail)
+                ok, jail_err = self._jailterm_probe(jail)
             except Exception as exc:  # noqa: BLE001
-                sudo_err = f"{sudo_err}; mkhome: {exc}"
+                jail_err = f"{jail_err}; mkhome: {exc}"
 
-        fallback = bool(getattr(settings, "VZONE_TERMINAL_FALLBACK_SAME_UID", False))
-        debug = bool(getattr(settings, "DEBUG", False))
-        if not use_sudo and not (fallback and debug):
-            detail = prep_err or f"sudo -n -u {jail} /bin/true a échoué: {sudo_err}"
-            if "no new privileges" in (sudo_err or "").lower():
+        if not ok:
+            detail = prep_err or f"vzone-jailterm --check {jail}: {jail_err}"
+            if "no new privileges" in (jail_err or "").lower():
                 detail = (
-                    f"{detail} — NoNewPrivileges systemd bloque sudo : "
-                    "mettez à jour deploy/systemd/vzone-api.service puis "
+                    f"{detail} — NoNewPrivileges systemd : "
                     "systemctl daemon-reload && systemctl restart vzone-api"
                 )
             else:
@@ -305,28 +264,21 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
                 )
             raise RuntimeError(detail)
 
-        # cwd doit être accessible au process vzone (avant setuid via sudo)
-        start_cwd = str(cwd) if os.access(cwd, os.X_OK) else "/tmp"
-
+        # Banner informatif (avant le shell jailé)
         master_fd, slave_fd = pty.openpty()
         self._resize(120, 34, master_fd=master_fd)
-        env = os.environ.copy()
-        env["TERM"] = "xterm-256color"
-        env["HOME"] = str(cwd)
-        env["USER"] = jail
-        env["LOGNAME"] = jail
-        env["USERNAME"] = jail
-        env["HOSTNAME"] = jail
-        env["VZONE_JAIL_USER"] = jail
-        env["PROMPT_COMMAND"] = ""
-        # sudo lit souvent un env minimal
-        env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-        rcfile = self._write_rcfile(jail=jail, home=cwd)
 
-        if use_sudo:
-            cmd = self._shell_command(jail=jail, shell=shell, rcfile=rcfile)
-        else:
-            cmd = [shell, "--noprofile", "--rcfile", str(rcfile), "-i"]
+        env = {
+            "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "TERM": "xterm-256color",
+            "LANG": os.environ.get("LANG", "C.UTF-8"),
+            "HOME": str(cwd),
+            "USER": jail,
+            "LOGNAME": jail,
+        }
+
+        # Shell UNIQUEMENT via helper root → bubblewrap UID client (pas de bash libre, pas de root)
+        cmd = ["sudo", "-n", str(JAILTERM), jail]
 
         try:
             proc = subprocess.Popen(
@@ -334,7 +286,7 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
                 stdin=slave_fd,
                 stdout=slave_fd,
                 stderr=slave_fd,
-                cwd=start_cwd,
+                cwd="/tmp",
                 env=env,
                 preexec_fn=os.setsid,
                 close_fds=True,
@@ -369,7 +321,6 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
                 pass
 
     def _extract_token(self) -> str | None:
-        # Query string en premier (fiable ; JWT trop long pour Sec-WebSocket-Protocol)
         raw = (self.scope.get("query_string") or b"").decode("utf-8", errors="ignore")
         params = parse_qs(raw)
         token = (params.get("token") or [None])[0]

@@ -50,16 +50,23 @@ mkdir -p \
 chmod 755 "${HOME_DIR}" "${HOME_DIR}/public_html" 2>/dev/null || true
 
 # Compte OS pour cron/terminal (sans -m : home déjà créé)
+# Shell = nologin : pas de SSH/password ; terminal web = vzone-jailterm uniquement
+NOLOGIN="/usr/sbin/nologin"
+[[ -x "$NOLOGIN" ]] || NOLOGIN="/sbin/nologin"
+[[ -x "$NOLOGIN" ]] || NOLOGIN="/bin/false"
+
 if ! id -u "${USERNAME}" >/dev/null 2>&1; then
-  useradd -M -d "${HOME_DIR}" -s /bin/bash -g "${CLIENTS_GROUP}" "${USERNAME}" 2>/dev/null \
-    || useradd -M -d "${HOME_DIR}" -s /bin/bash "${USERNAME}" || true
+  useradd -M -d "${HOME_DIR}" -s "${NOLOGIN}" -g "${CLIENTS_GROUP}" "${USERNAME}" 2>/dev/null \
+    || useradd -M -d "${HOME_DIR}" -s "${NOLOGIN}" "${USERNAME}" || true
 fi
 
-# Obligatoire pour sudoers terminal : vzone ALL=(%vzone-clients) ...
+# Membership vzone-clients + pas de login password + pas de bash login
 if id -u "${USERNAME}" >/dev/null 2>&1; then
   if ! id -nG "${USERNAME}" 2>/dev/null | tr ' ' '\n' | grep -qx "${CLIENTS_GROUP}"; then
     usermod -aG "${CLIENTS_GROUP}" "${USERNAME}" 2>/dev/null || true
   fi
+  usermod -s "${NOLOGIN}" "${USERNAME}" 2>/dev/null || true
+  passwd -l "${USERNAME}" >/dev/null 2>&1 || true
 fi
 
 # Propriétaire = compte OS si possible, sinon vzone ; ACL panel toujours

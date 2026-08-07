@@ -181,7 +181,7 @@ def ensure_linux_user(user: User, *, home: Path | None = None) -> str:
         "-d",
         str(home_path),
         "-s",
-        "/bin/bash",
+        "/usr/sbin/nologin",
         "-g",
         CLIENTS_GROUP,
         username,
