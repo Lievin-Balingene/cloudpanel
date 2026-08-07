@@ -55,6 +55,8 @@ chmod 640 /etc/ssl/private/ssl-cert-snakeoil.key 2>/dev/null || true
 chown root:ssl-cert /etc/ssl/private/ssl-cert-snakeoil.key 2>/dev/null || true
 
 mkdir -p /etc/nginx/snippets /var/lib/vzone/acme /var/lib/vzone/ssl /var/lib/vzone/nginx/domains /var/lib/vzone/suspended
+chown -R vzone:www-data /var/lib/vzone/nginx 2>/dev/null || true
+chmod 775 /var/lib/vzone/nginx /var/lib/vzone/nginx/domains 2>/dev/null || true
 
 # Page « Account Suspended » (style cPanel) pour les domaines des comptes suspendus
 SUSPENDED_SRC=""
@@ -150,7 +152,9 @@ install_stub /etc/nginx/snippets/vzone-phpmyadmin.inc phpmyadmin
 install_stub /etc/nginx/snippets/vzone-roundcube.inc roundcube
 
 DOMAINS_DIR="${VZONE_NGINX_DOMAINS_DIR:-/var/lib/vzone/nginx/domains}"
-chown -R vzone:vzone /var/lib/vzone/nginx /var/lib/vzone/acme 2>/dev/null || true
+chown -R vzone:www-data /var/lib/vzone/nginx 2>/dev/null || true
+chmod 775 /var/lib/vzone/nginx "$DOMAINS_DIR" 2>/dev/null || chmod 755 "$DOMAINS_DIR"
+chown -R vzone:vzone /var/lib/vzone/acme 2>/dev/null || true
 chmod 755 "$DOMAINS_DIR" /var/lib/vzone/acme
 chmod -R a+rX /var/lib/vzone/acme
 
@@ -425,7 +429,12 @@ fi
 echo "[vzone] Nginx OK — Admin :${ADMIN_PORT} · Client :${CLIENT_PORT} · Webmail :${WEBMAIL_PORT}"
 echo "[vzone] IP:80 = Access Denied · hostname panel / localhost = OK"
 
-# Régénérer TOUS les vhosts domaines → public_html (évite 7une.info → /login)
+# Agent reload nginx (vhosts domaines après création compte)
+if [[ -f "${SCRIPT_DIR}/ensure-nginx-reload-agent.sh" ]]; then
+  bash "${SCRIPT_DIR}/ensure-nginx-reload-agent.sh" || echo "[vzone] Avertissement: ensure-nginx-reload-agent.sh"
+fi
+
+# Régénérer TOUS les vhosts domaines → public_html (évite SORRY! / login panel)
 if [[ -x "${VZONE_ROOT}/backend/.venv/bin/python" && -f "$ENV_FILE" ]]; then
   echo "[vzone] Sync vhosts domaines (sites clients)"
   set -a

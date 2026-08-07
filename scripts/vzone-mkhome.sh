@@ -80,6 +80,12 @@ fi
 if command -v setfacl >/dev/null 2>&1; then
   setfacl -R -m "u:${VZONE_USER}:rwx" "${HOME_DIR}" 2>/dev/null || true
   setfacl -R -d -m "u:${VZONE_USER}:rwx" "${HOME_DIR}" 2>/dev/null || true
+  # nginx (www-data) traverse home → public_html
+  setfacl -m u:www-data:rx "${HOME_DIR}" 2>/dev/null || true
+  setfacl -m o::rx "${HOME_DIR}" 2>/dev/null || true
+  setfacl -m u:www-data:rx "${HOME_DIR}/public_html" 2>/dev/null || true
+  setfacl -m o::rx "${HOME_DIR}/public_html" 2>/dev/null || true
+  setfacl -d -m o::rx "${HOME_DIR}/public_html" 2>/dev/null || true
 fi
 
 chmod 755 "${HOME_DIR}" "${HOME_DIR}/public_html" 2>/dev/null || true

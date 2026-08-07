@@ -37,6 +37,22 @@ def nginx_domains_dir() -> Path:
     return path
 
 
+def _ensure_nginx_domains_include() -> None:
+    """Garantit include ${DOMAINS_DIR}/*.conf dans nginx (sinon → SORRY! default_server)."""
+    if not _web_stack_live():
+        return
+    domains_dir = nginx_domains_dir()
+    include_line = f"include {domains_dir}/*.conf;"
+    inc_path = Path("/etc/nginx/conf.d/vzone-domains-include.conf")
+    try:
+        current = inc_path.read_text(encoding="utf-8") if inc_path.is_file() else ""
+        if include_line not in current:
+            inc_path.write_text(f"{include_line}\n", encoding="utf-8")
+            logger.info("Écrit %s", inc_path)
+    except OSError as exc:
+        logger.warning("Impossible d'écrire %s: %s", inc_path, exc)
+
+
 def _web_stack_live() -> bool:
     mode = (getattr(settings, "VZONE_WEB_STACK", "auto") or "auto").lower()
     if mode == "live":
@@ -524,44 +540,63 @@ def remove_domain_vhost(hostname: str) -> None:
 def reload_nginx() -> bool:
     if not _web_stack_live():
         return False
-    # L'API tourne avec NoNewPrivileges — déléguer le reload à un helper root
+
+    _ensure_nginx_domains_include()
     helper = Path("/usr/local/sbin/vzone-nginx-reload")
+    flag = Path(getattr(settings, "VZONE_DATA_ROOT", "/var/lib/vzone")) / "nginx" / "reload.requested"
+
+    try:
+        flag.parent.mkdir(parents=True, exist_ok=True)
+        flag.write_text(str(int(time.time())), encoding="utf-8")
+    except OSError as exc:
+        logger.error("reload flag: %s", exc)
+        return False
+
     if helper.is_file():
-        # File drop pour l'agent path, + tentative directe (si root / polkit)
-        flag = Path(
-            getattr(settings, "VZONE_DATA_ROOT", "/var/lib/vzone")
-        ) / "nginx" / "reload.requested"
-        try:
-            flag.parent.mkdir(parents=True, exist_ok=True)
-            flag.write_text(str(int(time.time())), encoding="utf-8")
-        except OSError:
-            pass
         try:
             subprocess.run(
                 ["systemctl", "start", "vzone-nginx-reload.service"],
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=20,
+                timeout=30,
             )
-        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-            pass
-        # Fallback : exécuter le helper si on est root
-        if os.geteuid() == 0:
-            result = subprocess.run([str(helper)], capture_output=True, text=True)
-            return result.returncode == 0
-        return True
-
-    test = subprocess.run(["nginx", "-t"], capture_output=True, text=True)
-    if test.returncode != 0:
-        logger.error("nginx -t failed: %s", test.stderr)
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+            logger.error("systemctl vzone-nginx-reload: %s", exc)
+            return False
+        # Succès = helper root a supprimé le flag après nginx -t && reload
+        for _ in range(24):
+            if not flag.exists():
+                return True
+            time.sleep(0.25)
+        logger.error(
+            "nginx reload non confirmé — exécutez: "
+            "sudo bash /opt/vzone-src/scripts/ensure-nginx-reload-agent.sh && "
+            "sudo systemctl start vzone-nginx-reload.service"
+        )
         return False
-    subprocess.run(["systemctl", "reload", "nginx"], check=False, capture_output=True)
-    return True
+
+    logger.warning(
+        "vzone-nginx-reload absent — vhosts écrits mais nginx non rechargé "
+        "(SORRY! sur les domaines). Installez: scripts/ensure-nginx-reload-agent.sh"
+    )
+    if os.geteuid() == 0:
+        test = subprocess.run(["nginx", "-t"], capture_output=True, text=True)
+        if test.returncode != 0:
+            logger.error("nginx -t failed: %s", test.stderr)
+            return False
+        subprocess.run(["systemctl", "reload", "nginx"], check=False, capture_output=True)
+        try:
+            flag.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return True
+    return False
 
 
 def sync_all_domain_vhosts() -> int:
     """Régénère tous les vhosts actifs + reload Nginx."""
+    _ensure_nginx_domains_include()
     # Map connection_upgrade pour websocket proxy
     map_file = Path("/etc/nginx/conf.d/vzone-map-upgrade.conf")
     if _web_stack_live() and not map_file.exists():
@@ -606,18 +641,29 @@ def sync_all_domain_vhosts() -> int:
 
 
 def sync_domain_vhost(domain: Domain) -> Path:
+    _ensure_nginx_domains_include()
     path = write_domain_vhost(domain)
     if is_panel_hostname(domain.name):
         # Rafraîchir la conf panel principale (HTTPS éventuel)
         _request_ensure_nginx()
         reload_nginx()
         return path
+    if not path.is_file():
+        logger.error(
+            "Vhost domaine absent pour %s (hostname panel ?) — le site affichera SORRY!",
+            domain.name,
+        )
     for child in Domain.objects.filter(
         parent=domain,
         domain_type__in={Domain.DomainType.ALIAS, Domain.DomainType.PARKED},
     ):
         write_domain_vhost(child)
-    reload_nginx()
+    reloaded = reload_nginx()
+    if not reloaded:
+        logger.error(
+            "nginx non rechargé après %s — domaine peut afficher SORRY! jusqu'au reload",
+            domain.name,
+        )
     try:
         from apps.domains.ols_vhosts import rebuild_ols_maps, reload_ols
 

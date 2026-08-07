@@ -208,13 +208,38 @@ def provision_primary_domain_for_account(
         except OSError as exc:
             logger.warning("Impossible d'écrire index.html pour %s: %s", domain.name, exc)
 
+    from apps.domains.vhosts import is_panel_hostname, nginx_domains_dir, _conf_filename
+
+    if is_panel_hostname(name):
+        logger.warning(
+            "Domaine %s = hostname panel — pas de vhost site (utilisez un autre FQDN client)",
+            name,
+        )
+
     # Sync vhost immédiat (en plus de on_commit) pour que le site réponde tout de suite
     try:
         from apps.domains.vhosts import sync_domain_vhost
 
         sync_domain_vhost(domain)
-    except Exception:  # noqa: BLE001
+        vhost_path = nginx_domains_dir() / _conf_filename(domain.name)
+        if not is_panel_hostname(name) and not vhost_path.is_file():
+            raise VZoneAPIException(
+                detail=(
+                    f"Vhost nginx absent pour {name}. "
+                    "Exécutez: sudo bash /opt/vzone-src/scripts/ensure-nginx.sh"
+                ),
+                code="vhost_missing",
+                status_code=500,
+            )
+    except VZoneAPIException:
+        raise
+    except Exception as exc:  # noqa: BLE001
         logger.exception("Sync vhost primary échoué pour %s", domain.name)
+        raise VZoneAPIException(
+            detail=f"Sync vhost échoué pour {name}: {exc}",
+            code="vhost_sync_failed",
+            status_code=500,
+        ) from exc
 
     return domain
 

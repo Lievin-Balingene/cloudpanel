@@ -249,7 +249,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
         password = validated_data.pop("password")
         domain_name = (validated_data.pop("domain", None) or "").strip()
         package_id = validated_data.pop("package_id", None)
-        create_welcome_index = bool(validated_data.pop("create_welcome_index", False))
+        create_welcome_index = bool(validated_data.pop("create_welcome_index", True))
 
         user = User.objects.create_user(password=password, **validated_data)
         if quota_data:
