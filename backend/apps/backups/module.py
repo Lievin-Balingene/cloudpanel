@@ -6,8 +6,8 @@ registry.register(
     ModuleMeta(
         name="backups",
         label="Backups",
-        version="0.13.0",
-        description="Sauvegardes compte : création, restauration, planning, téléchargement.",
+        version="0.33.0",
+        description="Sauvegardes Restic chiffrées via Rclone (local/S3/B2/R2/SFTP/Drive), async Celery, rétention.",
         dependencies=("core", "accounts"),
         api_prefix="backups",
         permissions=("backups.view", "backups.manage"),

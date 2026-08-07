@@ -22,10 +22,13 @@ interface BackupOverview {
   completed: number;
   failed: number;
   restored: number;
+  running?: number;
   total_size_bytes: number;
   schedules: number;
   max_backups: number;
   provision_mode: string;
+  engine?: string;
+  storage?: string;
 }
 
 interface BackupArchiveItem {
@@ -38,6 +41,9 @@ interface BackupArchiveItem {
   size_bytes: number;
   checksum: string;
   last_error: string;
+  progress?: number;
+  duration_seconds?: number;
+  snapshot_id?: string;
   completed_at: string | null;
   restored_at: string | null;
 }
@@ -50,6 +56,9 @@ interface BackupScheduleItem {
   weekday: number;
   is_active: boolean;
   last_run_at: string | null;
+  keep_daily?: number;
+  keep_weekly?: number;
+  keep_monthly?: number;
 }
 
 function formatBytes(n: number) {
@@ -85,6 +94,9 @@ export function BackupManager({ title }: { title: string }) {
     hour: 2,
     weekday: 0,
     is_active: true,
+    keep_daily: 7,
+    keep_weekly: 4,
+    keep_monthly: 6,
   });
   const [downloadInfo, setDownloadInfo] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -183,6 +195,9 @@ export function BackupManager({ title }: { title: string }) {
           weekday: scheduleForm.weekday,
           is_active: scheduleForm.is_active,
           includes: ["home", "databases", "email"],
+          keep_daily: scheduleForm.keep_daily,
+          keep_weekly: scheduleForm.keep_weekly,
+          keep_monthly: scheduleForm.keep_monthly,
         }),
       }),
     onSuccess: () => {
@@ -212,12 +227,12 @@ export function BackupManager({ title }: { title: string }) {
     <div className="space-y-4 animate-fade-up">
       <PageHeader
         title={title}
-        subtitle={`Sauvegardes du compte, restauration et planification (${overview?.max_backups ?? "—"} archives maximum).`}
+        subtitle={`Moteur ${overview?.engine ?? "restic"} · stockage ${overview?.storage ?? "rclone"} · ${overview?.max_backups ?? "—"} archives max.`}
         stats={[
           { label: "Archives", value: overview?.archives ?? "—" },
           { label: "Terminées", value: overview?.completed ?? "—" },
+          { label: "En cours", value: overview?.running ?? "—" },
           { label: "Restaurées", value: overview?.restored ?? "—" },
-          { label: "Échouées", value: overview?.failed ?? "—" },
           { label: "Volume", value: overview ? formatBytes(overview.total_size_bytes) : "—" },
         ]}
         actions={<button type="button" className="vz-btn-primary" onClick={() => setCreateKind(tab === "schedules" ? "schedule" : "backup")}><Plus className="h-4 w-4" />{tab === "schedules" ? "Créer un planning" : "Créer une sauvegarde"}</button>}
@@ -243,6 +258,7 @@ export function BackupManager({ title }: { title: string }) {
               <th className="px-3 py-2">Nom</th>
               <th className="px-3 py-2">Type</th>
               <th className="px-3 py-2">Statut</th>
+              <th className="px-3 py-2">Progression</th>
               <th className="px-3 py-2">Taille</th>
               <th className="px-3 py-2">Actions</th>
             </tr>
@@ -250,14 +266,14 @@ export function BackupManager({ title }: { title: string }) {
           <tbody>
             {isLoading && (
               <tr>
-                <td className="px-3 py-4 text-cp-muted" colSpan={5}>
+                <td className="px-3 py-4 text-cp-muted" colSpan={6}>
                   Chargement…
                 </td>
               </tr>
             )}
             {!isLoading && archives.length === 0 && (
               <tr>
-                <td colSpan={5}><EmptyState icon={<History className="h-8 w-8" />} message="Aucune sauvegarde." action={<button type="button" className="vz-btn-primary" onClick={() => setCreateKind("backup")}><Plus className="h-4 w-4" />Créer une sauvegarde</button>} /></td>
+                <td colSpan={6}><EmptyState icon={<History className="h-8 w-8" />} message="Aucune sauvegarde." action={<button type="button" className="vz-btn-primary" onClick={() => setCreateKind("backup")}><Plus className="h-4 w-4" />Créer une sauvegarde</button>} /></td>
               </tr>
             )}
             {archives.map((a) => (
@@ -270,6 +286,15 @@ export function BackupManager({ title }: { title: string }) {
                 <td className="px-3 py-2">
                   <StatusDot status={a.status} />
                   {a.last_error && <div className="mt-1 text-xs text-red-600">{a.last_error}</div>}
+                  {a.snapshot_id && (
+                    <div className="mt-1 font-mono text-[10px] text-cp-muted">{a.snapshot_id.slice(0, 12)}</div>
+                  )}
+                </td>
+                <td className="px-3 py-2">
+                  <div className="text-xs">{a.progress ?? 0}%</div>
+                  {typeof a.duration_seconds === "number" && a.duration_seconds > 0 && (
+                    <div className="text-[10px] text-cp-muted">{a.duration_seconds}s</div>
+                  )}
                 </td>
                 <td className="px-3 py-2">{formatBytes(a.size_bytes)}</td>
                 <td className="px-3 py-2">
@@ -282,8 +307,8 @@ export function BackupManager({ title }: { title: string }) {
         </div>}
         {tab === "schedules" && <div>{schedules.length === 0 ? <EmptyState icon={<CalendarClock className="h-8 w-8" />} message="Aucune planification automatique." action={<button type="button" className="vz-btn-primary" onClick={() => setCreateKind("schedule")}><Plus className="h-4 w-4" />Créer un planning</button>} /> : <div className="divide-y divide-cp-border dark:divide-ink-800">{schedules.map((schedule) => <div key={schedule.id} className="flex items-center justify-between gap-3 px-4 py-3"><div><p className="font-medium">{schedule.frequency} à {schedule.hour} h</p><div className="mt-1 flex items-center gap-2 text-xs text-cp-muted"><StatusDot status={schedule.is_active ? "active" : "inactive"} /><span>{schedule.last_run_at ? `Dernière exécution : ${new Date(schedule.last_run_at).toLocaleString("fr-FR")}` : "Jamais exécutée"}</span></div></div><IconAction label="Supprimer la planification" danger onClick={() => deleteSchedule.mutate(schedule.id)}><Trash2 className="h-4 w-4" /></IconAction></div>)}</div>}</div>}
       </div>
-      {createKind === "backup" && <Modal title="Nouvelle sauvegarde" onClose={() => setCreateKind(null)}><form className="space-y-3" onSubmit={onCreate}><div><label className="mb-1 block text-xs font-medium text-cp-muted">Type</label><select className="vz-input" value={form.backup_type} onChange={(e) => setForm((f) => ({ ...f, backup_type: e.target.value }))}><option value="full">Complète</option><option value="home">Fichiers</option><option value="databases">Bases</option><option value="email">Email</option><option value="custom">Personnalisée</option></select></div><div><label className="mb-1 block text-xs font-medium text-cp-muted">Libellé</label><input className="vz-input" value={form.label} onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))} placeholder="Optionnel" /></div>{form.backup_type === "custom" && <div className="flex flex-wrap gap-4 text-sm">{[["includes_home", "Fichiers (home)"], ["includes_databases", "Bases"], ["includes_email", "Email"]].map(([key, label]) => <label key={key} className="inline-flex items-center gap-2"><input type="checkbox" checked={Boolean(form[key as keyof typeof form])} onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.checked }))} />{label}</label>)}</div>}<div className="flex justify-end gap-2"><button type="button" className="vz-btn-ghost" onClick={() => setCreateKind(null)}>Annuler</button><button className="vz-btn-primary" type="submit" disabled={create.isPending}>{create.isPending ? "Création…" : "Créer"}</button></div></form></Modal>}
-      {createKind === "schedule" && <Modal title="Nouvelle planification" onClose={() => setCreateKind(null)}><form className="space-y-3" onSubmit={onSchedule}><div><label className="mb-1 block text-xs font-medium text-cp-muted">Fréquence</label><select className="vz-input" value={scheduleForm.frequency} onChange={(e) => setScheduleForm((f) => ({ ...f, frequency: e.target.value }))}><option value="daily">Quotidien</option><option value="weekly">Hebdomadaire</option><option value="monthly">Mensuel</option></select></div><div className="grid grid-cols-2 gap-3"><div><label className="mb-1 block text-xs font-medium text-cp-muted">Heure</label><input className="vz-input" type="number" min={0} max={23} value={scheduleForm.hour} onChange={(e) => setScheduleForm((f) => ({ ...f, hour: Number(e.target.value) }))} /></div><div><label className="mb-1 block text-xs font-medium text-cp-muted">Jour (0 = lundi)</label><input className="vz-input" type="number" min={0} max={6} value={scheduleForm.weekday} onChange={(e) => setScheduleForm((f) => ({ ...f, weekday: Number(e.target.value) }))} /></div></div><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={scheduleForm.is_active} onChange={(e) => setScheduleForm((f) => ({ ...f, is_active: e.target.checked }))} />Actif</label><div className="flex justify-end gap-2"><button type="button" className="vz-btn-ghost" onClick={() => setCreateKind(null)}>Annuler</button><button className="vz-btn-primary" type="submit" disabled={saveSchedule.isPending}>{saveSchedule.isPending ? "Enregistrement…" : "Créer"}</button></div></form></Modal>}
+      {createKind === "backup" && <Modal title="Nouvelle sauvegarde" onClose={() => setCreateKind(null)}><form className="space-y-3" onSubmit={onCreate}><div><label className="mb-1 block text-xs font-medium text-cp-muted">Type</label><select className="vz-input" value={form.backup_type} onChange={(e) => setForm((f) => ({ ...f, backup_type: e.target.value }))}><option value="full">Complète</option><option value="incremental">Incrémentale (Restic)</option><option value="home">Fichiers</option><option value="databases">Bases</option><option value="email">Email</option><option value="custom">Personnalisée</option></select></div><div><label className="mb-1 block text-xs font-medium text-cp-muted">Libellé</label><input className="vz-input" value={form.label} onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))} placeholder="Optionnel" /></div>{form.backup_type === "custom" && <div className="flex flex-wrap gap-4 text-sm">{[["includes_home", "Fichiers (home)"], ["includes_databases", "Bases"], ["includes_email", "Email"]].map(([key, label]) => <label key={key} className="inline-flex items-center gap-2"><input type="checkbox" checked={Boolean(form[key as keyof typeof form])} onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.checked }))} />{label}</label>)}</div>}<div className="flex justify-end gap-2"><button type="button" className="vz-btn-ghost" onClick={() => setCreateKind(null)}>Annuler</button><button className="vz-btn-primary" type="submit" disabled={create.isPending}>{create.isPending ? "Création…" : "Créer"}</button></div></form></Modal>}
+      {createKind === "schedule" && <Modal title="Nouvelle planification" onClose={() => setCreateKind(null)}><form className="space-y-3" onSubmit={onSchedule}><div><label className="mb-1 block text-xs font-medium text-cp-muted">Fréquence</label><select className="vz-input" value={scheduleForm.frequency} onChange={(e) => setScheduleForm((f) => ({ ...f, frequency: e.target.value }))}><option value="hourly">Horaire</option><option value="daily">Quotidien</option><option value="weekly">Hebdomadaire</option><option value="monthly">Mensuel</option></select></div><div className="grid grid-cols-2 gap-3"><div><label className="mb-1 block text-xs font-medium text-cp-muted">Heure</label><input className="vz-input" type="number" min={0} max={23} value={scheduleForm.hour} onChange={(e) => setScheduleForm((f) => ({ ...f, hour: Number(e.target.value) }))} /></div><div><label className="mb-1 block text-xs font-medium text-cp-muted">Jour (0 = lundi)</label><input className="vz-input" type="number" min={0} max={6} value={scheduleForm.weekday} onChange={(e) => setScheduleForm((f) => ({ ...f, weekday: Number(e.target.value) }))} /></div></div><div className="grid grid-cols-3 gap-2"><div><label className="mb-1 block text-xs font-medium text-cp-muted">Keep daily</label><input className="vz-input" type="number" min={0} value={scheduleForm.keep_daily} onChange={(e) => setScheduleForm((f) => ({ ...f, keep_daily: Number(e.target.value) }))} /></div><div><label className="mb-1 block text-xs font-medium text-cp-muted">Keep weekly</label><input className="vz-input" type="number" min={0} value={scheduleForm.keep_weekly} onChange={(e) => setScheduleForm((f) => ({ ...f, keep_weekly: Number(e.target.value) }))} /></div><div><label className="mb-1 block text-xs font-medium text-cp-muted">Keep monthly</label><input className="vz-input" type="number" min={0} value={scheduleForm.keep_monthly} onChange={(e) => setScheduleForm((f) => ({ ...f, keep_monthly: Number(e.target.value) }))} /></div></div><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={scheduleForm.is_active} onChange={(e) => setScheduleForm((f) => ({ ...f, is_active: e.target.checked }))} />Actif</label><div className="flex justify-end gap-2"><button type="button" className="vz-btn-ghost" onClick={() => setCreateKind(null)}>Annuler</button><button className="vz-btn-primary" type="submit" disabled={saveSchedule.isPending}>{saveSchedule.isPending ? "Enregistrement…" : "Créer"}</button></div></form></Modal>}
     </div>
   );
 }
