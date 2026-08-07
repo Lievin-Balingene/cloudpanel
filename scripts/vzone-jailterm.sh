@@ -4,13 +4,15 @@
 #   vzone-jailterm <username>           # shell interactif PTY
 #   vzone-jailterm --check <username>   # smoke-test (exit 0 si autorisé)
 #
-# Confinement: bubblewrap (UID/GID client, home seul en RW, pas de root, pas de /home voisins).
+# Confinement: runuser (UID client) + bubblewrap setuid (home RW, pas de /root ni voisins).
+# Évite --uid/--unshare-user (souvent bloqué quand user namespaces désactivés).
 set -euo pipefail
 
 CLIENTS_GROUP="${VZONE_CLIENTS_GROUP:-vzone-clients}"
 HOME_ROOT="${VZONE_HOME_ROOT:-/home}"
 MODE="shell"
 USERNAME=""
+BWRAP_ARGS=()
 
 usage() {
   echo "Usage: vzone-jailterm [--check] <username>" >&2
@@ -53,7 +55,6 @@ if ! id -u "$USERNAME" >/dev/null 2>&1; then
   exit 3
 fi
 
-# Doit appartenir au groupe clients (anti-escalade vers comptes système)
 if ! id -nG "$USERNAME" 2>/dev/null | tr ' ' '\n' | grep -qx "${CLIENTS_GROUP}"; then
   echo "${USERNAME} hors groupe ${CLIENTS_GROUP}" >&2
   exit 3
@@ -74,136 +75,122 @@ if [[ ! -d "$HOME_DIR" ]]; then
   exit 3
 fi
 
-UID_NUM="$(id -u "$USERNAME")"
-GID_NUM="$(id -g "$USERNAME")"
+build_bwrap_args() {
+  BWRAP_ARGS=(
+    --die-with-parent
+    --unshare-pid
+    --unshare-ipc
+    --unshare-uts
+    --hostname "$USERNAME"
+    --cap-drop ALL
+    --clearenv
+    --setenv HOME "$HOME_DIR"
+    --setenv USER "$USERNAME"
+    --setenv LOGNAME "$USERNAME"
+    --setenv USERNAME "$USERNAME"
+    --setenv SHELL /bin/bash
+    --setenv PATH /usr/local/bin:/usr/bin:/bin
+    --setenv TERM "${TERM:-xterm-256color}"
+    --setenv LANG "${LANG:-C.UTF-8}"
+    --setenv PS1 "${USERNAME}:\w\$ "
+  )
+
+  ro_bind() {
+    local src="$1" dst="${2:-$1}"
+    if [[ -e "$src" ]]; then
+      BWRAP_ARGS+=(--ro-bind "$src" "$dst")
+    fi
+  }
+
+  ro_bind /usr /usr
+  if [[ -d /bin && ! -L /bin ]]; then
+    ro_bind /bin /bin
+  else
+    BWRAP_ARGS+=(--symlink usr/bin /bin)
+  fi
+  if [[ -d /sbin && ! -L /sbin ]]; then
+    ro_bind /sbin /sbin
+  else
+    BWRAP_ARGS+=(--symlink usr/sbin /sbin)
+  fi
+  if [[ -d /lib && ! -L /lib ]]; then
+    ro_bind /lib /lib
+  else
+    BWRAP_ARGS+=(--symlink usr/lib /lib)
+  fi
+  if [[ -e /lib64 ]]; then
+    if [[ -d /lib64 && ! -L /lib64 ]]; then
+      ro_bind /lib64 /lib64
+    else
+      BWRAP_ARGS+=(--symlink usr/lib64 /lib64)
+    fi
+  fi
+  ro_bind /lib32 /lib32
+
+  ro_bind /etc/passwd
+  ro_bind /etc/group
+  ro_bind /etc/nsswitch.conf
+  ro_bind /etc/hosts
+  ro_bind /etc/resolv.conf
+  ro_bind /etc/ssl
+  ro_bind /etc/pki
+  ro_bind /etc/alternatives
+  ro_bind /etc/localtime
+  ro_bind /etc/terminfo
+  ro_bind /usr/share/terminfo /usr/share/terminfo
+  ro_bind /etc/bash.bashrc
+  ro_bind /etc/profile.d
+
+  BWRAP_ARGS+=(
+    --dev /dev
+    --proc /proc
+    --tmpfs /tmp
+    --tmpfs /var/tmp
+    --dir /run
+    --dir /var
+    --bind "$HOME_DIR" "$HOME_DIR"
+    --chdir "$HOME_DIR"
+  )
+}
+
+bwrap_as_user() {
+  build_bwrap_args
+  runuser -u "$USERNAME" -- bwrap "${BWRAP_ARGS[@]}" "$@"
+}
+
+run_restricted_fallback() {
+  echo "[vzone-jail] bubblewrap indisponible — bash restreint (apt install bubblewrap recommandé)" >&2
+  exec runuser -u "$USERNAME" -- /bin/bash --restricted --noprofile --norc -i
+}
 
 if [[ "$MODE" == "check" ]]; then
-  if ! command -v bwrap >/dev/null 2>&1; then
+  if command -v bwrap >/dev/null 2>&1 && command -v runuser >/dev/null 2>&1; then
+    if bwrap_as_user /usr/bin/true 2>/dev/null; then
+      exit 0
+    fi
+    echo "bwrap+runuser échoué — fallback bash --restricted disponible" >&2
+  fi
+  if command -v runuser >/dev/null 2>&1; then
     exit 0
   fi
-  # Valide bwrap + --unshare-user (sinon erreur au démarrage shell)
-  if bwrap \
-    --unshare-user \
-    --uid "$UID_NUM" \
-    --gid "$GID_NUM" \
-    --ro-bind /usr /usr \
-    --bind "$HOME_DIR" "$HOME_DIR" \
-    --chdir "$HOME_DIR" \
-    -- /bin/true 2>/dev/null; then
-    exit 0
-  fi
-  echo "bwrap --unshare-user échoué (user namespaces ?)" >&2
+  echo "runuser absent" >&2
   exit 4
 fi
 
-# Environnement minimal — jamais d'escalade
-export HOME="$HOME_DIR"
-export USER="$USERNAME"
-export LOGNAME="$USERNAME"
-export USERNAME
-export SHELL="/bin/bash"
-export PATH="/usr/local/bin:/usr/bin:/bin"
 export TERM="${TERM:-xterm-256color}"
 export LANG="${LANG:-C.UTF-8}"
 unset SUDO_COMMAND SUDO_USER SUDO_UID SUDO_GID SUDO_PROMPT
 unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT
 unset BASH_ENV ENV CDPATH
 
-run_restricted_fallback() {
-  echo "[vzone-jail] bubblewrap absent — shell restreint (installez: apt install bubblewrap)" >&2
-  cd "$HOME_DIR" || exit 1
-  # bash --restricted : pas de cd hors HOME, pas de PATH/redir redirects vers hors...
-  # (moins fort que bwrap ; bwrap reste la cible prod)
-  exec runuser -u "$USERNAME" -- /bin/bash --restricted --noprofile --norc -i
-}
-
-if ! command -v bwrap >/dev/null 2>&1; then
-  run_restricted_fallback
-fi
-
-# Binds de base (usr-merge Debian/Ubuntu + classiques)
-BWRAP_ARGS=(
-  --die-with-parent
-  --unshare-user
-  --unshare-pid
-  --unshare-ipc
-  --unshare-uts
-  --hostname "$USERNAME"
-  --uid "$UID_NUM"
-  --gid "$GID_NUM"
-  --cap-drop ALL
-  --clearenv
-  --setenv HOME "$HOME_DIR"
-  --setenv USER "$USERNAME"
-  --setenv LOGNAME "$USERNAME"
-  --setenv USERNAME "$USERNAME"
-  --setenv SHELL /bin/bash
-  --setenv PATH /usr/local/bin:/usr/bin:/bin
-  --setenv TERM "${TERM:-xterm-256color}"
-  --setenv LANG "${LANG:-C.UTF-8}"
-  --setenv PS1 "${USERNAME}:\w\$ "
-)
-
-# Filesystem : racine vide sauf binds explicites (pas de /home voisins, pas de /root, pas de /etc/sudoers)
-ro_bind() {
-  local src="$1" dst="${2:-$1}"
-  if [[ -e "$src" ]]; then
-    BWRAP_ARGS+=(--ro-bind "$src" "$dst")
-  fi
-}
-
-ro_bind /usr /usr
-if [[ -d /bin && ! -L /bin ]]; then
-  ro_bind /bin /bin
-else
-  BWRAP_ARGS+=(--symlink usr/bin /bin)
-fi
-if [[ -d /sbin && ! -L /sbin ]]; then
-  ro_bind /sbin /sbin
-else
-  BWRAP_ARGS+=(--symlink usr/sbin /sbin)
-fi
-if [[ -d /lib && ! -L /lib ]]; then
-  ro_bind /lib /lib
-else
-  BWRAP_ARGS+=(--symlink usr/lib /lib)
-fi
-if [[ -e /lib64 ]]; then
-  if [[ -d /lib64 && ! -L /lib64 ]]; then
-    ro_bind /lib64 /lib64
-  else
-    BWRAP_ARGS+=(--symlink usr/lib64 /lib64)
+if command -v bwrap >/dev/null 2>&1 && command -v runuser >/dev/null 2>&1; then
+  if bwrap_as_user /usr/bin/true 2>/dev/null; then
+    build_bwrap_args
+    exec runuser -u "$USERNAME" -- env \
+      TERM="${TERM:-xterm-256color}" \
+      LANG="${LANG:-C.UTF-8}" \
+      bwrap "${BWRAP_ARGS[@]}" /bin/bash --noprofile --norc -i
   fi
 fi
-ro_bind /lib32 /lib32
 
-ro_bind /etc/passwd
-ro_bind /etc/group
-ro_bind /etc/nsswitch.conf
-ro_bind /etc/hosts
-ro_bind /etc/resolv.conf
-ro_bind /etc/ssl
-ro_bind /etc/pki
-ro_bind /etc/alternatives
-ro_bind /etc/localtime
-ro_bind /etc/terminfo
-ro_bind /usr/share/terminfo /usr/share/terminfo
-ro_bind /etc/bash.bashrc
-ro_bind /etc/profile.d
-
-# Dev / proc / tmp isolés
-BWRAP_ARGS+=(
-  --dev /dev
-  --proc /proc
-  --tmpfs /tmp
-  --tmpfs /var/tmp
-  --dir /run
-  --dir /var
-  --bind "$HOME_DIR" "$HOME_DIR"
-  --chdir "$HOME_DIR"
-)
-
-# Pas de --ro-bind /etc entier (sudoers, shadow, ssh keys host…)
-# Pas de réseau unshare : curl/git utiles aux clients ; FS déjà jailé.
-
-exec bwrap "${BWRAP_ARGS[@]}" /bin/bash --noprofile --norc -i
+run_restricted_fallback
