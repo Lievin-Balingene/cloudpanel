@@ -1,5 +1,8 @@
 # Locations communes du panel SPA + API (inclus depuis vzone.conf / vzone-ports.conf)
-# Attendu: set $vzone_portal admin|client|shared; dans le server parent.
+# Attendu dans le server parent :
+#   set $vzone_portal admin|client|shared|webmail;
+#   set $vzone_api_host <hostname Django ALLOWED_HOSTS>;  # sur ports dédiés = FQDN panel
+#     (sur :80/:443 panel, utiliser $host)
 client_max_body_size 2048m;
 client_body_timeout 3600s;
 
@@ -23,10 +26,14 @@ location /assets/ {
 location ^~ /api/v1/files/upload/ {
     proxy_pass http://vzone_asgi;
     proxy_http_version 1.1;
-    proxy_set_header Host $host;
+    # Host canonique panel (domaine:9082 style cPanel → pas de DisallowedHost)
+    proxy_set_header Host $vzone_api_host;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Original-Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Port $server_port;
     proxy_set_header X-Vzone-Portal $vzone_portal;
     proxy_set_header Connection "";
     client_max_body_size 2048m;
@@ -41,10 +48,13 @@ location ^~ /api/v1/files/upload/ {
 location /api/ {
     proxy_pass http://vzone_asgi;
     proxy_http_version 1.1;
-    proxy_set_header Host $host;
+    proxy_set_header Host $vzone_api_host;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Original-Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Port $server_port;
     proxy_set_header X-Vzone-Portal $vzone_portal;
     proxy_set_header Connection "";
     proxy_connect_timeout 60s;
@@ -58,7 +68,9 @@ location /ws/ {
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection $connection_upgrade;
-    proxy_set_header Host $host;
+    proxy_set_header Host $vzone_api_host;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Original-Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
@@ -68,7 +80,9 @@ location /ws/ {
 
 location /admin/ {
     proxy_pass http://vzone_asgi;
-    proxy_set_header Host $host;
+    proxy_set_header Host $vzone_api_host;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Original-Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;

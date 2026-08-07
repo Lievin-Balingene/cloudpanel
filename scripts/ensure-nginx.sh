@@ -233,14 +233,39 @@ for candidate in \
   [[ -f "$candidate" ]] && PORTS_SRC="$candidate" && break
 done
 if [[ -n "$PORTS_SRC" ]]; then
+  # Hostname Django pour domaine:9082 style cPanel (n'importe quel Host → panel)
+  BACKEND_HOST="${PANEL_PRIMARY:-}"
+  if [[ -z "$BACKEND_HOST" ]]; then
+    BACKEND_HOST="$(hostname -f 2>/dev/null || true)"
+  fi
+  if [[ -z "$BACKEND_HOST" || "$BACKEND_HOST" == "localhost" ]]; then
+    BACKEND_HOST="${HOST_IP:-localhost}"
+  fi
+  # Toujours dans ALLOWED_HOSTS
+  if [[ -f "$ENV_FILE" ]]; then
+    CURRENT_AH="$(grep '^VZONE_ALLOWED_HOSTS=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)"
+    if [[ -n "$BACKEND_HOST" && "$CURRENT_AH" != *"$BACKEND_HOST"* ]]; then
+      if grep -q '^VZONE_ALLOWED_HOSTS=' "$ENV_FILE"; then
+        sed -i "s|^VZONE_ALLOWED_HOSTS=.*|VZONE_ALLOWED_HOSTS=${CURRENT_AH},${BACKEND_HOST}|" "$ENV_FILE"
+      else
+        echo "VZONE_ALLOWED_HOSTS=${BACKEND_HOST},localhost,127.0.0.1" >> "$ENV_FILE"
+      fi
+    fi
+  fi
   PORTS_TMP="$(mktemp)"
   sed -e "s/__VZONE_ADMIN_PORT__/${ADMIN_PORT}/g" \
       -e "s/__VZONE_CLIENT_PORT__/${CLIENT_PORT}/g" \
       -e "s/__VZONE_WEBMAIL_PORT__/${WEBMAIL_PORT}/g" \
+      -e "s/__PANEL_BACKEND_HOST__/${BACKEND_HOST}/g" \
       "$PORTS_SRC" > "$PORTS_TMP"
+  if grep -q '__PANEL_BACKEND_HOST__' "$PORTS_TMP"; then
+    echo "[vzone] ERREUR: placeholder PANEL_BACKEND_HOST non remplacé" >&2
+    rm -f "$PORTS_TMP"
+    exit 1
+  fi
   install -m 644 "$PORTS_TMP" /etc/nginx/conf.d/zz-vzone-ports.conf
   rm -f "$PORTS_TMP"
-  echo "[vzone] Ports installés → zz-vzone-ports.conf"
+  echo "[vzone] Ports installés → zz-vzone-ports.conf (backend Host=${BACKEND_HOST})"
 fi
 
 # Firewall ports panel
