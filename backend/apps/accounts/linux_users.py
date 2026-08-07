@@ -43,6 +43,32 @@ def linux_user_exists(username: str) -> bool:
         return False
 
 
+def user_in_clients_group(username: str) -> bool:
+    """True si username a vzone-clients en primaire ou complémentaire."""
+    try:
+        import grp
+
+        g = grp.getgrnam(CLIENTS_GROUP)
+    except (KeyError, ImportError):
+        return False
+    try:
+        pw = pwd.getpwnam(username)
+    except KeyError:
+        return False
+    if pw.pw_gid == g.gr_gid:
+        return True
+    if username in g.gr_mem:
+        return True
+    # Groupes complémentaires (getgrouplist)
+    try:
+        import os
+
+        gids = os.getgrouplist(username, pw.pw_gid)
+        return g.gr_gid in gids
+    except (AttributeError, OSError):
+        return False
+
+
 def _ensure_clients_group() -> None:
     try:
         import grp
@@ -114,22 +140,28 @@ def ensure_linux_user(user: User, *, home: Path | None = None) -> str:
     if mode == "mock" or os.name == "nt":
         return username
 
-    if linux_user_exists(username):
-        return username
-
     from apps.files.services import personal_home
 
     home_path = Path(home) if home else personal_home(user)
-
-    # Préférer le helper root (useradd + ACL) — le panel n'est pas root
     helper = Path("/usr/local/sbin/vzone-mkhome")
+
+    # Compte déjà là + dans vzone-clients → OK (sudoers terminal)
+    if linux_user_exists(username) and user_in_clients_group(username):
+        return username
+
+    # Préférer le helper root (useradd + membership + ACL) — le panel n'est pas root
     if helper.is_file():
         try:
             provision_home_via_root(username)
             if linux_user_exists(username):
+                if not user_in_clients_group(username):
+                    logger.warning("%s toujours hors %s après mkhome", username, CLIENTS_GROUP)
                 return username
         except VZoneAPIException as exc:
             logger.warning("mkhome via root: %s", exc)
+
+    if linux_user_exists(username):
+        return username
 
     if mode == "auto" and not Path("/usr/sbin/useradd").is_file() and not Path("/usr/bin/useradd").is_file():
         logger.warning("useradd indisponible — compte OS non créé pour %s", username)

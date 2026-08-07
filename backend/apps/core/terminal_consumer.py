@@ -47,6 +47,7 @@ def _prepare_jail(user: object) -> tuple[str, str, str | None]:
         jail_username_for,
         linux_user_exists,
         provision_home_via_root,
+        user_in_clients_group,
     )
     from apps.files.services import personal_home
 
@@ -57,12 +58,20 @@ def _prepare_jail(user: object) -> tuple[str, str, str | None]:
         ensure_linux_user(user, home=Path(home))  # type: ignore[arg-type]
     except Exception as exc:  # noqa: BLE001
         logger.warning("ensure_linux_user: %s", exc)
-    if not linux_user_exists(jail):
+    # Toujours rappeler mkhome si compte/groupe manquant (idempotent côté membership)
+    if not linux_user_exists(jail) or not user_in_clients_group(jail):
         try:
             provision_home_via_root(jail)
         except Exception as exc:  # noqa: BLE001
-            err = f"compte OS absent ({jail}): {exc}"
+            err = f"compte OS / groupe ({jail}): {exc}"
             logger.warning(err)
+    if linux_user_exists(jail) and not user_in_clients_group(jail):
+        err = (
+            f"{jail} n'est pas dans le groupe vzone-clients "
+            "(requis pour le terminal) — sudo bash scripts/ensure-mkhome-sudoers.sh"
+        )
+    elif not linux_user_exists(jail):
+        err = err or f"compte OS absent: {jail}"
     return jail, home, err
 
 
@@ -233,17 +242,24 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
             raise RuntimeError("jail user privilégié interdit")
         return ["sudo", "-n", "-u", jail, "--", shell, "--noprofile", "--rcfile", str(rcfile), "-i"]
 
-    def _sudo_ok(self, jail: str) -> bool:
-        try:
-            proc = subprocess.run(
-                ["sudo", "-n", "-u", jail, "--", "true"],
-                capture_output=True,
-                timeout=5,
-                check=False,
-            )
-            return proc.returncode == 0
-        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-            return False
+    def _sudo_probe(self, jail: str) -> tuple[bool, str]:
+        """Teste sudo -n -u jail /bin/true ; retourne (ok, détail)."""
+        last = "sudo indisponible"
+        for true_bin in ("/bin/true", "/usr/bin/true"):
+            try:
+                proc = subprocess.run(
+                    ["sudo", "-n", "-u", jail, "--", true_bin],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+            except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
+                return False, str(exc)
+            if proc.returncode == 0:
+                return True, ""
+            last = (proc.stderr or proc.stdout or "").strip() or f"exit {proc.returncode}"
+        return False, last
 
     def _start_pty(
         self,
@@ -261,14 +277,24 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
             except OSError:
                 cwd = Path("/tmp")
 
-        use_sudo = self._sudo_ok(jail)
+        use_sudo, sudo_err = self._sudo_probe(jail)
+        # Dernier recours : re-provision mkhome puis re-test (groupe manquant)
+        if not use_sudo:
+            try:
+                from apps.accounts.linux_users import provision_home_via_root
+
+                provision_home_via_root(jail)
+                use_sudo, sudo_err = self._sudo_probe(jail)
+            except Exception as exc:  # noqa: BLE001
+                sudo_err = f"{sudo_err}; mkhome: {exc}"
+
         fallback = bool(getattr(settings, "VZONE_TERMINAL_FALLBACK_SAME_UID", False))
         debug = bool(getattr(settings, "DEBUG", False))
         if not use_sudo and not (fallback and debug):
-            detail = prep_err or "sudo -n -u <user> true a échoué"
+            detail = prep_err or f"sudo -n -u {jail} /bin/true a échoué: {sudo_err}"
             raise RuntimeError(
-                f"{detail} — installez: sudo bash /opt/vzone-src/scripts/ensure-mkhome-sudoers.sh "
-                f"puis recréez le compte OS (vzone-mkhome {jail})"
+                f"{detail} — sudo bash /opt/vzone-src/scripts/ensure-mkhome-sudoers.sh "
+                f"&& sudo /usr/local/sbin/vzone-mkhome {jail}"
             )
 
         # cwd doit être accessible au process vzone (avant setuid via sudo)

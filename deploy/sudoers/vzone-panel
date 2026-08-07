@@ -2,10 +2,11 @@
 # Installé par scripts/ensure-mkhome-sudoers.sh
 
 Defaults:vzone !requiretty
+Defaults:vzone !authenticate
 
-# Création home /home/<user> + useradd jail
+# Création home /home/<user> + useradd jail + membership groupe
 vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-mkhome
 
 # Terminal web — shell uniquement pour le groupe vzone-clients
-Cmnd_Alias VZONE_TERM_SHELLS = /bin/bash, /usr/bin/bash, /bin/true, /usr/bin/true
+Cmnd_Alias VZONE_TERM_SHELLS = /bin/bash, /usr/bin/bash, /bin/sh, /usr/bin/sh, /bin/true, /usr/bin/true
 vzone ALL=(%vzone-clients) NOPASSWD: VZONE_TERM_SHELLS

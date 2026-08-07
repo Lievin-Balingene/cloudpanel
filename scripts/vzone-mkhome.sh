@@ -55,6 +55,13 @@ if ! id -u "${USERNAME}" >/dev/null 2>&1; then
     || useradd -M -d "${HOME_DIR}" -s /bin/bash "${USERNAME}" || true
 fi
 
+# Obligatoire pour sudoers terminal : vzone ALL=(%vzone-clients) ...
+if id -u "${USERNAME}" >/dev/null 2>&1; then
+  if ! id -nG "${USERNAME}" 2>/dev/null | tr ' ' '\n' | grep -qx "${CLIENTS_GROUP}"; then
+    usermod -aG "${CLIENTS_GROUP}" "${USERNAME}" 2>/dev/null || true
+  fi
+fi
+
 # Propriétaire = compte OS si possible, sinon vzone ; ACL panel toujours
 if id -u "${USERNAME}" >/dev/null 2>&1; then
   chown -R "${USERNAME}:${CLIENTS_GROUP}" "${HOME_DIR}" 2>/dev/null \
