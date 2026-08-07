@@ -158,6 +158,15 @@ if [[ -f /etc/vzone/vzone.env ]] && ! grep -q '^VZONE_FTP_AUTH_SECRET=.\+' /etc/
   echo "[vzone] VZONE_FTP_AUTH_SECRET généré"
 fi
 
+# Terminal WHM admin = root (style cPanel) — active si absent / false d'anciennes installs
+if [[ -f /etc/vzone/vzone.env ]]; then
+  if grep -q '^VZONE_TERMINAL_ALLOW_ADMIN=' /etc/vzone/vzone.env; then
+    sed -i 's|^VZONE_TERMINAL_ALLOW_ADMIN=.*|VZONE_TERMINAL_ALLOW_ADMIN=true|' /etc/vzone/vzone.env
+  else
+    echo 'VZONE_TERMINAL_ALLOW_ADMIN=true' >> /etc/vzone/vzone.env
+  fi
+fi
+
 # OpenLiteSpeed (opt-in / auto — si installé ou flag)
 OLS_FLAG="${VZONE_OLS_ENABLED:-auto}"
 if [[ -f /etc/vzone/vzone.env ]]; then

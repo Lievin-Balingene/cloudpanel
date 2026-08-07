@@ -1,8 +1,8 @@
-# Homes + terminal jailé : helpers root allowlistés pour le user panel « vzone ».
+# Homes + terminaux : helpers root allowlistés pour le user panel « vzone ».
 # Installé par scripts/ensure-mkhome-sudoers.sh
 #
-# Les clients N'ONT PAS sudo, PAS de bash libre via sudoers panel.
-# Le terminal passe uniquement par vzone-jailterm (bubblewrap → UID client + home only).
+# - Clients  : vzone-jailterm (bubblewrap, UID client, home only) — PAS de root
+# - Admin WHM: vzone-rootterm (shell root) — comme cPanel WHM Terminal
 
 Defaults:vzone !requiretty
 Defaults:vzone !authenticate
@@ -10,5 +10,8 @@ Defaults:vzone !authenticate
 # Création home + membership groupe
 vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-mkhome
 
-# Terminal web jailé (argument = username client validé dans le helper)
+# Terminal client jailé
 vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-jailterm, /usr/local/sbin/vzone-jailterm *
+
+# Terminal admin WHM (root)
+vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-rootterm, /usr/local/sbin/vzone-rootterm --check

@@ -12,6 +12,7 @@ interface TerminalAccess {
   reason: string;
   home_directory: string;
   username: string;
+  mode?: "root" | "jail";
 }
 
 async function copyText(text: string) {
@@ -130,8 +131,16 @@ export function WebTerminalManager({ title }: { title: string }) {
     ws.onopen = () => {
       if (disposed) return;
       setConnected(true);
-      setStatus("Connecté — tapez directement dans le terminal");
+      const modeLabel = access?.mode === "root" ? "root (WHM)" : "jail client";
+      setStatus(`Connecté — ${modeLabel}`);
       term.clear();
+      if (access?.mode === "root") {
+        term.writeln("\x1b[1;33m[V-zone WHM Terminal — shell root]\x1b[0m\r\n");
+      } else {
+        term.writeln(
+          `\x1b[1;36m[V-zone Terminal jailé — ${access?.username || "user"}]\x1b[0m\r\n`,
+        );
+      }
       sendResize();
       window.setTimeout(() => {
         sendResize();
@@ -186,7 +195,7 @@ export function WebTerminalManager({ title }: { title: string }) {
       fitAddonRef.current = null;
       setConnected(false);
     };
-  }, [access?.allowed, token, wsUrl]);
+  }, [access?.allowed, access?.mode, access?.username, token, wsUrl]);
 
   function focusTerminal() {
     terminalRef.current?.focus();

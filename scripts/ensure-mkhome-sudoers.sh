@@ -31,6 +31,7 @@ fi
 
 install -m 755 "${REPO_DIR}/scripts/vzone-mkhome.sh" /usr/local/sbin/vzone-mkhome
 install -m 755 "${REPO_DIR}/scripts/vzone-jailterm.sh" /usr/local/sbin/vzone-jailterm
+install -m 755 "${REPO_DIR}/scripts/vzone-rootterm.sh" /usr/local/sbin/vzone-rootterm
 
 # Remplace l'ancien fichier terminal-only s'il existe
 rm -f /etc/sudoers.d/vzone-terminal
@@ -100,6 +101,12 @@ if id -u "${VZONE_USER}" >/dev/null 2>&1; then
       echo "[vzone] Vérifiez: cat /etc/sudoers.d/vzone-panel && NoNewPrivileges=false sur vzone-api" >&2
     fi
   fi
+  if runuser -u "${VZONE_USER}" -- sudo -n /usr/local/sbin/vzone-rootterm --check 2>/dev/null \
+    || su -s /bin/bash "${VZONE_USER}" -c "sudo -n /usr/local/sbin/vzone-rootterm --check" 2>/dev/null; then
+    echo "[vzone] smoke-test rootterm OK (terminal WHM admin)"
+  else
+    echo "[vzone] Avertissement: smoke-test rootterm échoué" >&2
+  fi
 fi
 
-echo "[vzone] jail OK → mkhome + jailterm + /etc/sudoers.d/vzone-panel"
+echo "[vzone] jail OK → mkhome + jailterm + rootterm + /etc/sudoers.d/vzone-panel"

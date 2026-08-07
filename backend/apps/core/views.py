@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from django.conf import settings
-from django.contrib.auth import get_user_model
 from drf_spectacular.utils import extend_schema
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
@@ -15,8 +14,6 @@ from apps.core.serializers import HealthSerializer, ModuleSerializer, VersionSer
 from apps.core.services import collect_system_metrics, health_as_dict
 from apps.packages.models import PackageAssignment
 from vzone import __version__
-
-User = get_user_model()
 
 
 class HealthCheckView(APIView):
@@ -81,7 +78,7 @@ class SystemMetricsView(APIView):
 
 
 class WebTerminalAccessView(APIView):
-    """Retourne l'accès terminal (autorisé si package allow_ssh)."""
+    """Retourne l'accès terminal (admin=root WHM, client=jail si package allow_ssh)."""
 
     permission_classes = [IsAuthenticated]
 
@@ -89,9 +86,16 @@ class WebTerminalAccessView(APIView):
         user = request.user
         allowed = False
         reason = "SSH désactivé dans votre package."
-        if getattr(user, "role", None) in {"administrator", "reseller"}:
+        mode = "jail"
+        role = getattr(user, "role", None)
+        if role == "administrator":
+            allowed = bool(getattr(settings, "VZONE_TERMINAL_ALLOW_ADMIN", True))
+            mode = "root"
+            reason = "Terminal WHM root (administrateur)." if allowed else "Terminal admin désactivé."
+        elif role == "reseller":
             allowed = True
-            reason = "Rôle administrateur/revendeur."
+            mode = "jail"
+            reason = "Terminal revendeur (jailé)."
         else:
             assignment = (
                 PackageAssignment.objects.filter(user=user).select_related("package").first()
@@ -102,22 +106,25 @@ class WebTerminalAccessView(APIView):
         jail = (
             getattr(user, "system_username", None) or getattr(user, "username", "") or ""
         ).strip().lower()
-        home = getattr(user, "home_directory", "") or ""
-        if not home and jail:
-            root = getattr(settings, "VZONE_HOME_ROOT", "/home")
-            if getattr(user, "role", None) == User.Role.ADMINISTRATOR:
-                home = f"{root}/admin"
-            else:
+        if mode == "root":
+            home = "/root"
+            display_user = "root"
+        else:
+            home = getattr(user, "home_directory", "") or ""
+            if not home and jail:
+                root = getattr(settings, "VZONE_HOME_ROOT", "/home")
                 home = f"{root}/{jail}"
+            display_user = jail or user.username
         return Response(
             {
                 "success": True,
                 "data": {
                     "allowed": allowed,
                     "reason": reason,
+                    "mode": mode,
                     "home_directory": home,
-                    "username": jail or user.username,
-                    "prompt_user": "vzone",
+                    "username": display_user,
+                    "prompt_user": display_user,
                 },
             }
         )
