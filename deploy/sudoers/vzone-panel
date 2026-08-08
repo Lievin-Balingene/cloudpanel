@@ -16,6 +16,9 @@ vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-jailterm, /usr/local/sbin/vzone
 # Exécution apps / git deploy sous UID client
 vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-runas, /usr/local/sbin/vzone-runas *
 
+# Propriétaire app (SQLite/media/logs) → UID client
+vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-fix-app-perms, /usr/local/sbin/vzone-fix-app-perms *
+
 # Terminal admin WHM — UNIQUEMENT avec --ticket (pas d'appel nu → root)
 vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-rootterm --check
 vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-rootterm --ticket *

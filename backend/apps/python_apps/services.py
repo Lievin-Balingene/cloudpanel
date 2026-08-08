@@ -1087,7 +1087,7 @@ def _iter_sqlite_files(app_root: Path) -> list[Path]:
 def _ensure_app_data_writable(owner: User, app_root: Path) -> None:
     """
     Après passage en vzone-runas, le process est le compte client.
-    Les fichiers créés par « vzone » (sqlite, media…) doivent rester inscriptibles.
+    Les fichiers créés par « vzone » (sqlite, media…) doivent appartenir au jail.
     """
     try:
         from apps.accounts.linux_users import jail_username_for
@@ -1095,42 +1095,58 @@ def _ensure_app_data_writable(owner: User, app_root: Path) -> None:
         jail = jail_username_for(owner)
     except Exception:  # noqa: BLE001
         jail = (owner.username or "").strip().lower()
-    if not jail:
+    if not jail or provision_mode() == "mock":
         return
 
-    # Dossier app : journal SQLite (-wal) = écriture dans le répertoire parent
-    _grant_jail_write(app_root, jail, is_dir=True)
+    fix_bin = Path("/usr/local/sbin/vzone-fix-app-perms")
+    if fix_bin.is_file():
+        try:
+            proc = subprocess.run(
+                ["sudo", "-n", str(fix_bin), jail, str(app_root)],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+            if proc.returncode == 0:
+                logger.info("fix-app-perms OK %s %s", jail, app_root)
+            else:
+                logger.warning(
+                    "fix-app-perms rc=%s stderr=%s",
+                    proc.returncode,
+                    (proc.stderr or proc.stdout or "")[:400],
+                )
+        except Exception:  # noqa: BLE001
+            logger.debug("fix-app-perms skip", exc_info=True)
 
+    # Fallback / complément : ACL + chmod (si helper absent ou partiel)
+    _grant_jail_write(app_root, jail, is_dir=True)
     for db in _iter_sqlite_files(app_root):
         _grant_jail_write(db, jail, is_dir=False)
         for suffix in ("-wal", "-shm", "-journal"):
             side = Path(str(db) + suffix)
             if side.exists():
                 _grant_jail_write(side, jail, is_dir=False)
-        # Parent du fichier db (si pas app_root)
         try:
             parent = db.parent
             if parent != app_root:
                 _grant_jail_write(parent, jail, is_dir=True)
         except OSError:
             pass
-
     for name in ("media", "var", "tmp", "staticfiles", "logs"):
         d = app_root / name
         if d.is_dir():
             _grant_jail_write(d, jail, is_dir=True)
 
-    # Vérifie en jail qu'au moins db.sqlite3 est writable ; sinon message clair au start
     db_main = app_root / "db.sqlite3"
-    if not db_main.exists() or provision_mode() == "mock":
+    if not db_main.exists():
         return
     try:
         from apps.security.runas import build_runas_cmd, runas_available
+        import shlex
 
         if not runas_available():
             return
-        import shlex
-
         probe = build_runas_cmd(
             jail,
             [
@@ -1141,13 +1157,20 @@ def _ensure_app_data_writable(owner: User, app_root: Path) -> None:
         )
         proc = subprocess.run(probe, capture_output=True, text=True, timeout=30, check=False)
         if proc.returncode != 0:
-            logger.warning(
-                "SQLite non inscriptible pour jail %s (%s) — chmod/ACL appliqués, "
-                "vérifiez: ls -l %s",
-                jail,
-                db_main,
-                db_main,
+            raise VZoneAPIException(
+                detail=(
+                    f"SQLite en lecture seule pour le compte `{jail}` "
+                    f"({db_main}). Exécutez: sudo /usr/local/sbin/vzone-fix-app-perms "
+                    f"{jail} {app_root} puis redémarrez l'app. "
+                    "Ou: sudo chown -R {0}:{0} {1} && sudo chmod 775 {1} && "
+                    "sudo chmod 664 {1}/db.sqlite3".format(jail, app_root)
+                ),
+                code="sqlite_readonly",
+                status_code=400,
+                extra={"path": str(db_main), "jail": jail},
             )
+    except VZoneAPIException:
+        raise
     except Exception:  # noqa: BLE001
         logger.debug("sqlite writable probe skip", exc_info=True)
 

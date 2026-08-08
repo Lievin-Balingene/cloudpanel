@@ -33,6 +33,7 @@ install -m 755 "${REPO_DIR}/scripts/vzone-mkhome.sh" /usr/local/sbin/vzone-mkhom
 install -m 755 "${REPO_DIR}/scripts/vzone-jailterm.sh" /usr/local/sbin/vzone-jailterm
 install -m 755 "${REPO_DIR}/scripts/vzone-rootterm.sh" /usr/local/sbin/vzone-rootterm
 install -m 755 "${REPO_DIR}/scripts/vzone-runas.sh" /usr/local/sbin/vzone-runas
+install -m 755 "${REPO_DIR}/scripts/vzone-fix-app-perms.sh" /usr/local/sbin/vzone-fix-app-perms
 
 # runuser est requis (souvent /usr/sbin) — avertir tôt si absent
 if ! command -v runuser >/dev/null 2>&1 && [[ ! -x /usr/sbin/runuser && ! -x /sbin/runuser ]]; then
@@ -128,4 +129,4 @@ if id -u "${VZONE_USER}" >/dev/null 2>&1; then
   fi
 fi
 
-echo "[vzone] jail OK → mkhome + jailterm + rootterm + runas + /etc/sudoers.d/vzone-panel"
+echo "[vzone] jail OK → mkhome + jailterm + rootterm + runas + fix-app-perms + /etc/sudoers.d/vzone-panel"
