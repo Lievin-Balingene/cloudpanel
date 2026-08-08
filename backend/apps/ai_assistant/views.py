@@ -42,12 +42,15 @@ class AiStatusView(APIView):
     def get(self, request: Request) -> Response:
         ensure_tools_loaded()
         provider = get_provider()
+        from apps.ai_assistant.providers.ollama import circuit_status
+
         return Response(
             {
                 "success": True,
                 "data": {
                     "provider": getattr(provider, "name", "unknown"),
                     "available": bool(provider.is_available()),
+                    "ollama_circuit": circuit_status(),
                     "tools": [
                         {
                             "name": t.name,

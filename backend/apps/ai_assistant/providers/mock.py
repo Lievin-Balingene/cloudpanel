@@ -1,6 +1,7 @@
-"""Provider mock conversationnel (fallback sans LLM) — style chat multi-tours."""
+"""Provider mock conversationnel (fallback sans LLM) — actions panel d'abord."""
 from __future__ import annotations
 
+import json
 import re
 from uuid import uuid4
 
@@ -8,7 +9,7 @@ from apps.ai_assistant.providers import ChatMessage, ChatResult, ToolCallRequest
 
 
 class MockProvider:
-    """Coach local : conversation naturelle + tools seulement si intention claire."""
+    """Coach local : tools pour les demandes concrètes, chat sinon."""
 
     name = "mock"
 
@@ -36,154 +37,218 @@ class MockProvider:
             last_user = user_turns[-1]
         last_user_l = last_user.lower()
 
-        # Après un tool → synthèse conversationnelle
+        # Après tool(s) → réponse lisible (pas un dump JSON brut)
         if messages and messages[-1].role == "tool":
-            tool_payload = messages[-1].content or "{}"
-            name = messages[-1].name or "outil"
             return ChatResult(
-                content=(
-                    f"J'ai consulté **{name}**. Voici ce que j'en retiens :\n\n"
-                    f"```json\n{tool_payload[:2200]}\n```\n\n"
-                    "Tu veux que je t'explique ça simplement, que je propose une correction, "
-                    "ou qu'on passe à l'étape suivante ?"
-                ),
+                content=_synthesize_tools(messages),
                 provider=self.name,
                 model="mock-coach",
             )
 
-        # Intent tools (seulement si mots-clés d'action / diagnostic)
-        action_hit = any(
-            k in last_user_l
-            for k in (
-                "log",
-                "erreur",
-                "error",
-                "failed",
-                "échou",
-                "statut",
-                "status",
-                "analyse",
-                "diagnost",
-                "redémar",
-                "restart",
-                "install",
-                "npm",
-                "pip",
-                "jail",
-                "commande",
-                "pull",
-                "déploy",
-                "deploy",
-                "clone",
-            )
-        )
-        page_auto = any(k in last_user_l for k in ("je suis sur", "page setup", "vérifie le statut"))
-
-        if action_hit or page_auto:
-            page_blob = " ".join(
-                (m.content or "").lower()
-                for m in messages
-                if m.role == "system" and "page actuelle" in (m.content or "").lower()
-            )
-            if ("python" in page_blob or "python" in last_user_l) and (
-                "log" in last_user_l or "statut" in last_user_l or page_auto
-            ):
-                calls = _pack_calls(
-                    tool_names,
-                    [
-                        ("check_application_status", {}),
-                        ("get_page_logs", {"runtime": "python", "lines": 100}),
-                        ("analyze_deployment_error", {"runtime": "python"}),
-                    ],
-                )
-                if calls:
-                    return ChatResult(
-                        content="Ok, je regarde le statut et les logs Python…",
-                        tool_calls=calls,
-                        provider=self.name,
-                        model="mock-coach",
-                    )
-            if ("node" in page_blob or "node" in last_user_l) and (
-                "log" in last_user_l or "statut" in last_user_l or page_auto
-            ):
-                calls = _pack_calls(
-                    tool_names,
-                    [
-                        ("check_application_status", {}),
-                        ("get_page_logs", {"runtime": "node", "lines": 100}),
-                    ],
-                )
-                if calls:
-                    return ChatResult(
-                        content="Ok, je regarde tes apps Node et les logs…",
-                        tool_calls=calls,
-                        provider=self.name,
-                        model="mock-coach",
-                    )
-            if any(k in last_user_l for k in ("log", "erreur", "error", "failed", "échou")):
-                rt = _guess_runtime(last_user_l)
-                calls = _pack_calls(
-                    tool_names,
-                    [
-                        ("get_deployment_logs", {"runtime": rt, "lines": 80}),
-                        ("analyze_deployment_error", {"runtime": rt}),
-                    ],
-                )
-                if calls:
-                    return ChatResult(
-                        content="Je récupère les logs pour comprendre l'erreur…",
-                        tool_calls=calls,
-                        provider=self.name,
-                        model="mock-coach",
-                    )
-            if any(k in last_user_l for k in ("statut", "status", "running")):
-                if "check_application_status" in tool_names:
-                    return ChatResult(
-                        content="Je vérifie ce qui tourne sur ton compte…",
-                        tool_calls=[
-                            ToolCallRequest(
-                                id=str(uuid4()), name="check_application_status", arguments={}
-                            )
-                        ],
-                        provider=self.name,
-                        model="mock-coach",
-                    )
-            if any(k in last_user_l for k in ("django", "déploy", "deploy", "github", "git", "clone")):
-                # Ne renvoie PLUS jamais une checklist figée : tools + suite conversationnelle
-                calls = _pack_calls(
-                    tool_names,
-                    [("get_deployment_context", {})],
-                )
-                if calls and any(k in last_user_l for k in ("statut", "compte", "existant", "déjà", "contexte")):
-                    return ChatResult(
-                        content="Je regarde ce qui existe déjà sur ton compte…",
-                        tool_calls=calls,
-                        provider=self.name,
-                        model="mock-coach",
-                    )
-                # Sinon conversation libre (pas de dump checklist)
+        # Intentions d'action — AVANT le bavardage multi-tours
+        intent = _detect_intent(last_user_l, messages)
+        if intent:
+            calls = _pack_calls(tool_names, intent["tools"])
+            if calls:
                 return ChatResult(
-                    content=_converse(last_user, prev_assistant, user_turns),
+                    content=intent["say"],
+                    tool_calls=calls,
                     provider=self.name,
                     model="mock-coach",
                 )
-            if "jail" in last_user_l or "commande" in last_user_l:
-                if "list_jail_commands" in tool_names:
-                    return ChatResult(
-                        content="Voici le catalogue des commandes jail autorisées…",
-                        tool_calls=[
-                            ToolCallRequest(id=str(uuid4()), name="list_jail_commands", arguments={})
-                        ],
-                        provider=self.name,
-                        model="mock-coach",
-                    )
 
-        # Conversation libre multi-tours
         return ChatResult(
             content=_converse(last_user, prev_assistant, user_turns),
             provider=self.name,
             model="mock-coach",
         )
+
+
+def _detect_intent(last_user_l: str, messages: list[ChatMessage]) -> dict | None:
+    page_blob = " ".join(
+        (m.content or "").lower()
+        for m in messages
+        if m.role == "system" and "page actuelle" in (m.content or "").lower()
+    )
+
+    wants_list = any(
+        k in last_user_l
+        for k in (
+            "liste",
+            "lister",
+            "list ",
+            "montre",
+            "montrer",
+            "affiche",
+            "quels sont",
+            "quelles sont",
+            "mes app",
+            "mes application",
+            "mes site",
+        )
+    )
+    mentions_python = "python" in last_user_l or "django" in last_user_l or "flask" in last_user_l
+    mentions_node = "node" in last_user_l or "npm" in last_user_l
+    mentions_apps = any(
+        k in last_user_l for k in ("app", "application", "projet", "site", "service")
+    )
+
+    if wants_list and (mentions_python or mentions_node or mentions_apps or "python" in page_blob):
+        return {
+            "say": "Je liste tes applications sur le compte…",
+            "tools": [("check_application_status", {})],
+        }
+
+    if any(k in last_user_l for k in ("statut", "status", "running", "qui tourne", "état")):
+        return {
+            "say": "Je vérifie le statut de tes apps…",
+            "tools": [("check_application_status", {})],
+        }
+
+    if any(k in last_user_l for k in ("domaine", "domain", "dns")) and wants_list:
+        return {
+            "say": "Je regarde tes domaines…",
+            "tools": [("get_deployment_context", {})],
+        }
+
+    page_auto = any(k in last_user_l for k in ("je suis sur", "page setup", "vérifie le statut"))
+    if ("python" in page_blob or mentions_python) and (
+        "log" in last_user_l or "statut" in last_user_l or page_auto
+    ):
+        return {
+            "say": "Ok, je regarde le statut et les logs Python…",
+            "tools": [
+                ("check_application_status", {}),
+                ("get_page_logs", {"runtime": "python", "lines": 100}),
+                ("analyze_deployment_error", {"runtime": "python"}),
+            ],
+        }
+
+    if ("node" in page_blob or mentions_node) and (
+        "log" in last_user_l or "statut" in last_user_l or page_auto
+    ):
+        return {
+            "say": "Ok, je regarde tes apps Node et les logs…",
+            "tools": [
+                ("check_application_status", {}),
+                ("get_page_logs", {"runtime": "node", "lines": 100}),
+            ],
+        }
+
+    if any(k in last_user_l for k in ("log", "erreur", "error", "failed", "échou", "traceback")):
+        rt = _guess_runtime(last_user_l)
+        return {
+            "say": "Je récupère les logs pour comprendre l'erreur…",
+            "tools": [
+                ("get_deployment_logs", {"runtime": rt, "lines": 80}),
+                ("analyze_deployment_error", {"runtime": rt}),
+            ],
+        }
+
+    if "jail" in last_user_l or (
+        "commande" in last_user_l and any(k in last_user_l for k in ("liste", "dispo", "autoris"))
+    ):
+        return {
+            "say": "Voici le catalogue des commandes jail autorisées…",
+            "tools": [("list_jail_commands", {})],
+        }
+
+    if any(k in last_user_l for k in ("contexte", "compte", "ce que j'ai", "ce que j ai")):
+        return {
+            "say": "Je regarde ce qui existe déjà sur ton compte…",
+            "tools": [("get_deployment_context", {}), ("check_application_status", {})],
+        }
+
+    return None
+
+
+def _synthesize_tools(messages: list[ChatMessage]) -> str:
+    """Agrège les derniers résultats tool en texte utile."""
+    tool_msgs: list[ChatMessage] = []
+    for m in reversed(messages):
+        if m.role != "tool":
+            break
+        tool_msgs.append(m)
+    tool_msgs.reverse()
+
+    parts: list[str] = []
+    for m in tool_msgs:
+        name = m.name or "outil"
+        try:
+            data = json.loads(m.content or "{}")
+        except json.JSONDecodeError:
+            data = {"raw": (m.content or "")[:800]}
+        if not isinstance(data, dict):
+            data = {"raw": str(data)[:800]}
+
+        if name == "check_application_status":
+            parts.append(_format_apps(data))
+        elif name in {"get_deployment_context", "get_server_info"}:
+            parts.append(_format_context(name, data))
+        elif "log" in name or "analyze" in name:
+            parts.append(_format_logs(name, data))
+        else:
+            ok = data.get("ok", True)
+            err = data.get("error")
+            if err:
+                parts.append(f"**{name}** : erreur — {err}")
+            else:
+                snippet = json.dumps(data.get("data", data), ensure_ascii=False)[:900]
+                parts.append(f"**{name}** (ok={ok}) :\n```json\n{snippet}\n```")
+
+    body = "\n\n".join(p for p in parts if p) or "Aucune donnée retournée par les outils."
+    return body + "\n\nTu veux les logs d'une app, un redémarrage, ou autre chose ?"
+
+
+def _format_apps(data: dict) -> str:
+    payload = data.get("data") if isinstance(data.get("data"), dict) else data
+    py = payload.get("python_apps") or []
+    node = payload.get("node_apps") or []
+    lines = ["Voici tes applications :", ""]
+    lines.append(f"**Python** ({len(py)})")
+    if not py:
+        lines.append("- Aucune app Python sur ce compte.")
+    else:
+        for a in py:
+            if not isinstance(a, dict):
+                continue
+            domain = a.get("domain") or "—"
+            err = (a.get("last_error") or "").strip()
+            extra = f" — ⚠ {err[:80]}" if err else ""
+            lines.append(
+                f"- `{a.get('name')}` — **{a.get('status')}** — port {a.get('port')} — "
+                f"domaine {domain}{extra}"
+            )
+    lines.append("")
+    lines.append(f"**Node.js** ({len(node)})")
+    if not node:
+        lines.append("- Aucune app Node sur ce compte.")
+    else:
+        for a in node:
+            if not isinstance(a, dict):
+                continue
+            err = (a.get("last_error") or "").strip()
+            extra = f" — ⚠ {err[:80]}" if err else ""
+            lines.append(
+                f"- `{a.get('name')}` — **{a.get('status')}** — port {a.get('port')}{extra}"
+            )
+    return "\n".join(lines)
+
+
+def _format_context(name: str, data: dict) -> str:
+    payload = data.get("data") if isinstance(data.get("data"), dict) else data
+    keys = ", ".join(sorted(str(k) for k in list(payload.keys())[:12])) if isinstance(payload, dict) else ""
+    return f"**{name}** — champs : {keys or 'n/a'}."
+
+
+def _format_logs(name: str, data: dict) -> str:
+    payload = data.get("data") if isinstance(data.get("data"), dict) else data
+    text = ""
+    if isinstance(payload, dict):
+        text = str(payload.get("logs") or payload.get("excerpt") or payload.get("analysis") or "")
+    if not text:
+        text = json.dumps(payload, ensure_ascii=False)[:1200]
+    return f"**{name}** :\n```\n{text[:1500]}\n```"
 
 
 def _pack_calls(tool_names: set[str], wanted: list[tuple[str, dict]]) -> list[ToolCallRequest]:
@@ -206,58 +271,32 @@ def _converse(last_user: str, prev_assistant: str, user_turns: list[str]) -> str
     text = (last_user or "").strip()
     low = text.lower()
 
-    if re.search(r"\b(bonjour|salut|hello|hey|coucou)\b", low):
+    if re.search(r"\b(bonjour|salut|hello|hey|coucou)\b", low) and len(low) < 40:
         return (
-            "Salut ! Je suis **V-zone AI** — on peut discuter librement comme avec ChatGPT, "
-            "et j'ai aussi accès aux outils du panneau (logs, apps, git, jail contrôlé).\n\n"
-            "Par exemple : *« explique-moi WSGI »*, *« aide-moi à déployer Django »*, "
-            "*« analyse mes logs »*. Qu'est-ce que tu veux faire ?"
+            "Salut ! Je suis **V-zone AI** (mode local).\n\n"
+            "Demande concrète = j'agis tout de suite, par ex. :\n"
+            "- *liste mes applications Python*\n"
+            "- *montre le statut de mes apps*\n"
+            "- *analyse mes logs*\n\n"
+            "Qu'est-ce que tu veux faire ?"
         )
 
     if any(k in low for k in ("merci", "thanks", "nickel", "parfait", "super")):
-        return (
-            "Avec plaisir 🙂 Dis-moi si tu veux enchaîner sur autre chose "
-            "(logs, domaine, base, déploiement…)."
-        )
+        return "Avec plaisir. Tu veux enchaîner (logs, domaine, déploiement…) ?"
 
-    if any(k in low for k in ("qui es-tu", "tu peux quoi", "que peux-tu", "tes capacités", "aide")):
+    if any(k in low for k in ("qui es-tu", "tu peux quoi", "que peux-tu", "tes capacités")):
         return (
-            "Je suis l'assistant IA intégré à V-zone. Je peux :\n\n"
-            "1. **Discuter** — concepts, architecture, debug, bonnes pratiques\n"
-            "2. **Diagnostiquer** — logs, statut apps, config domaine/DB\n"
-            "3. **Agir** — après ta confirmation : install deps, restart, git pull, "
-            "commandes jail whitelistées\n\n"
-            "Pas de shell libre (sécurité). Qu'est-ce qui t'occupe en ce moment ?"
+            "Assistant V-zone (mode local sans LLM) : je liste apps/domaines, lis les logs, "
+            "et propose des actions (restart, install) **après confirmation**.\n\n"
+            "Essaie : *liste mes applications Python*."
         )
 
     if any(k in low for k in ("wsgi", "asgi", "passenger", "gunicorn", "uvicorn")):
         return (
-            "En bref :\n\n"
-            "- **WSGI** : interface classique Python ↔ serveur web (Django souvent via "
-            "`passenger_wsgi.py` / gunicorn).\n"
-            "- **ASGI** : version async (FastAPI, Django async, uvicorn).\n"
-            "- Sur V-zone, une app Python a un **port local** + un **domaine** qui reverse-proxy.\n\n"
-            "Tu configures une app Django ou FastAPI ?"
-        )
-
-    if any(k in low for k in ("c'est quoi", "cest quoi", "explique", "comment marche", "différenc")):
-        topic = text
-        return (
-            f"Bonne question. Voici une explication simple sur : « {topic[:120]} ».\n\n"
-            "Dans le contexte V-zone, l'idée est toujours la même : ton code vit dans ton **home**, "
-            "une app (Python/Node) écoute un port, nginx/OLS route ton domaine, "
-            "et Git sert à mettre à jour le code.\n\n"
-            "Tu veux que je détaille un point précis, ou qu'on regarde **ton** compte "
-            "(apps / domaines) pour illustrer ?"
-        )
-
-    # Suites de conversation
-    if len(user_turns) >= 2 and prev_assistant:
-        return (
-            f"Je te suis. Tu as dit : « {text[:240]} ».\n\n"
-            "On peut continuer dans cette direction : je t'explique plus en détail, "
-            "ou je regarde les données live du panel (statut / logs) si tu veux du concret.\n\n"
-            "Que préfères-tu ?"
+            "- **WSGI** : Django classique (souvent `passenger_wsgi.py` / gunicorn).\n"
+            "- **ASGI** : async (FastAPI, uvicorn).\n"
+            "- Sur V-zone : app → port local → domaine en reverse-proxy.\n\n"
+            "Tu configures Django ou FastAPI ?"
         )
 
     url = ""
@@ -265,18 +304,24 @@ def _converse(last_user: str, prev_assistant: str, user_turns: list[str]) -> str
     if m:
         url = m.group(1)
 
-    if url or any(k in low for k in ("django", "flask", "fastapi", "node", "wordpress")):
+    if url or any(k in low for k in ("django", "flask", "fastapi", "déploy", "deploy", "github")):
         return (
-            "OK, parlons-en comme dans un vrai chat.\n\n"
-            + (f"J'ai repéré `{url}`.\n\n" if url else "")
-            + "Pas besoin d'une checklist figée : dis-moi juste **où tu en es** "
-            "(repo prêt ? domaine ? erreur sous les yeux ?). "
-            "On avance message par message."
+            "OK pour le déploiement"
+            + (f" (`{url}`)" if url else "")
+            + ". Dis-moi : runtime (Django/Node), domaine, besoin d'une base ? "
+            "Ou *liste mes apps* si tu veux voir l'existant."
+        )
+
+    # Multi-tours : rester utile, pas "que préfères-tu ?" en boucle
+    if len(user_turns) >= 2 and prev_assistant:
+        return (
+            f"Bien reçu : « {text[:240]} ».\n\n"
+            "En mode local je suis meilleur sur les **actions panel**. "
+            "Ex. *liste mes applications Python*, *statut*, *logs Python*."
         )
 
     return (
         f"Compris : « {text[:280]} ».\n\n"
-        "Je t'écoute. Tu peux me parler normalement — concepts, plan, debug, ou "
-        "me demander d'aller chercher statut/logs dans le panel. "
-        "Qu'est-ce que tu veux obtenir comme prochain résultat ?"
+        "Pour du concret tout de suite : *liste mes applications Python* "
+        "ou *analyse mes logs*."
     )

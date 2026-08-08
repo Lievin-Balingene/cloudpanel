@@ -73,3 +73,33 @@ def test_ai_conversation_flow(api: APIClient, settings):
     assert data["message"]["role"] == "assistant"
     assert data["message"]["content"]
     assert data["provider"] == "mock"
+
+    listed = api.post(
+        reverse("ai-conversation-message", kwargs={"pk": pk}),
+        {"message": "liste moi mes applications pythons"},
+        format="json",
+    )
+    assert listed.status_code == 200
+    body = listed.json()["data"]["message"]["content"].lower()
+    assert "python" in body
+    assert "que préfères-tu" not in body
+
+
+def test_mock_list_apps_intent_calls_tool():
+    from apps.ai_assistant.providers import ChatMessage, ToolSpec
+    from apps.ai_assistant.providers.mock import MockProvider
+
+    p = MockProvider()
+    tools = [
+        ToolSpec(
+            name="check_application_status",
+            description="statut",
+            parameters={"type": "object", "properties": {}},
+        )
+    ]
+    r = p.chat(
+        [ChatMessage(role="user", content="liste moi mes applications pythons")],
+        tools=tools,
+    )
+    assert r.tool_calls
+    assert r.tool_calls[0].name == "check_application_status"

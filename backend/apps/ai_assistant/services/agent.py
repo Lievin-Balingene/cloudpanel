@@ -142,16 +142,20 @@ def run_assistant_turn(
             logger.warning("AI provider error, fallback mock: %s", exc)
             provider = get_provider("mock")
             result = provider.chat(messages, tools=tools, temperature=temperature)
-            # Marqueur pour le footer mock
-            if result.content and "réponse locale" not in result.content.lower():
+            # Note courte une seule fois (pas de pavé à chaque tour)
+            if result.content and "mode local" not in result.content.lower():
                 result.content = (
                     result.content.rstrip()
-                    + f"\n\n_(Ollama/LLM indisponible : {str(exc)[:120]})_"
+                    + f"\n\n_(Mode local — LLM indisponible : {str(exc)[:100]})_"
                 )
 
         provider_name = result.provider or provider_name
         model_name = result.model or model_name
-        final_content = result.content or final_content
+        # Pendant les tours tools, ne pas figer le message "Je liste…" comme réponse finale
+        if result.content and (not result.tool_calls or _round == max_rounds - 1):
+            final_content = result.content
+        elif result.content and not final_content:
+            final_content = result.content
 
         if not result.tool_calls:
             break
@@ -250,15 +254,9 @@ def run_assistant_turn(
             "(Ollama / provider) ou reformulez votre demande."
         )
 
-    # Indique clairement le mode mock (évite la confusion avec un « vrai » LLM)
-    if (provider_name or "").lower() == "mock" and "réponse locale" not in final_content.lower():
-        final_content = (
-            final_content.rstrip()
-            + "\n\n---\n"
-            + "_Réponse locale (mock) — pour un dialogue type ChatGPT, installez "
-            + "[Ollama](https://ollama.com) (`ollama pull llama3.2`) puis "
-            + "`VZONE_AI_PROVIDER=auto` et redémarrez `vzone-api`._"
-        )
+    # Pied de page court en mock (évite le pavé Ollama répété)
+    if (provider_name or "").lower() == "mock" and "mode local" not in final_content.lower():
+        final_content = final_content.rstrip() + "\n\n_(Mode local / mock — sans LLM distant.)_"
 
     suggestions = _suggest_followups(safe_user, final_content, ui)
     assistant_msg = Message.objects.create(
