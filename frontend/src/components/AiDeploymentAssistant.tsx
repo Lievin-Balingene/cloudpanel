@@ -6,6 +6,7 @@ import {
   Bug,
   Check,
   ChevronRight,
+  Copy,
   History,
   Loader2,
   MapPin,
@@ -63,6 +64,7 @@ interface SendResult {
   provider?: string;
   model?: string;
   ui_context?: { label?: string; section?: string; path?: string };
+  suggestions?: string[];
 }
 
 interface JailCommand {
@@ -73,34 +75,59 @@ interface JailCommand {
 }
 
 function renderContent(text: string) {
-  const parts = text.split(/(```[\s\S]*?```|\*\*[^*]+\*\*|`[^`]+`)/g);
-  return parts.map((part, i) => {
-    if (part.startsWith("```") && part.endsWith("```")) {
-      const body = part.replace(/^```\w*\n?/, "").replace(/```$/, "");
+  const blocks = text.split(/(```[\s\S]*?```)/g);
+  return blocks.map((block, bi) => {
+    if (block.startsWith("```") && block.endsWith("```")) {
+      const body = block.replace(/^```\w*\n?/, "").replace(/```$/, "");
       return (
         <pre
-          key={i}
+          key={bi}
           className="my-2 overflow-x-auto rounded-lg border border-white/10 bg-[#0f172a] p-2.5 text-[11px] leading-relaxed text-emerald-100"
         >
           {body}
         </pre>
       );
     }
-    if (part.startsWith("**") && part.endsWith("**")) {
-      return (
-        <strong key={i} className="font-semibold">
-          {part.slice(2, -2)}
-        </strong>
-      );
-    }
-    if (part.startsWith("`") && part.endsWith("`")) {
-      return (
-        <code key={i} className="rounded bg-black/10 px-1 py-0.5 font-mono text-[12px] dark:bg-white/10">
-          {part.slice(1, -1)}
-        </code>
-      );
-    }
-    return <span key={i}>{part}</span>;
+    const lines = block.split("\n");
+    return (
+      <span key={bi}>
+        {lines.map((line, li) => {
+          const bullet = line.match(/^(\s*)([-*]|\d+\.)\s+(.*)$/);
+          const content = bullet ? bullet[3] : line;
+          const inline = content.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((part, i) => {
+            if (part.startsWith("**") && part.endsWith("**")) {
+              return (
+                <strong key={i} className="font-semibold">
+                  {part.slice(2, -2)}
+                </strong>
+              );
+            }
+            if (part.startsWith("`") && part.endsWith("`")) {
+              return (
+                <code key={i} className="rounded bg-black/10 px-1 py-0.5 font-mono text-[12px] dark:bg-white/10">
+                  {part.slice(1, -1)}
+                </code>
+              );
+            }
+            return <span key={i}>{part}</span>;
+          });
+          if (bullet) {
+            return (
+              <div key={li} className="ml-1 flex gap-2">
+                <span className="opacity-50">{bullet[2]}</span>
+                <span>{inline}</span>
+              </div>
+            );
+          }
+          return (
+            <span key={li}>
+              {inline}
+              {li < lines.length - 1 ? "\n" : null}
+            </span>
+          );
+        })}
+      </span>
+    );
   });
 }
 
@@ -131,9 +158,9 @@ function guessCompletedSteps(playbook: Playbook | null, messages: AiMessage[], t
 }
 
 const WELCOME =
-  "Bonjour — je suis **V-zone AI Deployment Assistant**.\n\n" +
-  "Choisissez un playbook ci-dessous ou décrivez votre projet. " +
-  "Les actions sensibles (clone, install, restart, deploy) demanderont votre confirmation.";
+  "Salut ! Je suis **V-zone AI** — on peut discuter librement, comme avec ChatGPT.\n\n" +
+  "Pose ta question, décris un bug, ou demande un plan de déploiement. " +
+  "Quand une action sensible est nécessaire (logs live, restart, jail…), je te demanderai confirmation.";
 
 export function AiDeploymentAssistant() {
   const location = useLocation();
@@ -147,6 +174,8 @@ export function AiDeploymentAssistant() {
   const [conversationId, setConversationId] = useState<number | null>(null);
   const [activePlaybookId, setActivePlaybookId] = useState<string | null>(null);
   const [toolNames, setToolNames] = useState<string[]>([]);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [streamingText, setStreamingText] = useState<string | null>(null);
   const autoPageKey = useRef<string>("");
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -245,12 +274,26 @@ export function AiDeploymentAssistant() {
       });
     },
     onSuccess: (data) => {
-      setLocalMessages((prev) => [...prev, data.message]);
       setPending(data.pending_actions || []);
+      setSuggestions(data.suggestions || []);
       const names = (data.tool_trace || [])
         .map((t) => String(t?.name || ""))
         .filter(Boolean);
       if (names.length) setToolNames((prev) => [...prev, ...names]);
+      // Effet "streaming" type ChatGPT (affichage progressif)
+      const full = data.message.content || "";
+      setStreamingText("");
+      let i = 0;
+      const step = Math.max(2, Math.floor(full.length / 40));
+      const timer = window.setInterval(() => {
+        i = Math.min(full.length, i + step);
+        setStreamingText(full.slice(0, i));
+        if (i >= full.length) {
+          window.clearInterval(timer);
+          setStreamingText(null);
+          setLocalMessages((prev) => [...prev, data.message]);
+        }
+      }, 16);
       void qc.invalidateQueries({ queryKey: ["ai-conversations"] });
     },
   });
@@ -289,14 +332,16 @@ export function AiDeploymentAssistant() {
 
   async function onSend(raw?: string, forcedConvId?: number) {
     const text = (raw ?? input).trim();
-    if (!text || sendMut.isPending) return;
+    if (!text || sendMut.isPending || streamingText !== null) return;
     if (raw === undefined) setInput("");
+    setSuggestions([]);
     const convId = forcedConvId ?? (await ensureConv());
     if (!convId) return;
     setLocalMessages((prev) => [...prev, { role: "user", content: text }]);
     try {
       await sendMut.mutateAsync({ text, convId });
     } catch (err) {
+      setStreamingText(null);
       setLocalMessages((prev) => [
         ...prev,
         {
@@ -315,17 +360,19 @@ export function AiDeploymentAssistant() {
     await onSend(text);
   }
 
-  // À l'ouverture (ou changement de page), analyser automatiquement le besoin de la page
+  // Suggestion douce selon la page (sans spammer le fil de conversation)
   useEffect(() => {
-    if (!open || !conversationId || sendMut.isPending) return;
-    const key = `${conversationId}:${pageCtx.path}`;
+    if (!open) return;
+    const key = pageCtx.path;
     if (autoPageKey.current === key) return;
     autoPageKey.current = key;
-    const sectionsAuto = new Set(["python", "node", "git", "terminal", "files", "domains", "databases"]);
-    if (!sectionsAuto.has(pageCtx.section)) return;
-    void onSend(pageCtx.auto_prompt, conversationId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, conversationId, pageCtx.path, pageCtx.section]);
+    const sectionsHint = new Set(["python", "node", "git", "terminal", "files", "domains", "databases"]);
+    if (!sectionsHint.has(pageCtx.section)) return;
+    setSuggestions((prev) => {
+      const next = [pageCtx.auto_prompt, ...prev.filter((s) => s !== pageCtx.auto_prompt)];
+      return next.slice(0, 4);
+    });
+  }, [open, pageCtx.path, pageCtx.section, pageCtx.auto_prompt]);
 
   async function loadConversation(id: number) {
     const detail = await apiRequest<Conversation>(`/ai/conversations/${id}/`);
@@ -477,9 +524,9 @@ export function AiDeploymentAssistant() {
                     type="button"
                     className="shrink-0 rounded-full border border-cp-border bg-white px-2 py-0.5 text-[10px] font-medium hover:bg-cp-link-soft dark:bg-black/30"
                     disabled={sendMut.isPending}
-                    onClick={() => void onSend(pageCtx.auto_prompt)}
+                    onClick={() => void onSend(`Je suis sur la page ${pageCtx.label}. ${pageCtx.need}. Aide-moi.`)}
                   >
-                    Analyser
+                    Continuer ici
                   </button>
                 </div>
 
@@ -540,8 +587,26 @@ export function AiDeploymentAssistant() {
                       }
                     >
                       <div className="whitespace-pre-wrap leading-relaxed">{renderContent(m.content)}</div>
+                      {m.role === "assistant" && (
+                        <button
+                          type="button"
+                          className="mt-2 inline-flex items-center gap-1 text-[10px] text-cp-muted hover:text-cp-navy"
+                          onClick={() => void navigator.clipboard.writeText(m.content)}
+                        >
+                          <Copy className="h-3 w-3" /> Copier
+                        </button>
+                      )}
                     </div>
                   ))}
+
+                  {streamingText !== null && (
+                    <div className="mr-4 rounded-2xl rounded-bl-md border border-cp-border bg-white px-3.5 py-2.5 text-cp-text shadow-sm dark:bg-black/25 dark:text-white">
+                      <div className="whitespace-pre-wrap leading-relaxed">
+                        {renderContent(streamingText)}
+                        <span className="ml-0.5 inline-block h-4 w-1 animate-pulse bg-cp-navy align-middle" />
+                      </div>
+                    </div>
+                  )}
 
                   {pending.map((p) => (
                     <div
@@ -580,10 +645,25 @@ export function AiDeploymentAssistant() {
                     </div>
                   ))}
 
-                  {sendMut.isPending && (
+                  {sendMut.isPending && streamingText === null && (
                     <div className="flex items-center gap-2 text-xs text-cp-muted">
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      L’assistant analyse et prépare les prochaines étapes…
+                      V-zone AI réfléchit…
+                    </div>
+                  )}
+
+                  {suggestions.length > 0 && !sendMut.isPending && streamingText === null && (
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {suggestions.map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          className="rounded-full border border-cp-border bg-white px-2.5 py-1 text-left text-[11px] text-cp-text transition hover:border-cp-navy hover:bg-cp-link-soft dark:bg-black/20"
+                          onClick={() => void onSend(s)}
+                        >
+                          {s.length > 72 ? `${s.slice(0, 72)}…` : s}
+                        </button>
+                      ))}
                     </div>
                   )}
                   <div ref={bottomRef} />
@@ -601,7 +681,7 @@ export function AiDeploymentAssistant() {
                       ref={inputRef}
                       rows={1}
                       className="vz-input max-h-28 flex-1 resize-none !py-2.5 text-sm"
-                      placeholder="Décrire le déploiement, coller une erreur…"
+                      placeholder="Écris comme à ChatGPT… (Shift+Entrée = nouvelle ligne)"
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={(e) => {
@@ -622,7 +702,7 @@ export function AiDeploymentAssistant() {
                     </button>
                   </form>
                   <p className="mt-1.5 px-0.5 text-[10px] text-cp-muted">
-                    Tools contrôlés · pas de shell libre · secrets masqués · Entrée pour envoyer
+                    Tools contrôlés · conversation multi-tours · Entrée pour envoyer
                   </p>
                 </div>
               </div>

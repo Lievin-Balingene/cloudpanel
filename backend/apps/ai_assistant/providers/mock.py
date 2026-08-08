@@ -1,4 +1,4 @@
-"""Provider mock / coach déterministe (tests + fallback sans LLM)."""
+"""Provider mock conversationnel (fallback sans LLM) — style chat multi-tours."""
 from __future__ import annotations
 
 import re
@@ -8,7 +8,7 @@ from apps.ai_assistant.providers import ChatMessage, ChatResult, ToolCallRequest
 
 
 class MockProvider:
-    """Assistant guidé sans dépendance réseau — tool-calls heuristiques sûres."""
+    """Coach local : conversation naturelle + tools seulement si intention claire."""
 
     name = "mock"
 
@@ -25,196 +25,166 @@ class MockProvider:
         del temperature
         tool_names = {t.name for t in (tools or [])}
         last_user = ""
-        for m in reversed(messages):
-            if m.role == "user":
-                last_user = (m.content or "").lower()
-                break
+        prev_assistant = ""
+        user_turns: list[str] = []
+        for m in messages:
+            if m.role == "user" and m.content:
+                user_turns.append(m.content)
+            if m.role == "assistant" and m.content and not m.content.startswith("(outil"):
+                prev_assistant = m.content
+        if user_turns:
+            last_user = user_turns[-1]
+        last_user_l = last_user.lower()
 
-        # Si le dernier message est un résultat d'outil → synthèse
+        # Après un tool → synthèse conversationnelle
         if messages and messages[-1].role == "tool":
             tool_payload = messages[-1].content or "{}"
+            name = messages[-1].name or "outil"
             return ChatResult(
                 content=(
-                    "**Analyse (mode local)**\n\n"
-                    f"Résultat outil `{messages[-1].name}` reçu.\n\n"
-                    "```json\n"
-                    f"{tool_payload[:2500]}\n"
-                    "```\n\n"
-                    "Indiquez la prochaine étape (runtime, domaine, base, variables d'env) "
-                    "ou demandez un diagnostic plus précis."
+                    f"J'ai consulté **{name}**. Voici ce que j'en retiens :\n\n"
+                    f"```json\n{tool_payload[:2200]}\n```\n\n"
+                    "Tu veux que je t'explique ça simplement, que je propose une correction, "
+                    "ou qu'on passe à l'étape suivante ?"
                 ),
                 provider=self.name,
                 model="mock-coach",
             )
 
-        # Contexte page (injecté en system)
-        page_blob = " ".join(
-            (m.content or "").lower()
-            for m in messages
-            if m.role == "system" and "page actuelle" in (m.content or "").lower()
+        # Intent tools (seulement si mots-clés d'action / diagnostic)
+        action_hit = any(
+            k in last_user_l
+            for k in (
+                "log",
+                "erreur",
+                "error",
+                "failed",
+                "échou",
+                "statut",
+                "status",
+                "analyse",
+                "diagnost",
+                "redémar",
+                "restart",
+                "install",
+                "npm",
+                "pip",
+                "jail",
+                "commande",
+                "pull",
+                "déploy",
+                "deploy",
+                "clone",
+            )
         )
-        if "python" in page_blob and any(
-            k in last_user for k in ("page", "suis sur", "analyse", "log", "statut", "erreur", "app")
-        ):
-            calls = []
-            if "check_application_status" in tool_names:
-                calls.append(
-                    ToolCallRequest(id=str(uuid4()), name="check_application_status", arguments={})
-                )
-            if "get_page_logs" in tool_names:
-                calls.append(
-                    ToolCallRequest(
-                        id=str(uuid4()),
-                        name="get_page_logs",
-                        arguments={"runtime": "python", "lines": 100},
-                    )
-                )
-            elif "get_deployment_logs" in tool_names:
-                calls.append(
-                    ToolCallRequest(
-                        id=str(uuid4()),
-                        name="get_deployment_logs",
-                        arguments={"runtime": "python", "lines": 100},
-                    )
-                )
-            if "analyze_deployment_error" in tool_names:
-                calls.append(
-                    ToolCallRequest(
-                        id=str(uuid4()),
-                        name="analyze_deployment_error",
-                        arguments={"runtime": "python"},
-                    )
-                )
-            if calls:
-                return ChatResult(
-                    content="Je détecte la page Python — statut + logs en cours…",
-                    tool_calls=calls,
-                    provider=self.name,
-                    model="mock-coach",
-                )
-        if "node" in page_blob and any(
-            k in last_user for k in ("page", "suis sur", "analyse", "log", "statut", "erreur", "app")
-        ):
-            calls = []
-            if "check_application_status" in tool_names:
-                calls.append(
-                    ToolCallRequest(id=str(uuid4()), name="check_application_status", arguments={})
-                )
-            if "get_page_logs" in tool_names:
-                calls.append(
-                    ToolCallRequest(
-                        id=str(uuid4()),
-                        name="get_page_logs",
-                        arguments={"runtime": "node", "lines": 100},
-                    )
-                )
-            if calls:
-                return ChatResult(
-                    content="Je détecte la page Node — statut + logs…",
-                    tool_calls=calls,
-                    provider=self.name,
-                    model="mock-coach",
-                )
-        if ("terminal" in page_blob or "file manager" in page_blob) and "list_jail_commands" in tool_names:
-            if any(k in last_user for k in ("page", "suis sur", "jail", "commande", "lister", "home")):
-                return ChatResult(
-                    content="Catalogue des commandes jail…",
-                    tool_calls=[
-                        ToolCallRequest(id=str(uuid4()), name="list_jail_commands", arguments={})
-                    ],
-                    provider=self.name,
-                    model="mock-coach",
-                )
+        page_auto = any(k in last_user_l for k in ("je suis sur", "page setup", "vérifie le statut"))
 
-        # Intent → tool calls lecture uniquement
-        if any(k in last_user for k in ("log", "erreur", "error", "failed", "échou")):
-            calls: list[ToolCallRequest] = []
-            if "get_deployment_logs" in tool_names:
-                calls.append(
-                    ToolCallRequest(
-                        id=str(uuid4()),
-                        name="get_deployment_logs",
-                        arguments={"runtime": _guess_runtime(last_user), "lines": 80},
-                    )
-                )
-            if "analyze_deployment_error" in tool_names:
-                calls.append(
-                    ToolCallRequest(
-                        id=str(uuid4()),
-                        name="analyze_deployment_error",
-                        arguments={"runtime": _guess_runtime(last_user)},
-                    )
-                )
-            if calls:
-                return ChatResult(
-                    content="Je récupère les logs et j'analyse l'erreur…",
-                    tool_calls=calls,
-                    provider=self.name,
-                    model="mock-coach",
-                )
-
-        if any(k in last_user for k in ("statut", "status", "running", "écoute")):
-            if "check_application_status" in tool_names:
-                return ChatResult(
-                    content="Vérification du statut des applications…",
-                    tool_calls=[
-                        ToolCallRequest(
-                            id=str(uuid4()),
-                            name="check_application_status",
-                            arguments={},
-                        )
-                    ],
-                    provider=self.name,
-                    model="mock-coach",
-                )
-
-        if any(k in last_user for k in ("django", "déploy", "deploy", "github", "git")):
-            calls = []
-            if "get_deployment_context" in tool_names:
-                calls.append(
-                    ToolCallRequest(
-                        id=str(uuid4()),
-                        name="get_deployment_context",
-                        arguments={},
-                    )
-                )
-            if "get_server_info" in tool_names:
-                calls.append(
-                    ToolCallRequest(id=str(uuid4()), name="get_server_info", arguments={})
-                )
-            if calls:
-                return ChatResult(
-                    content="Je charge le contexte de votre compte et les infos serveur…",
-                    tool_calls=calls,
-                    provider=self.name,
-                    model="mock-coach",
-                )
-
-        if "python" in last_user and "check_python_version" in tool_names:
-            return ChatResult(
-                content="Contrôle des runtimes Python disponibles…",
-                tool_calls=[
-                    ToolCallRequest(id=str(uuid4()), name="check_python_version", arguments={})
-                ],
-                provider=self.name,
-                model="mock-coach",
+        if action_hit or page_auto:
+            page_blob = " ".join(
+                (m.content or "").lower()
+                for m in messages
+                if m.role == "system" and "page actuelle" in (m.content or "").lower()
             )
+            if ("python" in page_blob or "python" in last_user_l) and (
+                "log" in last_user_l or "statut" in last_user_l or page_auto
+            ):
+                calls = _pack_calls(
+                    tool_names,
+                    [
+                        ("check_application_status", {}),
+                        ("get_page_logs", {"runtime": "python", "lines": 100}),
+                        ("analyze_deployment_error", {"runtime": "python"}),
+                    ],
+                )
+                if calls:
+                    return ChatResult(
+                        content="Ok, je regarde le statut et les logs Python…",
+                        tool_calls=calls,
+                        provider=self.name,
+                        model="mock-coach",
+                    )
+            if ("node" in page_blob or "node" in last_user_l) and (
+                "log" in last_user_l or "statut" in last_user_l or page_auto
+            ):
+                calls = _pack_calls(
+                    tool_names,
+                    [
+                        ("check_application_status", {}),
+                        ("get_page_logs", {"runtime": "node", "lines": 100}),
+                    ],
+                )
+                if calls:
+                    return ChatResult(
+                        content="Ok, je regarde tes apps Node et les logs…",
+                        tool_calls=calls,
+                        provider=self.name,
+                        model="mock-coach",
+                    )
+            if any(k in last_user_l for k in ("log", "erreur", "error", "failed", "échou")):
+                rt = _guess_runtime(last_user_l)
+                calls = _pack_calls(
+                    tool_names,
+                    [
+                        ("get_deployment_logs", {"runtime": rt, "lines": 80}),
+                        ("analyze_deployment_error", {"runtime": rt}),
+                    ],
+                )
+                if calls:
+                    return ChatResult(
+                        content="Je récupère les logs pour comprendre l'erreur…",
+                        tool_calls=calls,
+                        provider=self.name,
+                        model="mock-coach",
+                    )
+            if any(k in last_user_l for k in ("statut", "status", "running")):
+                if "check_application_status" in tool_names:
+                    return ChatResult(
+                        content="Je vérifie ce qui tourne sur ton compte…",
+                        tool_calls=[
+                            ToolCallRequest(
+                                id=str(uuid4()), name="check_application_status", arguments={}
+                            )
+                        ],
+                        provider=self.name,
+                        model="mock-coach",
+                    )
+            if any(k in last_user_l for k in ("django", "déploy", "deploy", "github", "git", "clone")):
+                calls = _pack_calls(
+                    tool_names,
+                    [("get_deployment_context", {}), ("get_server_info", {})],
+                )
+                if calls:
+                    return ChatResult(
+                        content="Regardons d'abord ce qui existe déjà sur ton compte…",
+                        tool_calls=calls,
+                        provider=self.name,
+                        model="mock-coach",
+                    )
+            if "jail" in last_user_l or "commande" in last_user_l:
+                if "list_jail_commands" in tool_names:
+                    return ChatResult(
+                        content="Voici le catalogue des commandes jail autorisées…",
+                        tool_calls=[
+                            ToolCallRequest(id=str(uuid4()), name="list_jail_commands", arguments={})
+                        ],
+                        provider=self.name,
+                        model="mock-coach",
+                    )
 
-        if "node" in last_user and "check_node_version" in tool_names:
-            return ChatResult(
-                content="Contrôle des runtimes Node.js…",
-                tool_calls=[
-                    ToolCallRequest(id=str(uuid4()), name="check_node_version", arguments={})
-                ],
-                provider=self.name,
-                model="mock-coach",
-            )
-
+        # Conversation libre multi-tours
         return ChatResult(
-            content=_welcome_guide(last_user),
+            content=_converse(last_user, prev_assistant, user_turns),
             provider=self.name,
             model="mock-coach",
         )
+
+
+def _pack_calls(tool_names: set[str], wanted: list[tuple[str, dict]]) -> list[ToolCallRequest]:
+    out: list[ToolCallRequest] = []
+    for name, args in wanted:
+        if name in tool_names:
+            out.append(ToolCallRequest(id=str(uuid4()), name=name, arguments=args))
+    return out
 
 
 def _guess_runtime(text: str) -> str:
@@ -225,28 +195,83 @@ def _guess_runtime(text: str) -> str:
     return "python"
 
 
-def _welcome_guide(last_user: str) -> str:
+def _converse(last_user: str, prev_assistant: str, user_turns: list[str]) -> str:
+    text = (last_user or "").strip()
+    low = text.lower()
+
+    if re.search(r"\b(bonjour|salut|hello|hey|coucou)\b", low):
+        return (
+            "Salut ! Je suis **V-zone AI** — on peut discuter librement comme avec ChatGPT, "
+            "et j'ai aussi accès aux outils du panneau (logs, apps, git, jail contrôlé).\n\n"
+            "Par exemple : *« explique-moi WSGI »*, *« aide-moi à déployer Django »*, "
+            "*« analyse mes logs »*. Qu'est-ce que tu veux faire ?"
+        )
+
+    if any(k in low for k in ("merci", "thanks", "nickel", "parfait", "super")):
+        return (
+            "Avec plaisir 🙂 Dis-moi si tu veux enchaîner sur autre chose "
+            "(logs, domaine, base, déploiement…)."
+        )
+
+    if any(k in low for k in ("qui es-tu", "tu peux quoi", "que peux-tu", "tes capacités", "aide")):
+        return (
+            "Je suis l'assistant IA intégré à V-zone. Je peux :\n\n"
+            "1. **Discuter** — concepts, architecture, debug, bonnes pratiques\n"
+            "2. **Diagnostiquer** — logs, statut apps, config domaine/DB\n"
+            "3. **Agir** — après ta confirmation : install deps, restart, git pull, "
+            "commandes jail whitelistées\n\n"
+            "Pas de shell libre (sécurité). Qu'est-ce qui t'occupe en ce moment ?"
+        )
+
+    if any(k in low for k in ("wsgi", "asgi", "passenger", "gunicorn", "uvicorn")):
+        return (
+            "En bref :\n\n"
+            "- **WSGI** : interface classique Python ↔ serveur web (Django souvent via "
+            "`passenger_wsgi.py` / gunicorn).\n"
+            "- **ASGI** : version async (FastAPI, Django async, uvicorn).\n"
+            "- Sur V-zone, une app Python a un **port local** + un **domaine** qui reverse-proxy.\n\n"
+            "Tu configures une app Django ou FastAPI ?"
+        )
+
+    if any(k in low for k in ("c'est quoi", "cest quoi", "explique", "comment marche", "différenc")):
+        topic = text
+        return (
+            f"Bonne question. Voici une explication simple sur : « {topic[:120]} ».\n\n"
+            "Dans le contexte V-zone, l'idée est toujours la même : ton code vit dans ton **home**, "
+            "une app (Python/Node) écoute un port, nginx/OLS route ton domaine, "
+            "et Git sert à mettre à jour le code.\n\n"
+            "Tu veux que je détaille un point précis, ou qu'on regarde **ton** compte "
+            "(apps / domaines) pour illustrer ?"
+        )
+
+    # Suites de conversation
+    if len(user_turns) >= 2 and prev_assistant:
+        return (
+            f"Je te suis. Tu as dit : « {text[:240]} ».\n\n"
+            "On peut continuer dans cette direction : je t'explique plus en détail, "
+            "ou je regarde les données live du panel (statut / logs) si tu veux du concret.\n\n"
+            "Que préfères-tu ?"
+        )
+
     url = ""
-    m = re.search(r"(https?://[^\s]+|git@[^\s]+)", last_user or "")
+    m = re.search(r"(https?://[^\s]+|git@[^\s]+)", text)
     if m:
         url = m.group(1)
-    lines = [
-        "**V-zone AI Deployment Assistant** (mode local / sans LLM distant)",
-        "",
-        "Je peux vous guider pour déployer une app (Django, Node, PHP/WordPress) "
-        "en réutilisant les outils du panneau — **sans shell libre**.",
-        "",
-        "Pour un déploiement GitHub → Django, j'ai besoin de :",
-        "1. URL du dépôt" + (f" *(détectée : `{url}`)*" if url else ""),
-        "2. Branche (ex. `main`)",
-        "3. Version Python",
-        "4. Domaine cible",
-        "5. Base de données (oui/non)",
-        "6. Variables d'environnement (noms seulement, pas les secrets)",
-        "7. Commande d'install (`pip install -r requirements.txt`)",
-        "8. Point d'entrée (module WSGI/ASGI)",
-        "",
-        "Décrivez votre projet ou demandez : *« analyse mes logs Python »*, "
-        "*« statut de mes apps »*, *« versions disponibles »*.",
-    ]
-    return "\n".join(lines)
+
+    if url or any(k in low for k in ("django", "flask", "fastapi", "node", "wordpress")):
+        return (
+            "OK, on peut construire ça ensemble comme une conversation.\n\n"
+            + (f"J'ai vu l'URL `{url}`.\n\n" if url else "")
+            + "Dis-moi juste, au fil de l'eau :\n"
+            "1. Runtime (Django / Node / autre)\n"
+            "2. Domaine prévu\n"
+            "3. Besoin d'une base ?\n\n"
+            "Pas besoin de tout donner d'un coup — on avance message par message."
+        )
+
+    return (
+        f"Compris : « {text[:280]} ».\n\n"
+        "Je peux t'aider en discussion libre (concepts, plan, debug) ou en m'appuyant "
+        "sur le panneau (logs, apps, git). "
+        "Reform-moi juste ce que tu veux obtenir comme prochain résultat."
+    )

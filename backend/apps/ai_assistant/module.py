@@ -6,10 +6,10 @@ registry.register(
     ModuleMeta(
         name="ai_assistant",
         label="AI Deployment Assistant",
-        version="0.34.2",
+        version="0.34.3",
         description=(
-            "Assistant IA de déploiement : diagnostic logs, guidance étape par étape, "
-            "tools contrôlés (sans shell libre)."
+            "Assistant IA conversationnel (style ChatGPT) : dialogue multi-tours, "
+            "tools contrôlés, contexte page, jail whitelist."
         ),
         dependencies=("core", "accounts", "git_deploy", "python_apps", "node_apps", "domains"),
         api_prefix="ai",
