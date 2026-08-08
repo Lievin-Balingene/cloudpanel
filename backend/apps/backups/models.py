@@ -49,7 +49,9 @@ class BackupDestination(models.Model):
     class Meta:
         ordering = ("name",)
         unique_together = ("owner", "name")
-        indexes = [models.Index(fields=["provider", "is_active"])]
+        indexes = [
+            models.Index(fields=["provider", "is_active"], name="backups_bac_provide_7a0c1a_idx"),
+        ]
 
     def __str__(self) -> str:
         return f"{self.name} ({self.provider})"
@@ -132,8 +134,8 @@ class BackupArchive(models.Model):
         ordering = ("-created_at",)
         unique_together = ("owner", "name")
         indexes = [
-            models.Index(fields=["owner", "status"]),
-            models.Index(fields=["snapshot_id"]),
+            models.Index(fields=["owner", "status"], name="backups_bac_owner_i_689611_idx"),
+            models.Index(fields=["snapshot_id"], name="backups_bac_snapsho_9f3a2b_idx"),
         ]
 
     def __str__(self) -> str:
