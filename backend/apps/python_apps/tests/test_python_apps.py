@@ -9,7 +9,14 @@ from rest_framework.test import APIClient
 
 from apps.accounts.factories import UserFactory
 from apps.python_apps.models import PythonApp
-from apps.python_apps.services import _scaffold, create_python_app, start_python_app, stop_python_app
+from apps.python_apps.services import (
+    _filter_log_noise,
+    _format_start_failure,
+    _scaffold,
+    create_python_app,
+    start_python_app,
+    stop_python_app,
+)
 
 
 @pytest.fixture
@@ -176,3 +183,37 @@ def test_django_passenger_next_to_existing_project(py_root):
     passenger.write_text(marker + text, encoding="utf-8")
     _scaffold(project, mode="wsgi", framework="django")
     assert passenger.read_text(encoding="utf-8").startswith(marker)
+
+
+@pytest.mark.unit
+def test_filter_log_noise_drops_wordpress_probes():
+    raw = "\n".join(
+        [
+            "Not Found: //xmlrpc.php",
+            "Not Found: //blog/wp-includes/wlwmanifest.xml",
+            "Not Found: //web/wp-includes/wlwmanifest.xml",
+            "Not Found: //wordpress/wp-includes/wlwmanifest.xml",
+            "Not Found: //website/wp-includes/wlwmanifest.xml",
+            "Not Found: //wp/wp-includes/wlwmanifest.xml",
+            "ModuleNotFoundError: No module named 'gunicorn'",
+        ]
+    )
+    clean = _filter_log_noise(raw)
+    assert "xmlrpc" not in clean.lower()
+    assert "wlwmanifest" not in clean.lower()
+    assert "gunicorn" in clean
+
+
+@pytest.mark.unit
+def test_format_start_failure_code_127_without_scanner_noise():
+    noise = "\n".join(
+        [
+            "Not Found: //xmlrpc.php",
+            "Not Found: //blog/wp-includes/wlwmanifest.xml",
+        ]
+    )
+    msg = _format_start_failure(returncode=127, stderr_new=noise)
+    assert "127" in msg
+    assert "gunicorn" in msg.lower() or "uvicorn" in msg.lower() or "pip install" in msg.lower()
+    assert "xmlrpc" not in msg.lower()
+    assert "wlwmanifest" not in msg.lower()

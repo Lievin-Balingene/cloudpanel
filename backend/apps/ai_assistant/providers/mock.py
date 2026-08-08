@@ -69,57 +69,89 @@ class MockProvider:
 
 
 def _lifecycle_verb(text: str) -> str | None:
-    """Retourne stop|start|restart selon l'intention utilisateur."""
-    t = text.lower()
-    if any(
-        k in t
-        for k in (
-            "stop",
-            "stopp",
-            "arrêt",
-            "arret",
-            "arrêter",
-            "arreter",
-            "éteindre",
-            "eteindre",
-            "éteins",
-            "eteins",
-            "éteigne",
-            "eteigne",
-            "éteint",
-            "eteint",
-            "couper",
-            "coupe ",
-            "kill",
-            "shutdown",
-        )
-    ):
-        return "stop"
-    if any(
-        k in t
-        for k in (
-            "redémarr",
-            "redemarr",
-            "restart",
-            "relance",
-            "reboot",
-        )
-    ):
+    """Retourne stop|start|restart selon l'intention utilisateur (mots entiers)."""
+    import unicodedata
+
+    raw = (text or "").lower().strip()
+    # Normalise accents : démarrer → demarrer (évite les faux positifs substring)
+    t = "".join(
+        c for c in unicodedata.normalize("NFD", raw) if unicodedata.category(c) != "Mn"
+    )
+
+    # Ordre critique : restart / start AVANT stop (sinon "arret" peut polluer)
+    if re.search(r"\b(re\s*-?\s*start|redemarr\w*|relance\w*|reboot\w*)\b", t):
         return "restart"
-    if any(
-        k in t
-        for k in (
-            "démarr",
-            "demarr",
-            "start",
-            "lancer",
-            "lance ",
-            "allumer",
-            "réactive",
-            "reactive",
-        )
+    if re.search(
+        r"\b(start\w*|demarr\w*|lancer\w*|lance\w*|allum\w*|reactiv\w*|en\s+marche)\b",
+        t,
     ):
         return "start"
+    if re.search(
+        r"\b(stop\w*|arret\w*|eteign\w*|eteint\w*|kill\w*|shutdown\w*|coup(er|e)\w*)\b",
+        t,
+    ):
+        return "stop"
+    return None
+
+
+def _infer_app_id_from_history(messages: list[ChatMessage], last_user_l: str) -> int | None:
+    """Si l'utilisateur dit « cette app » / démarre après un stop, reprend le dernier id."""
+    vague = any(
+        k in last_user_l
+        for k in (
+            "cette",
+            "cet ",
+            "la meme",
+            "la même",
+            "la-meme",
+            "pareil",
+            "encore",
+            "remets",
+            "application",
+            "app",
+        )
+    )
+    if not vague:
+        return None
+    # last_app dans le contexte système
+    for m in messages:
+        if m.role != "system":
+            continue
+        found = re.search(r'"last_app"\s*:\s*\{[^}]*"id"\s*:\s*(\d+)', m.content or "")
+        if found:
+            return int(found.group(1))
+    for m in reversed(messages):
+        content = m.content or ""
+        for pat in (
+            r"\(id\s+(\d+)\)",
+            r"\bid\s*[:=]?\s*(\d+)\b",
+            r"\bapp\s*[#:]?\s*(\d+)\b",
+        ):
+            hit = re.search(pat, content, re.IGNORECASE)
+            if hit:
+                return int(hit.group(1))
+        if m.role == "tool" and (m.name or "") in {
+            "stop_application",
+            "start_application",
+            "restart_application",
+            "check_application_status",
+        }:
+            try:
+                data = json.loads(content)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(data, dict):
+                if data.get("app_id"):
+                    try:
+                        return int(data["app_id"])
+                    except (TypeError, ValueError):
+                        pass
+                payload = data.get("data") if isinstance(data.get("data"), dict) else data
+                if isinstance(payload, dict) and payload.get("app_id"):
+                    try:
+                        return int(payload["app_id"])
+                    except (TypeError, ValueError):
+                        pass
     return None
 
 
@@ -148,7 +180,9 @@ def _detect_intent(
     lifecycle = _lifecycle_verb(last_user_l)
     if lifecycle:
         runtime = _guess_runtime(last_user_l + " " + page_blob)
-        app_id = _extract_app_id(last_user_l)
+        app_id = _extract_app_id(last_user_l) or _infer_app_id_from_history(
+            messages, last_user_l
+        )
         tool_map = {
             "stop": "stop_application",
             "start": "start_application",
@@ -159,7 +193,7 @@ def _detect_intent(
         if app_id and tool in tool_names:
             return {
                 "say": f"Je prépare le {labels[lifecycle]} de l'app #{app_id} — confirmation requise…",
-                "tools": [(tool, {"runtime": runtime, "app_id": app_id})],
+                "tools": [(tool, {"runtime": runtime if runtime in {"python", "node"} else "python", "app_id": app_id})],
             }
         return {
             "say": f"Je regarde tes apps pour préparer le {labels[lifecycle]}…",
@@ -373,7 +407,7 @@ def _lifecycle_after_tools(
         # Préfère les apps running pour stop, stopped pour start
         pass
 
-    app_id = _extract_app_id(last_user_l)
+    app_id = _extract_app_id(last_user_l) or _infer_app_id_from_history(messages, last_user_l)
     chosen: dict | None = None
     if app_id:
         for a in pool or (py_apps + node_apps):
@@ -384,6 +418,24 @@ def _lifecycle_after_tools(
                 elif a in py_apps:
                     runtime = "python"
                 break
+        # Id connu (ex. après un stop) même si pas encore dans le pool filtré
+        if chosen is None and app_id and tool_map_name_for_action(action) in tool_names:
+            runtime = runtime if runtime in {"python", "node"} else "python"
+            return ChatResult(
+                content=(
+                    f"Je prépare l'action pour **{_action_label(action)}** l'app "
+                    f"#{app_id} ({runtime}). Clique **Exécuter** pour confirmer."
+                ),
+                tool_calls=[
+                    ToolCallRequest(
+                        id=str(uuid4()),
+                        name=tool_map_name_for_action(action),
+                        arguments={"runtime": runtime, "app_id": app_id},
+                    )
+                ],
+                provider="mock",
+                model="mock-coach",
+            )
 
     if chosen is None:
         candidates = list(pool or [])
@@ -394,10 +446,12 @@ def _lifecycle_after_tools(
                 if str(a.get("status") or "").lower() in {"running", "error", "active"}
             ] or candidates
         elif action == "start":
+            # Inclut aussi les apps juste stoppées / en erreur
             candidates = [
                 a
                 for a in candidates
-                if str(a.get("status") or "").lower() in {"stopped", "error", "pending"}
+                if str(a.get("status") or "").lower()
+                in {"stopped", "error", "pending", "failed", "exited"}
             ] or candidates
         # Match par nom dans le message
         for a in candidates:
@@ -408,11 +462,12 @@ def _lifecycle_after_tools(
         if chosen is None and len(candidates) == 1:
             chosen = candidates[0]
         elif chosen is None and len(candidates) > 1:
+            # Pour start/stop : préfère la plus récemment mise à jour si une seule runtime
             lines = [_format_apps({"data": {"python_apps": py_apps, "node_apps": node_apps}})]
             lines.append("")
             lines.append(
-                f"Plusieurs apps trouvées. Dis-moi laquelle { 'arrêter' if action == 'stop' else 'démarrer' if action == 'start' else 'redémarrer' } "
-                f"avec son **id** (ex. `stop app {candidates[0].get('id')}`)."
+                f"Plusieurs apps trouvées. Dis-moi laquelle {_action_label(action)} "
+                f"avec son **id** (ex. `{action} app {candidates[0].get('id')}`)."
             )
             return ChatResult(
                 content="\n".join(lines),
@@ -424,41 +479,48 @@ def _lifecycle_after_tools(
                 content=(
                     _format_apps({"data": {"python_apps": py_apps, "node_apps": node_apps}})
                     + "\n\nAucune app cible pour cette action. "
-                    "Crée une app ou précise un **id**."
+                    "Précise un **id** (ex. `démarre app 7`)."
                 ),
                 provider="mock",
                 model="mock-coach",
             )
 
-    tool_map = {
-        "stop": "stop_application",
-        "start": "start_application",
-        "restart": "restart_application",
-    }
-    tool = tool_map[action]
+    tool = tool_map_name_for_action(action)
     if tool not in tool_names or not chosen:
         return None
     aid = int(chosen.get("id") or 0)
     name = str(chosen.get("name") or f"#{aid}")
-    labels = {
-        "stop": "arrêter",
-        "start": "démarrer",
-        "restart": "redémarrer",
-    }
     return ChatResult(
         content=(
-            f"Je prépare l'action pour **{labels[action]}** `{name}` "
+            f"Je prépare l'action pour **{_action_label(action)}** `{name}` "
             f"(id {aid}, {runtime}). Clique **Exécuter** pour confirmer."
         ),
         tool_calls=[
             ToolCallRequest(
                 id=str(uuid4()),
                 name=tool,
-                arguments={"runtime": runtime if runtime in {"python", "node"} else "python", "app_id": aid},
+                arguments={
+                    "runtime": runtime if runtime in {"python", "node"} else "python",
+                    "app_id": aid,
+                },
             )
         ],
         provider="mock",
         model="mock-coach",
+    )
+
+
+def tool_map_name_for_action(action: str) -> str:
+    return {
+        "stop": "stop_application",
+        "start": "start_application",
+        "restart": "restart_application",
+    }[action]
+
+
+def _action_label(action: str) -> str:
+    return {"stop": "arrêter", "start": "démarrer", "restart": "redémarrer"}.get(
+        action, action
     )
 
 

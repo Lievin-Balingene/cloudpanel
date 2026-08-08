@@ -597,6 +597,129 @@ def _tail_log(path: Path, lines: int = 40) -> str:
         return ""
 
 
+_LOG_NOISE_RE = re.compile(
+    r"(?i)("
+    r"xmlrpc\.php|wlwmanifest\.xml|wp-includes|wp-admin|wp-content|"
+    r"/wordpress|/wp/|phpmyadmin|favicon\.ico|robots\.txt|"
+    r"Not Found:\s*/+/|"
+    r"\.env(\.bak)?|actuator/health|cgi-bin|"
+    r"union\s+select|eval\(|base64_decode"
+    r")"
+)
+
+_EXIT_HINTS = {
+    127: (
+        "Code 127 : commande introuvable. "
+        "Le binaire Python du venv ou le module manquent — "
+        "installez les dépendances (pip install gunicorn) puis réessayez."
+    ),
+    126: "Code 126 : permission refusée pour exécuter le binaire Python/venv.",
+    1: "Code 1 : échec au démarrage (module manquant ou erreur d'import).",
+}
+
+
+def _filter_log_noise(text: str) -> str:
+    """Retire le bruit scanners (WordPress probes, etc.) des extraits de logs."""
+    if not text:
+        return ""
+    kept: list[str] = []
+    for line in text.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if _LOG_NOISE_RE.search(s):
+            continue
+        # Lignes 404 HTTP génériques sans stack Python
+        if re.match(r"(?i)^(not found|404|forbidden|403)\b", s) and "traceback" not in s.lower():
+            continue
+        kept.append(line)
+    return "\n".join(kept[-40:])
+
+
+def _log_bytes_since(path: Path, offset: int) -> str:
+    if not path.exists():
+        return ""
+    try:
+        size = path.stat().st_size
+        if offset < 0 or offset > size:
+            offset = 0
+        with path.open("rb") as fh:
+            fh.seek(offset)
+            raw = fh.read()
+        return raw.decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _format_start_failure(*, returncode: int | None, stderr_new: str, port: int = 0) -> str:
+    """Message d'échec clair, sans pollution scanners WordPress."""
+    clean = _filter_log_noise(stderr_new).strip()
+    parts: list[str] = []
+    if returncode is not None:
+        parts.append(_EXIT_HINTS.get(returncode, f"Le process s'est arrêté (code {returncode})."))
+    elif port:
+        parts.append(f"Le port {port} n'écoute pas après démarrage.")
+    if clean:
+        # Garde un extrait utile (traceback / ModuleNotFound)
+        parts.append(clean[-900:])
+    elif returncode == 127:
+        parts.append("Astuce : dans le venv de l'app → pip install gunicorn (WSGI) ou uvicorn (ASGI).")
+    else:
+        parts.append(
+            "Aucun détail utile dans error.log (bruit filtré). "
+            "Vérifiez logs/error.log et les dépendances du venv."
+        )
+    return "\n".join(parts)
+
+
+def _preflight_runtime_module(app: PythonApp, py: Path) -> None:
+    """Vérifie que gunicorn/uvicorn est importable avant Popen (évite code 127 opaque)."""
+    mod = "uvicorn" if app.mode == PythonApp.Mode.ASGI else "gunicorn"
+    if not py.is_file():
+        raise VZoneAPIException(
+            detail=f"Interpréteur introuvable : {py}",
+            code="python_missing",
+            status_code=400,
+        )
+    try:
+        from apps.accounts.linux_users import jail_username_for
+        from apps.security.runas import build_runas_cmd, runas_available
+
+        probe = [str(py), "-c", f"import {mod}"]
+        if runas_available():
+            jail = jail_username_for(app.owner)
+            probe = build_runas_cmd(jail, probe)
+        proc = subprocess.run(
+            probe,
+            capture_output=True,
+            text=True,
+            timeout=45,
+            check=False,
+        )
+    except VZoneAPIException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise VZoneAPIException(
+            detail=f"Impossible de vérifier {mod} : {exc}",
+            code="preflight_failed",
+            status_code=400,
+        ) from exc
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        err = _filter_log_noise(err)[:300]
+        raise VZoneAPIException(
+            detail=(
+                f"Module `{mod}` absent du virtualenv. "
+                f"Lancez « Installer les dépendances » ou : "
+                f"{py} -m pip install {mod}"
+                + (f" — {err}" if err else "")
+            ),
+            code="runtime_module_missing",
+            status_code=400,
+            extra={"module": mod, "returncode": proc.returncode},
+        )
+
+
 def _process_alive(pid: int | None) -> bool:
     if not pid or pid <= 0:
         return False
@@ -654,14 +777,6 @@ def normalize_app_domain(value: str) -> str:
     if v.startswith("www."):
         v = v[4:]
     return v
-
-    if not path.exists():
-        return ""
-    try:
-        content = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        return "\n".join(content[-lines:])
-    except OSError:
-        return ""
 
 
 # Variables d'environnement du panel qui ne doivent PAS fuiter vers les apps clients.
@@ -787,6 +902,7 @@ def start_python_app(app: PythonApp) -> PythonApp:
             logger.debug("stop avant start ignoré", exc_info=True)
 
     ensure_runtime_deps(app, app_root, py)
+    _preflight_runtime_module(app, py)
 
     if app.mode == PythonApp.Mode.WSGI and not (app_root / "passenger_wsgi.py").exists():
         raise VZoneAPIException(
@@ -798,6 +914,7 @@ def start_python_app(app: PythonApp) -> PythonApp:
         )
 
     cmd = _build_start_command(app, app_root, py)
+    log_offset = error_log.stat().st_size if error_log.exists() else 0
     try:
         from apps.accounts.linux_users import jail_username_for
 
@@ -814,23 +931,19 @@ def start_python_app(app: PythonApp) -> PythonApp:
         )
         # Attendre que le port écoute (gunicorn peut mettre >1s à binder)
         if not _wait_port(app.port, timeout_s=20.0):
+            new_log = _log_bytes_since(error_log, log_offset)
             if proc.poll() is not None:
-                tail = _tail_log(error_log)
                 raise RuntimeError(
-                    f"Le process s'est arrêté (code {proc.returncode}).\n"
-                    f"{tail[-2000:] if tail else 'Voir logs/error.log — pip install gunicorn Django ?'}"
+                    _format_start_failure(returncode=proc.returncode, stderr_new=new_log)
                 )
             _kill_app_pid(proc.pid)
-            tail = _tail_log(error_log)
             raise RuntimeError(
-                f"Le port {app.port} n'écoute pas après démarrage.\n"
-                f"{tail[-2000:] if tail else 'Voir logs/error.log'}"
+                _format_start_failure(returncode=None, stderr_new=new_log, port=app.port)
             )
         if proc.poll() is not None:
-            tail = _tail_log(error_log)
+            new_log = _log_bytes_since(error_log, log_offset)
             raise RuntimeError(
-                f"Le process s'est arrêté (code {proc.returncode}).\n"
-                f"{tail[-2000:] if tail else 'Voir logs/error.log — pip install gunicorn Django ?'}"
+                _format_start_failure(returncode=proc.returncode, stderr_new=new_log)
             )
         pid_file.write_text(str(proc.pid), encoding="utf-8")
         app.pid = proc.pid
@@ -843,18 +956,26 @@ def start_python_app(app: PythonApp) -> PythonApp:
             detail = str(exc.detail)
             extra = dict(exc.extra or {})
         else:
-            extra = {"error": detail, "stderr": _tail_log(error_log)}
+            new_log = _filter_log_noise(_log_bytes_since(error_log, log_offset))
+            extra = {"error": detail, "stderr": new_log[-1500:]}
         if hasattr(exc, "extra") and isinstance(getattr(exc, "extra"), dict):
             extra.update(exc.extra)
+        # Ne jamais stocker le bruit scanners WordPress dans last_error
+        detail_clean = _filter_log_noise(detail).strip()
+        if not detail_clean:
+            detail_clean = (
+                "Échec au démarrage (voir logs/error.log et les dépendances du venv)."
+            )
+        detail_clean = detail_clean[:800]
         app.status = PythonApp.Status.ERROR
-        app.last_error = detail[:2000]
+        app.last_error = detail_clean
         app.pid = None
         if pid_file.exists():
             pid_file.unlink(missing_ok=True)
         app.save()
         write_app_config(app)
         raise VZoneAPIException(
-            detail=f"Impossible de démarrer l'application : {detail[:300]}",
+            detail=f"Impossible de démarrer l'application : {detail_clean[:400]}",
             code="start_failed",
             status_code=400,
             extra=extra,

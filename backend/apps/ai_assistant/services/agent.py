@@ -89,6 +89,7 @@ def run_assistant_turn(
             "node_apps": (conversation.context or {}).get("node_apps", [])[:8],
             "git_repos": (conversation.context or {}).get("git_repos", [])[:8],
             "domains": (conversation.context or {}).get("domains", [])[:8],
+            "last_app": (conversation.context or {}).get("last_app"),
         }
     )
     messages: list[ChatMessage] = [
@@ -188,6 +189,20 @@ def run_assistant_turn(
 
             if tool.dangerous:
                 action = _create_pending(user, conversation, tool.spec.name, args, ip_address)
+                # Mémorise la dernière app ciblée (stop → start « cette app »)
+                if tool.spec.name in {
+                    "stop_application",
+                    "start_application",
+                    "restart_application",
+                } and args.get("app_id"):
+                    ctx2 = dict(conversation.context or {})
+                    ctx2["last_app"] = {
+                        "id": int(args["app_id"]),
+                        "runtime": str(args.get("runtime") or "python"),
+                        "action": tool.spec.name,
+                    }
+                    conversation.context = ctx2
+                    conversation.save(update_fields=["context", "updated_at"])
                 pending_actions.append(
                     {
                         "token": action.token,
@@ -400,12 +415,41 @@ def confirm_pending_action(
         ip_address=ip_address,
     )
     if action.conversation_id:
+        # Garde last_app après exécution réussie stop/start
+        if (
+            action.tool_name
+            in {"stop_application", "start_application", "restart_application"}
+            and result.get("ok")
+            and action.conversation
+        ):
+            conv = action.conversation
+            ctx = dict(conv.context or {})
+            params = action.params or {}
+            data = result.get("data") if isinstance(result.get("data"), dict) else result
+            ctx["last_app"] = {
+                "id": int(
+                    (data or {}).get("app_id")
+                    or params.get("app_id")
+                    or 0
+                ),
+                "runtime": str(params.get("runtime") or "python"),
+                "name": str((data or {}).get("name") or ""),
+                "status": str((data or {}).get("status") or ""),
+                "action": action.tool_name,
+            }
+            conv.context = ctx
+            conv.save(update_fields=["context", "updated_at"])
         Message.objects.create(
             conversation=action.conversation,
             role=Message.Role.ASSISTANT,
             content=(
                 f"Action `{action.tool_name}` "
                 + ("exécutée avec succès." if result.get("ok") else "échouée.")
+                + (
+                    f"\n\n**Erreur** : {result.get('error')}"
+                    if not result.get("ok") and result.get("error")
+                    else ""
+                )
                 + "\n```json\n"
                 + json.dumps(action.result, ensure_ascii=False, indent=2)[:2000]
                 + "\n```"
