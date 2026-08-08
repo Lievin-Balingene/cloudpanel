@@ -149,17 +149,24 @@ class MockProvider:
                         model="mock-coach",
                     )
             if any(k in last_user_l for k in ("django", "déploy", "deploy", "github", "git", "clone")):
+                # Ne renvoie PLUS jamais une checklist figée : tools + suite conversationnelle
                 calls = _pack_calls(
                     tool_names,
-                    [("get_deployment_context", {}), ("get_server_info", {})],
+                    [("get_deployment_context", {})],
                 )
-                if calls:
+                if calls and any(k in last_user_l for k in ("statut", "compte", "existant", "déjà", "contexte")):
                     return ChatResult(
-                        content="Regardons d'abord ce qui existe déjà sur ton compte…",
+                        content="Je regarde ce qui existe déjà sur ton compte…",
                         tool_calls=calls,
                         provider=self.name,
                         model="mock-coach",
                     )
+                # Sinon conversation libre (pas de dump checklist)
+                return ChatResult(
+                    content=_converse(last_user, prev_assistant, user_turns),
+                    provider=self.name,
+                    model="mock-coach",
+                )
             if "jail" in last_user_l or "commande" in last_user_l:
                 if "list_jail_commands" in tool_names:
                     return ChatResult(
@@ -260,18 +267,16 @@ def _converse(last_user: str, prev_assistant: str, user_turns: list[str]) -> str
 
     if url or any(k in low for k in ("django", "flask", "fastapi", "node", "wordpress")):
         return (
-            "OK, on peut construire ça ensemble comme une conversation.\n\n"
-            + (f"J'ai vu l'URL `{url}`.\n\n" if url else "")
-            + "Dis-moi juste, au fil de l'eau :\n"
-            "1. Runtime (Django / Node / autre)\n"
-            "2. Domaine prévu\n"
-            "3. Besoin d'une base ?\n\n"
-            "Pas besoin de tout donner d'un coup — on avance message par message."
+            "OK, parlons-en comme dans un vrai chat.\n\n"
+            + (f"J'ai repéré `{url}`.\n\n" if url else "")
+            + "Pas besoin d'une checklist figée : dis-moi juste **où tu en es** "
+            "(repo prêt ? domaine ? erreur sous les yeux ?). "
+            "On avance message par message."
         )
 
     return (
         f"Compris : « {text[:280]} ».\n\n"
-        "Je peux t'aider en discussion libre (concepts, plan, debug) ou en m'appuyant "
-        "sur le panneau (logs, apps, git). "
-        "Reform-moi juste ce que tu veux obtenir comme prochain résultat."
+        "Je t'écoute. Tu peux me parler normalement — concepts, plan, debug, ou "
+        "me demander d'aller chercher statut/logs dans le panel. "
+        "Qu'est-ce que tu veux obtenir comme prochain résultat ?"
     )

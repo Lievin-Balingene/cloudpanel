@@ -437,7 +437,9 @@ export function AiDeploymentAssistant() {
                 <p className="truncate text-sm font-semibold tracking-wide">AI Deployment Assistant</p>
                 <p className="truncate text-[10px] text-white/75">
                   {statusQuery.data
-                    ? `${statusQuery.data.provider}${statusQuery.data.available ? " · prêt" : " · mode local"}`
+                    ? statusQuery.data.provider === "mock"
+                      ? "mode local (mock) — installez Ollama pour un vrai LLM"
+                      : `${statusQuery.data.provider}${statusQuery.data.available ? " · prêt" : " · indisponible"}`
                     : "connexion…"}
                   {` · ${pageCtx.label}`}
                   {activePlaybook ? ` · ${activePlaybook.title}` : ""}
@@ -519,6 +521,12 @@ export function AiDeploymentAssistant() {
                       Page : {pageCtx.label}
                     </p>
                     <p className="truncate text-[10px] text-cp-muted">{pageCtx.need}</p>
+                    {statusQuery.data?.provider === "mock" && (
+                      <p className="mt-1 text-[10px] text-amber-700 dark:text-amber-300">
+                        LLM distant absent : réponses mock. Sur le serveur :{" "}
+                        <code className="rounded bg-black/10 px-1">ollama pull llama3.2</code> puis restart API.
+                      </p>
+                    )}
                   </div>
                   <button
                     type="button"
