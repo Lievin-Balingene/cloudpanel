@@ -5,7 +5,6 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { apiRequest } from "@/lib/api";
-import { useAuthStore } from "@/stores/auth";
 
 interface TerminalAccess {
   allowed: boolean;
@@ -13,6 +12,8 @@ interface TerminalAccess {
   home_directory: string;
   username: string;
   mode?: "root" | "jail";
+  ws_ticket?: string;
+  ws_ticket_expires_in?: number;
 }
 
 async function copyText(text: string) {
@@ -49,10 +50,12 @@ function readTerminalBuffer(term: Terminal): string {
 }
 
 export function WebTerminalManager({ title }: { title: string }) {
-  const token = useAuthStore((s) => s.accessToken);
   const { data: access, isLoading } = useQuery({
     queryKey: ["terminal-access"],
     queryFn: () => apiRequest<TerminalAccess>("/core/terminal/access/"),
+    // Ticket court : ne pas servir un ticket périmé depuis le cache
+    staleTime: 0,
+    gcTime: 0,
   });
   const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState("Initialisation…");
@@ -68,7 +71,7 @@ export function WebTerminalManager({ title }: { title: string }) {
   }, []);
 
   useEffect(() => {
-    if (!access?.allowed || !token || !terminalHostRef.current) return;
+    if (!access?.allowed || !access.ws_ticket || !terminalHostRef.current) return;
 
     const host = terminalHostRef.current;
     host.innerHTML = "";
@@ -99,7 +102,7 @@ export function WebTerminalManager({ title }: { title: string }) {
     fitAddonRef.current = fitAddon;
     setStatus("Connexion…");
 
-    const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+    const qs = `?ticket=${encodeURIComponent(access.ws_ticket)}`;
     const ws = new WebSocket(`${wsUrl}${qs}`);
     wsRef.current = ws;
     let disposed = false;
@@ -159,7 +162,7 @@ export function WebTerminalManager({ title }: { title: string }) {
       setStatus("Déconnecté");
       const why =
         evt.code === 4401
-          ? "auth refusée"
+          ? "auth refusée (ticket)"
           : evt.code === 4403
             ? "accès SSH non autorisé (package)"
             : evt.code === 4500
@@ -195,7 +198,7 @@ export function WebTerminalManager({ title }: { title: string }) {
       fitAddonRef.current = null;
       setConnected(false);
     };
-  }, [access?.allowed, access?.mode, access?.username, token, wsUrl]);
+  }, [access?.allowed, access?.mode, access?.username, access?.ws_ticket, wsUrl]);
 
   function focusTerminal() {
     terminalRef.current?.focus();

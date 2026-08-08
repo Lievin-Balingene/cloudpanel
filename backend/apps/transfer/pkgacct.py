@@ -37,6 +37,8 @@ class CpanelAccountBundle:
 
 
 def extract_archive(archive: Path, dest: Path) -> Path:
+    from apps.security.safe_archive import safe_extract_tar, safe_extract_zip
+
     dest.mkdir(parents=True, exist_ok=True)
     name = archive.name.lower()
     try:
@@ -44,19 +46,10 @@ def extract_archive(archive: Path, dest: Path) -> Path:
             import zipfile
 
             with zipfile.ZipFile(archive, "r") as zf:
-                zf.extractall(dest)
+                safe_extract_zip(zf, dest)
         else:
             with tarfile.open(archive, "r:*") as tf:
-                # Protection zip/tar slip
-                for member in tf.getmembers():
-                    member_path = (dest / member.name).resolve()
-                    if not str(member_path).startswith(str(dest.resolve())):
-                        raise VZoneAPIException(
-                            detail="Archive invalide (path traversal).",
-                            code="unsafe_archive",
-                            status_code=400,
-                        )
-                tf.extractall(dest)
+                safe_extract_tar(tf, dest)
     except VZoneAPIException:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -168,8 +161,10 @@ def _ensure_homedir(root: Path, warnings: list[str]) -> Path | None:
         target = root / "homedir"
         target.mkdir(parents=True, exist_ok=True)
         try:
+            from apps.security.safe_archive import safe_extract_tar
+
             with tarfile.open(nested, "r:*") as tf:
-                tf.extractall(target)
+                safe_extract_tar(tf, target)
             # parfois le tar contient un seul dossier
             children = [p for p in target.iterdir()]
             if len(children) == 1 and children[0].is_dir():

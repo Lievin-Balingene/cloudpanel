@@ -45,6 +45,7 @@ import {
 import { useAuthStore } from "@/stores/auth";
 import { useThemeStore } from "@/stores/theme";
 import { OperationProgressHost } from "@/components/OperationProgressHost";
+import { AiDeploymentAssistant } from "@/components/AiDeploymentAssistant";
 import { apiRequest } from "@/lib/api";
 import type { DashboardOverview } from "@/types";
 
@@ -565,6 +566,7 @@ export function WhmShell() {
         </main>
       </div>
       <OperationProgressHost />
+      <AiDeploymentAssistant />
     </div>
   );
 }

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from django.http import JsonResponse
 from django.utils.deprecation import MiddlewareMixin
+from django.conf import settings
 
 from apps.security.portal import assert_role_allowed_on_portal, request_portal
 
@@ -30,16 +31,37 @@ class PortalIsolationMiddleware(MiddlewareMixin):
         if any(request.path.startswith(p) for p in AUTH_EXEMPT_PREFIXES):
             return None
 
-        portal = request_portal(request)
-        if portal not in {"admin", "client", "webmail"}:
-            return None
-
         # Refresh : géré dans RefreshTokenView (body refresh, pas toujours Authorization)
         if request.path.startswith("/api/v1/auth/refresh/"):
             return None
 
         user = self._resolve_user(request)
         if user is None:
+            return None
+
+        portal = request_portal(request)
+        # Fail-closed : JWT authentifié sans en-tête nginx = accès direct API refusé
+        # (nginx pose toujours admin|client|shared|webmail). Désactivable en tests/dev.
+        require_header = bool(getattr(settings, "VZONE_PORTAL_REQUIRE_HEADER", True))
+        if portal not in {"admin", "client", "webmail", "shared"}:
+            if not require_header:
+                return None
+            return JsonResponse(
+                {
+                    "success": False,
+                    "error": {
+                        "code": "missing_portal",
+                        "message": (
+                            "En-tête portail manquant. Accédez au panel via nginx "
+                            "(ports Admin/Client), pas directement à l'API."
+                        ),
+                    },
+                },
+                status=403,
+            )
+
+        if portal == "shared":
+            # Hostname :80/:443 — pas d'isolation rôle stricte
             return None
 
         try:

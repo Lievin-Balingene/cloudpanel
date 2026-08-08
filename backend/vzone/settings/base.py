@@ -91,6 +91,7 @@ INSTALLED_APPS = [
     "apps.kubernetes",
     "apps.server_setup",
     "apps.transfer",
+    "apps.ai_assistant",
 ]
 
 MIDDLEWARE = [
@@ -322,7 +323,7 @@ VZONE_OLS_DEFAULT_ENGINE = env_bool("VZONE_OLS_DEFAULT_ENGINE", True)
 # Modules activés (extensible à l'installation)
 VZONE_ENABLED_MODULES = env_list(
     "VZONE_ENABLED_MODULES",
-    "core,accounts,packages,dns,dashboard,domains,files,ftp,cron,email,databases,python_apps,node_apps,php,git_deploy,docker_mgmt,backups,monitoring,firewall,security,wordpress,kubernetes,server_setup,transfer",
+    "core,accounts,packages,dns,dashboard,domains,files,ftp,cron,email,databases,python_apps,node_apps,php,git_deploy,docker_mgmt,backups,monitoring,firewall,security,wordpress,kubernetes,server_setup,transfer,ai_assistant",
 )
 
 # Email / webmail
@@ -437,7 +438,24 @@ VZONE_LINUX_USER_PROVISION = env("VZONE_LINUX_USER_PROVISION", "auto")  # auto|l
 VZONE_TERMINAL_FALLBACK_SAME_UID = env_bool("VZONE_TERMINAL_FALLBACK_SAME_UID", False)
 # Terminal WHM admin = shell root (style cPanel) — true par défaut
 VZONE_TERMINAL_ALLOW_ADMIN = env_bool("VZONE_TERMINAL_ALLOW_ADMIN", True)
+VZONE_TERMINAL_TICKET_TTL = env_int("VZONE_TERMINAL_TICKET_TTL", 60)
+# Prod derrière nginx : exiger X-Vzone-Portal. False en tests/dev local.
+VZONE_PORTAL_REQUIRE_HEADER = env_bool("VZONE_PORTAL_REQUIRE_HEADER", not DEBUG)
+VZONE_ALLOW_UNJAILED_SUBPROCESS = env_bool("VZONE_ALLOW_UNJAILED_SUBPROCESS", False)
 VZONE_CRON_JOBS_DIR = env("VZONE_CRON_JOBS_DIR", str(VZONE_DATA_ROOT / "cron" / "jobs"))
+
+# --- AI Deployment Assistant ---
+# auto = Ollama si dispo, sinon OpenAI-compat si URL, sinon mock local
+VZONE_AI_PROVIDER = env("VZONE_AI_PROVIDER", "auto")  # auto|ollama|openai_compat|mock
+VZONE_AI_OLLAMA_URL = env("VZONE_AI_OLLAMA_URL", "http://127.0.0.1:11434")
+VZONE_AI_OLLAMA_MODEL = env("VZONE_AI_OLLAMA_MODEL", "llama3.2")
+VZONE_AI_OPENAI_BASE_URL = env("VZONE_AI_OPENAI_BASE_URL", "")  # ex. http://127.0.0.1:1234/v1
+VZONE_AI_OPENAI_API_KEY = env("VZONE_AI_OPENAI_API_KEY", "")
+VZONE_AI_OPENAI_MODEL = env("VZONE_AI_OPENAI_MODEL", "gpt-4o-mini")
+VZONE_AI_TIMEOUT_SEC = env_int("VZONE_AI_TIMEOUT_SEC", 90)
+VZONE_AI_MAX_TOOL_ROUNDS = env_int("VZONE_AI_MAX_TOOL_ROUNDS", 4)
+VZONE_AI_PENDING_TTL_SEC = env_int("VZONE_AI_PENDING_TTL_SEC", 600)
+VZONE_AI_RATE_LIMIT_PER_MIN = env_int("VZONE_AI_RATE_LIMIT_PER_MIN", 20)
 VZONE_CRON_PROVISION_MODE = env("VZONE_CRON_PROVISION_MODE", "auto")  # auto|live|mock
 VZONE_CRON_RUN_USER = env("VZONE_CRON_RUN_USER", "vzone")
 

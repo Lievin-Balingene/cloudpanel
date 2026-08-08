@@ -21,6 +21,7 @@ from apps.accounts.models import User
 from apps.core.exceptions import QuotaExceeded, VZoneAPIException
 from apps.files.services import user_home
 from apps.python_apps.models import PythonApp
+from apps.security.runas import build_runas_cmd
 
 logger = logging.getLogger(__name__)
 
@@ -798,12 +799,15 @@ def start_python_app(app: PythonApp) -> PythonApp:
 
     cmd = _build_start_command(app, app_root, py)
     try:
+        from apps.accounts.linux_users import jail_username_for
+
         access_f = open(app_root / "logs" / "access.log", "a", encoding="utf-8")
         error_f = open(error_log, "a", encoding="utf-8")
+        jail = jail_username_for(app.owner)
+        spawn_cmd = build_runas_cmd(jail, cmd, env=env)
         proc = subprocess.Popen(
-            cmd,
+            spawn_cmd,
             cwd=str(app_root),
-            env=env,
             stdout=access_f,
             stderr=error_f,
             start_new_session=True,

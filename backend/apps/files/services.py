@@ -498,33 +498,15 @@ def decompress(user: User, archive_relative: str, destination_dir: str | None = 
 
 
 def _safe_extract_zip(zf: zipfile.ZipFile, dest: Path) -> None:
-    dest = dest.resolve()
-    for info in zf.infolist():
-        target = (dest / info.filename).resolve()
-        try:
-            target.relative_to(dest)
-        except ValueError as exc:
-            raise VZoneAPIException(
-                detail="Archive malveillante (zip slip).",
-                code="unsafe_archive",
-                status_code=400,
-            ) from exc
-    zf.extractall(dest)
+    from apps.security.safe_archive import safe_extract_zip
+
+    safe_extract_zip(zf, dest)
 
 
 def _safe_extract_tar(tf: tarfile.TarFile, dest: Path) -> None:
-    dest = dest.resolve()
-    for member in tf.getmembers():
-        target = (dest / member.name).resolve()
-        try:
-            target.relative_to(dest)
-        except ValueError as exc:
-            raise VZoneAPIException(
-                detail="Archive malveillante (tar slip).",
-                code="unsafe_archive",
-                status_code=400,
-            ) from exc
-    tf.extractall(dest)
+    from apps.security.safe_archive import safe_extract_tar
+
+    safe_extract_tar(tf, dest)
 
 
 def search_files(user: User, query: str, relative: str | None = None, limit: int = 200) -> list[dict]:

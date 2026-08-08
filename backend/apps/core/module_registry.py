@@ -106,6 +106,7 @@ class ModuleRegistry:
             "apps.kubernetes.module",
             "apps.server_setup.module",
             "apps.transfer.module",
+            "apps.ai_assistant.module",
         ]
         for path in module_paths:
             try:

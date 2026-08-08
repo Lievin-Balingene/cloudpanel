@@ -78,7 +78,7 @@ class SystemMetricsView(APIView):
 
 
 class WebTerminalAccessView(APIView):
-    """Retourne l'accès terminal (admin=root WHM, client=jail si package allow_ssh)."""
+    """Retourne l'accès terminal + ticket WS court (pas de JWT en query)."""
 
     permission_classes = [IsAuthenticated]
 
@@ -115,6 +115,13 @@ class WebTerminalAccessView(APIView):
                 root = getattr(settings, "VZONE_HOME_ROOT", "/home")
                 home = f"{root}/{jail}"
             display_user = jail or user.username
+
+        ticket_data: dict = {}
+        if allowed:
+            from apps.security.terminal_tickets import issue_ws_ticket
+
+            ticket_data = issue_ws_ticket(user_id=int(user.pk), mode=mode)
+
         return Response(
             {
                 "success": True,
@@ -125,6 +132,8 @@ class WebTerminalAccessView(APIView):
                     "home_directory": home,
                     "username": display_user,
                     "prompt_user": display_user,
+                    "ws_ticket": ticket_data.get("ticket", ""),
+                    "ws_ticket_expires_in": ticket_data.get("expires_in", 0),
                 },
             }
         )

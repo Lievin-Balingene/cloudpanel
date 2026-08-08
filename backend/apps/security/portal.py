@@ -20,7 +20,8 @@ def assert_role_allowed_on_portal(user: User, portal: str) -> None:
     Port Admin  → administrator | reseller uniquement.
     Port Client → client uniquement.
     Sinon → 403 wrong_portal (rejette l'auth / l'accès API).
-    shared / vide → pas de filtre (hostname :80/:443).
+    shared → pas de filtre rôle (hostname :80/:443, header explicite nginx).
+    vide / inconnu → refusé au niveau middleware (fail-closed).
     """
     portal = (portal or "").strip().lower()
     if portal not in {"admin", "client", "webmail"}:

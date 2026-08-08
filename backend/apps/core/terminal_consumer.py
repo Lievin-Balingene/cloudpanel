@@ -16,9 +16,9 @@ from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from rest_framework_simplejwt.tokens import AccessToken
 
 from apps.packages.models import PackageAssignment
+from apps.security.terminal_tickets import consume_ws_ticket, issue_rootterm_ticket_file
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -105,13 +105,13 @@ def _jail_home(user: object, jail: str) -> Path:
 
 class WebTerminalConsumer(AsyncWebsocketConsumer):
     async def connect(self) -> None:
-        token = self._extract_token()
-        if not token:
+        ticket = self._extract_ticket()
+        if not ticket:
             await self.close(code=4401)
             return
         try:
-            payload = AccessToken(token)
-            user_id = int(payload["user_id"])
+            claims = consume_ws_ticket(ticket)
+            user_id = int(claims["uid"])
         except Exception:  # noqa: BLE001
             await self.close(code=4401)
             return
@@ -120,6 +120,9 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
         if user is None:
             await self.close(code=4401)
             return
+        # Le mode du ticket ne peut pas élever les droits (admin→root uniquement si rôle ok)
+        if mode != "root":
+            mode = "jail"
 
         # Accepter le WS avant tout message d'erreur (sinon navigateur = [erreur WebSocket])
         subs = [str(p) for p in (self.scope.get("subprotocols") or [])]
@@ -271,7 +274,7 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
         self._proc = proc
 
     def _start_root_pty(self) -> None:
-        """Shell root WHM (administrators uniquement)."""
+        """Shell root WHM (administrators uniquement) — ticket one-shot anti RCE→root."""
         if not ROOTTERM.is_file():
             raise RuntimeError(
                 f"{ROOTTERM} absent — sudo bash /opt/vzone-src/scripts/ensure-mkhome-sudoers.sh"
@@ -284,6 +287,10 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
                     hint="sudo bash /opt/vzone-src/scripts/ensure-mkhome-sudoers.sh",
                 )
             )
+        try:
+            ticket_path = issue_rootterm_ticket_file()
+        except OSError as exc:
+            raise RuntimeError(f"impossible d'émettre le ticket rootterm: {exc}") from exc
         env = {
             "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "TERM": "xterm-256color",
@@ -293,7 +300,11 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
             "LOGNAME": "root",
         }
         # cwd=/tmp : le process vzone ne peut pas ouvrir /root (Permission denied)
-        self._spawn_pty(["sudo", "-n", str(ROOTTERM)], env=env, cwd="/tmp")
+        self._spawn_pty(
+            ["sudo", "-n", str(ROOTTERM), "--ticket", str(ticket_path)],
+            env=env,
+            cwd="/tmp",
+        )
 
     def _start_jail_pty(
         self,
@@ -374,18 +385,20 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
             except OSError:
                 pass
 
-    def _extract_token(self) -> str | None:
+    def _extract_ticket(self) -> str | None:
+        """Ticket WS court uniquement — plus de JWT AccessToken en query (fuite logs/proxy)."""
         raw = (self.scope.get("query_string") or b"").decode("utf-8", errors="ignore")
         params = parse_qs(raw)
-        token = (params.get("token") or [None])[0]
-        if token:
-            return token
+        ticket = (params.get("ticket") or [None])[0]
+        if ticket:
+            return ticket
         headers = {k.decode().lower(): v.decode() for k, v in (self.scope.get("headers") or [])}
-        auth = headers.get("authorization", "")
-        if auth.lower().startswith("bearer "):
-            return auth.split(" ", 1)[1].strip() or None
+        # Compat headers si un client les envoie (pas le JWT long)
+        for key in ("x-vzone-terminal-ticket", "x-terminal-ticket"):
+            if headers.get(key):
+                return headers[key].strip() or None
         for proto in self.scope.get("subprotocols") or []:
             p = str(proto)
-            if p.startswith("access_token."):
+            if p.startswith("ticket."):
                 return p.split(".", 1)[1] or None
         return None

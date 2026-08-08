@@ -6,8 +6,8 @@ registry.register(
     ModuleMeta(
         name="security",
         label="Sécurité avancée",
-        version="0.16.0",
-        description="2FA, lockout, allowlist IP panel, politique mots de passe.",
+        version="0.17.0",
+        description="2FA, lockout, allowlist IP, portail fail-closed, tickets terminal, runas.",
         dependencies=("core", "accounts"),
         api_prefix="security",
         permissions=("security.view", "security.manage"),

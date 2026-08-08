@@ -19,6 +19,8 @@ from apps.accounts.models import User
 from apps.core.exceptions import QuotaExceeded, VZoneAPIException
 from apps.files.services import user_home
 from apps.git_deploy.models import GitDeployLog, GitRepository
+from apps.security.git_safe import validate_git_branch, validate_git_remote_url
+from apps.security.runas import build_runas_cmd
 
 logger = logging.getLogger(__name__)
 
@@ -220,9 +222,8 @@ def create_repository(
     slug = name.strip().lower().replace(" ", "-")
     if not NAME_RE.match(slug):
         raise VZoneAPIException(detail="Nom de dépôt invalide.", code="invalid_name", status_code=400)
-    url = remote_url.strip()
-    if not url or not (url.startswith("http://") or url.startswith("https://") or url.startswith("git@")):
-        raise VZoneAPIException(detail="URL Git invalide.", code="invalid_url", status_code=400)
+    url = validate_git_remote_url(remote_url)
+    safe_branch = validate_git_branch(branch)
     if GitRepository.objects.filter(owner=owner, name=slug).exists():
         raise VZoneAPIException(detail="Ce dépôt existe déjà.", code="exists", status_code=400)
 
@@ -235,14 +236,22 @@ def create_repository(
             status_code=400,
         )
 
+    script_name = deploy_script.strip().replace("\\", "/")
+    if script_name.startswith("/") or ".." in Path(script_name).parts:
+        raise VZoneAPIException(
+            detail="Script de déploiement invalide.",
+            code="invalid_script",
+            status_code=400,
+        )
+
     repo = GitRepository.objects.create(
         owner=owner,
         name=slug,
         label=label or slug,
         remote_url=url,
-        branch=(branch or "main").strip() or "main",
+        branch=safe_branch,
         relative_path=rel,
-        deploy_script=deploy_script.strip(),
+        deploy_script=script_name,
         auto_deploy=auto_deploy,
         webhook_token=GitRepository.generate_webhook_token(),
         notes=notes,
@@ -273,8 +282,10 @@ def clone_repository(repo: GitRepository) -> GitRepository:
         else:
             repo_path.parent.mkdir(parents=True, exist_ok=True)
             env = _ssh_env(repo)
+            branch = validate_git_branch(repo.branch)
+            remote = validate_git_remote_url(repo.remote_url)
             _run_git(
-                ["clone", "--branch", repo.branch, "--single-branch", repo.remote_url, str(repo_path)],
+                ["clone", "--branch", branch, "--single-branch", "--", remote, str(repo_path)],
                 env=env,
             )
             message = f"cloned {repo.remote_url}@{repo.branch}"
@@ -312,10 +323,12 @@ def pull_repository(repo: GitRepository) -> GitRepository:
             message = f"mock pull origin/{repo.branch}"
         else:
             env = _ssh_env(repo)
-            _run_git(["fetch", "origin", repo.branch], cwd=repo_path, env=env)
-            _run_git(["checkout", repo.branch], cwd=repo_path, env=env)
-            _run_git(["pull", "origin", repo.branch], cwd=repo_path, env=env)
-            message = f"pulled origin/{repo.branch}"
+            branch = validate_git_branch(repo.branch)
+            # refs explicites — évite l'injection d'options via le nom de branche
+            _run_git(["fetch", "--", "origin", branch], cwd=repo_path, env=env)
+            _run_git(["checkout", "--", branch], cwd=repo_path, env=env)
+            _run_git(["pull", "--ff-only", "--", "origin", branch], cwd=repo_path, env=env)
+            message = f"pulled origin/{branch}"
             commit, _ = _read_head(repo_path)
 
         commit, msg = _read_head(repo_path)
@@ -357,8 +370,13 @@ def run_deploy_script(repo: GitRepository) -> GitRepository:
     if not script.exists():
         raise VZoneAPIException(detail="Script de déploiement introuvable.", code="no_script", status_code=400)
     try:
+        from apps.accounts.linux_users import jail_username_for
+
+        jail = jail_username_for(repo.owner)
+        inner = ["bash", str(script)] if script.suffix in {".sh", ""} else [str(script)]
+        cmd = build_runas_cmd(jail, inner)
         result = subprocess.run(
-            ["bash", str(script)] if script.suffix in {".sh", ""} else [str(script)],
+            cmd,
             check=True,
             capture_output=True,
             text=True,
@@ -406,9 +424,16 @@ def update_repository(
     if label is not None:
         repo.label = label
     if branch is not None:
-        repo.branch = branch.strip() or repo.branch
+        repo.branch = validate_git_branch(branch)
     if deploy_script is not None:
-        repo.deploy_script = deploy_script.strip()
+        script_name = deploy_script.strip().replace("\\", "/")
+        if script_name.startswith("/") or ".." in Path(script_name).parts:
+            raise VZoneAPIException(
+                detail="Script de déploiement invalide.",
+                code="invalid_script",
+                status_code=400,
+            )
+        repo.deploy_script = script_name
     if auto_deploy is not None:
         repo.auto_deploy = auto_deploy
     if notes is not None:

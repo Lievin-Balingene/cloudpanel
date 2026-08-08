@@ -1,8 +1,8 @@
-# Homes + terminaux : helpers root allowlistés pour le user panel « vzone ».
+# Homes + terminaux + runas : helpers root allowlistés pour « vzone ».
 # Installé par scripts/ensure-mkhome-sudoers.sh
 #
-# - Clients  : vzone-jailterm (bubblewrap, UID client, home only) — PAS de root
-# - Admin WHM: vzone-rootterm (shell root) — comme cPanel WHM Terminal
+# - Clients  : vzone-jailterm / vzone-runas → UID client uniquement
+# - Admin WHM: vzone-rootterm --ticket <path> (one-shot, pas d'appel libre)
 
 Defaults:vzone !requiretty
 Defaults:vzone !authenticate
@@ -13,5 +13,9 @@ vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-mkhome
 # Terminal client jailé
 vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-jailterm, /usr/local/sbin/vzone-jailterm *
 
-# Terminal admin WHM (root)
-vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-rootterm, /usr/local/sbin/vzone-rootterm --check
+# Exécution apps / git deploy sous UID client
+vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-runas, /usr/local/sbin/vzone-runas *
+
+# Terminal admin WHM — UNIQUEMENT avec --ticket (pas d'appel nu → root)
+vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-rootterm --check
+vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-rootterm --ticket *

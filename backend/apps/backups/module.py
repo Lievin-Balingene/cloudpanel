@@ -6,7 +6,7 @@ registry.register(
     ModuleMeta(
         name="backups",
         label="Backups",
-        version="0.33.0",
+        version="0.33.1",
         description="Sauvegardes Restic chiffrées via Rclone (local/S3/B2/R2/SFTP/Drive), async Celery, rétention.",
         dependencies=("core", "accounts"),
         api_prefix="backups",

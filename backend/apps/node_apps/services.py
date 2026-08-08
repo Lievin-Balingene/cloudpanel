@@ -19,6 +19,7 @@ from apps.accounts.models import User
 from apps.core.exceptions import QuotaExceeded, VZoneAPIException
 from apps.files.services import user_home
 from apps.node_apps.models import NodeApp
+from apps.security.runas import build_runas_cmd
 
 logger = logging.getLogger(__name__)
 
@@ -342,12 +343,15 @@ def start_node_app(app: NodeApp) -> NodeApp:
 
     cmd = [npm_binary(), "run", app.start_script]
     try:
+        from apps.accounts.linux_users import jail_username_for
+
         access = open(app_root / "logs" / "access.log", "a", encoding="utf-8")
         error = open(app_root / "logs" / "error.log", "a", encoding="utf-8")
+        jail = jail_username_for(app.owner)
+        spawn_cmd = build_runas_cmd(jail, cmd, env=env)
         proc = subprocess.Popen(
-            cmd,
+            spawn_cmd,
             cwd=str(app_root),
-            env=env,
             stdout=access,
             stderr=error,
             start_new_session=True,

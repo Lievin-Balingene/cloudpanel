@@ -32,6 +32,12 @@ fi
 install -m 755 "${REPO_DIR}/scripts/vzone-mkhome.sh" /usr/local/sbin/vzone-mkhome
 install -m 755 "${REPO_DIR}/scripts/vzone-jailterm.sh" /usr/local/sbin/vzone-jailterm
 install -m 755 "${REPO_DIR}/scripts/vzone-rootterm.sh" /usr/local/sbin/vzone-rootterm
+install -m 755 "${REPO_DIR}/scripts/vzone-runas.sh" /usr/local/sbin/vzone-runas
+
+# Tickets one-shot rootterm (écrits par API vzone, consommés par rootterm)
+mkdir -p /var/lib/vzone/terminal/tickets
+chown "${VZONE_USER}:${VZONE_USER}" /var/lib/vzone/terminal /var/lib/vzone/terminal/tickets 2>/dev/null || true
+chmod 700 /var/lib/vzone/terminal /var/lib/vzone/terminal/tickets
 
 # Remplace l'ancien fichier terminal-only s'il existe
 rm -f /etc/sudoers.d/vzone-terminal
@@ -107,6 +113,14 @@ if id -u "${VZONE_USER}" >/dev/null 2>&1; then
   else
     echo "[vzone] Avertissement: smoke-test rootterm échoué" >&2
   fi
+  if [[ -n "$sample" ]]; then
+    if runuser -u "${VZONE_USER}" -- sudo -n /usr/local/sbin/vzone-runas "$sample" -- /bin/true 2>/dev/null \
+      || su -s /bin/bash "${VZONE_USER}" -c "sudo -n /usr/local/sbin/vzone-runas ${sample} -- /bin/true" 2>/dev/null; then
+      echo "[vzone] smoke-test runas OK (${VZONE_USER} → ${sample})"
+    else
+      echo "[vzone] Avertissement: smoke-test runas échoué pour ${sample}" >&2
+    fi
+  fi
 fi
 
-echo "[vzone] jail OK → mkhome + jailterm + rootterm + /etc/sudoers.d/vzone-panel"
+echo "[vzone] jail OK → mkhome + jailterm + rootterm + runas + /etc/sudoers.d/vzone-panel"
