@@ -78,7 +78,7 @@ interface JailCommand {
 
 const STARTERS = [
   { label: "Mes apps Python", prompt: "Liste moi mes applications Python" },
-  { label: "Statut des apps", prompt: "Montre le statut de mes applications" },
+  { label: "Arrêter une app", prompt: "Stoppe mon application Python" },
   { label: "Analyser les logs", prompt: "Analyse mes logs d'erreur" },
   { label: "Déployer Django", prompt: "Aide-moi à déployer une app Django depuis GitHub" },
 ] as const;
@@ -165,8 +165,8 @@ function guessCompletedSteps(playbook: Playbook | null, messages: AiMessage[], t
 
 const WELCOME =
   "Salut ! Je suis **V-zone AI**.\n\n" +
-  "Pose une question, décris un bug, ou choisis une action rapide ci-dessous. " +
-  "Pour les actions sensibles (restart, jail…), je te demanderai confirmation.";
+  "Je peux lister, **arrêter / démarrer** tes apps, lire les logs, ou guider un déploiement. " +
+  "Les actions sensibles demandent ta confirmation (bouton Exécuter).";
 
 function providerLabel(provider?: string, available?: boolean): { text: string; tone: "ok" | "warn" | "muted" } {
   if (!provider) return { text: "Connexion…", tone: "muted" };

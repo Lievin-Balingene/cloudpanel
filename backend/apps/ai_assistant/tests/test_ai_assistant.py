@@ -1,6 +1,8 @@
 """Tests assistant IA déploiement."""
 from __future__ import annotations
 
+import json
+
 import pytest
 from django.urls import reverse
 from rest_framework.test import APIClient
@@ -38,6 +40,9 @@ def test_tools_whitelist_loaded():
     assert get_tool("get_server_info") is not None
     assert get_tool("restart_application") is not None
     assert get_tool("restart_application").dangerous is True
+    assert get_tool("stop_application") is not None
+    assert get_tool("stop_application").dangerous is True
+    assert get_tool("start_application") is not None
     assert get_tool("rm_rf") is None
 
 
@@ -103,3 +108,54 @@ def test_mock_list_apps_intent_calls_tool():
     )
     assert r.tool_calls
     assert r.tool_calls[0].name == "check_application_status"
+
+
+def test_mock_stop_intent_lists_then_stops():
+    from apps.ai_assistant.providers import ChatMessage, ToolSpec
+    from apps.ai_assistant.providers.mock import MockProvider
+
+    p = MockProvider()
+    tools = [
+        ToolSpec(
+            name="check_application_status",
+            description="statut",
+            parameters={"type": "object", "properties": {}},
+        ),
+        ToolSpec(
+            name="stop_application",
+            description="stop",
+            parameters={"type": "object", "properties": {}},
+            dangerous=True,
+        ),
+    ]
+    r1 = p.chat(
+        [ChatMessage(role="user", content="peux tu stopper mon application python??")],
+        tools=tools,
+    )
+    assert r1.tool_calls
+    assert r1.tool_calls[0].name == "check_application_status"
+
+    status_payload = {
+        "ok": True,
+        "data": {
+            "python_apps": [
+                {"id": 7, "name": "demo", "status": "running", "port": 8001, "domain": "x.test"}
+            ],
+            "node_apps": [],
+        },
+    }
+    r2 = p.chat(
+        [
+            ChatMessage(role="user", content="je veux que tu eteigne cette application"),
+            ChatMessage(
+                role="tool",
+                name="check_application_status",
+                content=json.dumps(status_payload),
+            ),
+        ],
+        tools=tools,
+    )
+    assert r2.tool_calls
+    assert r2.tool_calls[0].name == "stop_application"
+    assert r2.tool_calls[0].arguments.get("app_id") == 7
+    assert r2.tool_calls[0].arguments.get("runtime") == "python"

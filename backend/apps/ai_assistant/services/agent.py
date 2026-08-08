@@ -444,6 +444,8 @@ def _create_pending(
     ttl = int(getattr(settings, "VZONE_AI_PENDING_TTL_SEC", 600) or 600)
     descriptions = {
         "restart_application": "Redémarrer l'application",
+        "stop_application": "Arrêter l'application",
+        "start_application": "Démarrer l'application",
         "install_dependencies": "Installer les dépendances",
         "deploy_application": "Déployer (git pull) le dépôt",
         "create_python_app_from_git": "Créer app Python depuis Git (clone + setup)",

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+from typing import Any
 from uuid import uuid4
 
 from apps.ai_assistant.providers import ChatMessage, ChatResult, ToolCallRequest, ToolSpec
@@ -37,8 +38,11 @@ class MockProvider:
             last_user = user_turns[-1]
         last_user_l = last_user.lower()
 
-        # Après tool(s) → réponse lisible (pas un dump JSON brut)
+        # Après tool(s) → éventuellement enchaîner stop/start/restart, sinon synthèse
         if messages and messages[-1].role == "tool":
+            follow = _lifecycle_after_tools(messages, tool_names, last_user_l)
+            if follow is not None:
+                return follow
             return ChatResult(
                 content=_synthesize_tools(messages),
                 provider=self.name,
@@ -46,7 +50,7 @@ class MockProvider:
             )
 
         # Intentions d'action — AVANT le bavardage multi-tours
-        intent = _detect_intent(last_user_l, messages)
+        intent = _detect_intent(last_user_l, messages, tool_names)
         if intent:
             calls = _pack_calls(tool_names, intent["tools"])
             if calls:
@@ -64,12 +68,103 @@ class MockProvider:
         )
 
 
-def _detect_intent(last_user_l: str, messages: list[ChatMessage]) -> dict | None:
+def _lifecycle_verb(text: str) -> str | None:
+    """Retourne stop|start|restart selon l'intention utilisateur."""
+    t = text.lower()
+    if any(
+        k in t
+        for k in (
+            "stop",
+            "stopp",
+            "arrêt",
+            "arret",
+            "arrêter",
+            "arreter",
+            "éteindre",
+            "eteindre",
+            "éteins",
+            "eteins",
+            "éteigne",
+            "eteigne",
+            "éteint",
+            "eteint",
+            "couper",
+            "coupe ",
+            "kill",
+            "shutdown",
+        )
+    ):
+        return "stop"
+    if any(
+        k in t
+        for k in (
+            "redémarr",
+            "redemarr",
+            "restart",
+            "relance",
+            "reboot",
+        )
+    ):
+        return "restart"
+    if any(
+        k in t
+        for k in (
+            "démarr",
+            "demarr",
+            "start",
+            "lancer",
+            "lance ",
+            "allumer",
+            "réactive",
+            "reactive",
+        )
+    ):
+        return "start"
+    return None
+
+
+def _extract_app_id(text: str) -> int | None:
+    m = re.search(r"\b(?:id\s*[:=]?\s*|#\s*|app\s+)(\d{1,9})\b", text.lower())
+    if m:
+        return int(m.group(1))
+    m2 = re.search(r"\b(\d{1,9})\b", text)
+    # Evite de prendre un port / année au hasard : seulement si "app" voisin
+    if m2 and any(k in text.lower() for k in ("app", "application", "id")):
+        return int(m2.group(1))
+    return None
+
+
+def _detect_intent(
+    last_user_l: str,
+    messages: list[ChatMessage],
+    tool_names: set[str],
+) -> dict | None:
     page_blob = " ".join(
         (m.content or "").lower()
         for m in messages
         if m.role == "system" and "page actuelle" in (m.content or "").lower()
     )
+
+    lifecycle = _lifecycle_verb(last_user_l)
+    if lifecycle:
+        runtime = _guess_runtime(last_user_l + " " + page_blob)
+        app_id = _extract_app_id(last_user_l)
+        tool_map = {
+            "stop": "stop_application",
+            "start": "start_application",
+            "restart": "restart_application",
+        }
+        tool = tool_map[lifecycle]
+        labels = {"stop": "arrêt", "start": "démarrage", "restart": "redémarrage"}
+        if app_id and tool in tool_names:
+            return {
+                "say": f"Je prépare le {labels[lifecycle]} de l'app #{app_id} — confirmation requise…",
+                "tools": [(tool, {"runtime": runtime, "app_id": app_id})],
+            }
+        return {
+            "say": f"Je regarde tes apps pour préparer le {labels[lifecycle]}…",
+            "tools": [("check_application_status", {})],
+        }
 
     wants_list = any(
         k in last_user_l
@@ -162,6 +257,146 @@ def _detect_intent(last_user_l: str, messages: list[ChatMessage]) -> dict | None
     return None
 
 
+def _apps_from_tool_payload(data: dict[str, Any]) -> tuple[list[dict], list[dict]]:
+    payload = data.get("data") if isinstance(data.get("data"), dict) else data
+    if not isinstance(payload, dict):
+        return [], []
+    py = [a for a in (payload.get("python_apps") or []) if isinstance(a, dict)]
+    node = [a for a in (payload.get("node_apps") or []) if isinstance(a, dict)]
+    return py, node
+
+
+def _lifecycle_after_tools(
+    messages: list[ChatMessage],
+    tool_names: set[str],
+    last_user_l: str,
+) -> ChatResult | None:
+    action = _lifecycle_verb(last_user_l)
+    if not action:
+        return None
+
+    # Ne pas re-déclencher si on vient déjà d'un stop/start/restart
+    for m in reversed(messages):
+        if m.role != "tool":
+            break
+        if (m.name or "") in {"stop_application", "start_application", "restart_application"}:
+            return None
+
+    py_apps: list[dict] = []
+    node_apps: list[dict] = []
+    for m in reversed(messages):
+        if m.role != "tool":
+            break
+        if (m.name or "") != "check_application_status":
+            continue
+        try:
+            data = json.loads(m.content or "{}")
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            py_apps, node_apps = _apps_from_tool_payload(data)
+            break
+
+    runtime = _guess_runtime(last_user_l)
+    pool = py_apps if runtime != "node" else node_apps
+    if runtime == "python" and not pool and node_apps and "python" not in last_user_l:
+        # fallback si l'utilisateur dit juste "cette application"
+        pool = py_apps or node_apps
+        if not py_apps and node_apps:
+            runtime = "node"
+    if "cette" in last_user_l or "cet " in last_user_l:
+        # Préfère les apps running pour stop, stopped pour start
+        pass
+
+    app_id = _extract_app_id(last_user_l)
+    chosen: dict | None = None
+    if app_id:
+        for a in pool or (py_apps + node_apps):
+            if int(a.get("id") or 0) == app_id:
+                chosen = a
+                if a in node_apps:
+                    runtime = "node"
+                elif a in py_apps:
+                    runtime = "python"
+                break
+
+    if chosen is None:
+        candidates = list(pool or [])
+        if action == "stop":
+            candidates = [
+                a
+                for a in candidates
+                if str(a.get("status") or "").lower() in {"running", "error", "active"}
+            ] or candidates
+        elif action == "start":
+            candidates = [
+                a
+                for a in candidates
+                if str(a.get("status") or "").lower() in {"stopped", "error", "pending"}
+            ] or candidates
+        # Match par nom dans le message
+        for a in candidates:
+            name = str(a.get("name") or "").lower()
+            if name and name in last_user_l:
+                chosen = a
+                break
+        if chosen is None and len(candidates) == 1:
+            chosen = candidates[0]
+        elif chosen is None and len(candidates) > 1:
+            lines = [_format_apps({"data": {"python_apps": py_apps, "node_apps": node_apps}})]
+            lines.append("")
+            lines.append(
+                f"Plusieurs apps trouvées. Dis-moi laquelle { 'arrêter' if action == 'stop' else 'démarrer' if action == 'start' else 'redémarrer' } "
+                f"avec son **id** (ex. `stop app {candidates[0].get('id')}`)."
+            )
+            return ChatResult(
+                content="\n".join(lines),
+                provider="mock",
+                model="mock-coach",
+            )
+        elif chosen is None:
+            return ChatResult(
+                content=(
+                    _format_apps({"data": {"python_apps": py_apps, "node_apps": node_apps}})
+                    + "\n\nAucune app cible pour cette action. "
+                    "Crée une app ou précise un **id**."
+                ),
+                provider="mock",
+                model="mock-coach",
+            )
+
+    tool_map = {
+        "stop": "stop_application",
+        "start": "start_application",
+        "restart": "restart_application",
+    }
+    tool = tool_map[action]
+    if tool not in tool_names or not chosen:
+        return None
+    aid = int(chosen.get("id") or 0)
+    name = str(chosen.get("name") or f"#{aid}")
+    labels = {
+        "stop": "arrêter",
+        "start": "démarrer",
+        "restart": "redémarrer",
+    }
+    return ChatResult(
+        content=(
+            f"Je prépare l'action pour **{labels[action]}** `{name}` "
+            f"(id {aid}, {runtime}). Clique **Exécuter** pour confirmer."
+        ),
+        tool_calls=[
+            ToolCallRequest(
+                id=str(uuid4()),
+                name=tool,
+                arguments={"runtime": runtime if runtime in {"python", "node"} else "python", "app_id": aid},
+            )
+        ],
+        provider="mock",
+        model="mock-coach",
+    )
+
+
 def _synthesize_tools(messages: list[ChatMessage]) -> str:
     """Agrège les derniers résultats tool en texte utile."""
     tool_msgs: list[ChatMessage] = []
@@ -181,8 +416,24 @@ def _synthesize_tools(messages: list[ChatMessage]) -> str:
         if not isinstance(data, dict):
             data = {"raw": str(data)[:800]}
 
+        if data.get("pending_confirmation"):
+            parts.append(
+                f"Action **`{name}`** en attente de confirmation dans le panneau "
+                f"(bouton **Exécuter**)."
+            )
+            continue
+
         if name == "check_application_status":
             parts.append(_format_apps(data))
+        elif name in {"stop_application", "start_application", "restart_application"}:
+            payload = data.get("data") if isinstance(data.get("data"), dict) else data
+            if data.get("ok") and isinstance(payload, dict):
+                parts.append(
+                    f"**OK** — `{payload.get('name')}` est maintenant "
+                    f"**{payload.get('status')}**."
+                )
+            else:
+                parts.append(f"**Échec** `{name}` : {data.get('error') or 'erreur'}")
         elif name in {"get_deployment_context", "get_server_info"}:
             parts.append(_format_context(name, data))
         elif "log" in name or "analyze" in name:
@@ -197,7 +448,7 @@ def _synthesize_tools(messages: list[ChatMessage]) -> str:
                 parts.append(f"**{name}** (ok={ok}) :\n```json\n{snippet}\n```")
 
     body = "\n\n".join(p for p in parts if p) or "Aucune donnée retournée par les outils."
-    return body + "\n\nTu veux les logs d'une app, un redémarrage, ou autre chose ?"
+    return body + "\n\nAutre chose ? (stop / start / logs / liste)"
 
 
 def _format_apps(data: dict) -> str:
@@ -216,8 +467,8 @@ def _format_apps(data: dict) -> str:
             err = (a.get("last_error") or "").strip()
             extra = f" — ⚠ {err[:80]}" if err else ""
             lines.append(
-                f"- `{a.get('name')}` — **{a.get('status')}** — port {a.get('port')} — "
-                f"domaine {domain}{extra}"
+                f"- **id {a.get('id')}** `{a.get('name')}` — **{a.get('status')}** — "
+                f"port {a.get('port')} — domaine {domain}{extra}"
             )
     lines.append("")
     lines.append(f"**Node.js** ({len(node)})")
@@ -230,7 +481,8 @@ def _format_apps(data: dict) -> str:
             err = (a.get("last_error") or "").strip()
             extra = f" — ⚠ {err[:80]}" if err else ""
             lines.append(
-                f"- `{a.get('name')}` — **{a.get('status')}** — port {a.get('port')}{extra}"
+                f"- **id {a.get('id')}** `{a.get('name')}` — **{a.get('status')}** — "
+                f"port {a.get('port')}{extra}"
             )
     return "\n".join(lines)
 
@@ -274,21 +526,20 @@ def _converse(last_user: str, prev_assistant: str, user_turns: list[str]) -> str
     if re.search(r"\b(bonjour|salut|hello|hey|coucou)\b", low) and len(low) < 40:
         return (
             "Salut ! Je suis **V-zone AI** (mode local).\n\n"
-            "Demande concrète = j'agis tout de suite, par ex. :\n"
+            "Je peux agir tout de suite, par ex. :\n"
             "- *liste mes applications Python*\n"
-            "- *montre le statut de mes apps*\n"
+            "- *stoppe mon application Python*\n"
             "- *analyse mes logs*\n\n"
             "Qu'est-ce que tu veux faire ?"
         )
 
     if any(k in low for k in ("merci", "thanks", "nickel", "parfait", "super")):
-        return "Avec plaisir. Tu veux enchaîner (logs, domaine, déploiement…) ?"
+        return "Avec plaisir. Tu veux enchaîner (stop, start, logs…) ?"
 
     if any(k in low for k in ("qui es-tu", "tu peux quoi", "que peux-tu", "tes capacités")):
         return (
-            "Assistant V-zone (mode local sans LLM) : je liste apps/domaines, lis les logs, "
-            "et propose des actions (restart, install) **après confirmation**.\n\n"
-            "Essaie : *liste mes applications Python*."
+            "Assistant V-zone (mode local) : liste apps, logs, et **stop / start / restart** "
+            "après ta confirmation.\n\nEssaie : *stoppe mon application Python*."
         )
 
     if any(k in low for k in ("wsgi", "asgi", "passenger", "gunicorn", "uvicorn")):
@@ -309,19 +560,18 @@ def _converse(last_user: str, prev_assistant: str, user_turns: list[str]) -> str
             "OK pour le déploiement"
             + (f" (`{url}`)" if url else "")
             + ". Dis-moi : runtime (Django/Node), domaine, besoin d'une base ? "
-            "Ou *liste mes apps* si tu veux voir l'existant."
+            "Ou *liste mes apps* / *stoppe mon app Python*."
         )
 
-    # Multi-tours : rester utile, pas "que préfères-tu ?" en boucle
     if len(user_turns) >= 2 and prev_assistant:
         return (
             f"Bien reçu : « {text[:240]} ».\n\n"
-            "En mode local je suis meilleur sur les **actions panel**. "
-            "Ex. *liste mes applications Python*, *statut*, *logs Python*."
+            "Je peux **lister**, **arrêter**, **démarrer** ou lire les **logs**. "
+            "Ex. *stoppe mon application Python*."
         )
 
     return (
         f"Compris : « {text[:280]} ».\n\n"
-        "Pour du concret tout de suite : *liste mes applications Python* "
-        "ou *analyse mes logs*."
+        "Essaie une action claire : *liste mes applications Python*, "
+        "*stoppe mon application Python*, ou *analyse mes logs*."
     )

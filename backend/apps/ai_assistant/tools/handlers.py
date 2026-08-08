@@ -430,6 +430,88 @@ def restart_application(user: User, params: dict[str, Any]) -> dict[str, Any]:
 
 
 @register_tool(
+    name="stop_application",
+    description="Arrête (stop) une application Python ou Node (confirmation requise).",
+    parameters={
+        "type": "object",
+        "properties": {
+            "runtime": {"type": "string", "enum": ["python", "node"]},
+            "app_id": {"type": "integer"},
+        },
+        "required": ["runtime", "app_id"],
+        "additionalProperties": False,
+    },
+    dangerous=True,
+)
+def stop_application(user: User, params: dict[str, Any]) -> dict[str, Any]:
+    runtime = str(params.get("runtime") or "").lower()
+    app_id = int(params.get("app_id") or 0)
+    if not app_id:
+        return _err("app_id requis", "invalid_params")
+    try:
+        if runtime == "node":
+            from apps.node_apps.services import stop_node_app
+
+            app = _owned_node(user, app_id)
+            if not app:
+                return _err("App Node introuvable", "not_found")
+            app = stop_node_app(app)
+        else:
+            from apps.python_apps.services import stop_python_app
+
+            app = _owned_python(user, app_id)
+            if not app:
+                return _err("App Python introuvable", "not_found")
+            app = stop_python_app(app)
+        return _ok({"app_id": app.pk, "name": app.name, "status": app.status, "action": "stop"})
+    except VZoneAPIException as exc:
+        return _err(str(exc.detail), getattr(exc, "default_code", "error") or "error")
+    except Exception as exc:  # noqa: BLE001
+        return _err(str(exc))
+
+
+@register_tool(
+    name="start_application",
+    description="Démarre une application Python ou Node (confirmation requise).",
+    parameters={
+        "type": "object",
+        "properties": {
+            "runtime": {"type": "string", "enum": ["python", "node"]},
+            "app_id": {"type": "integer"},
+        },
+        "required": ["runtime", "app_id"],
+        "additionalProperties": False,
+    },
+    dangerous=True,
+)
+def start_application(user: User, params: dict[str, Any]) -> dict[str, Any]:
+    runtime = str(params.get("runtime") or "").lower()
+    app_id = int(params.get("app_id") or 0)
+    if not app_id:
+        return _err("app_id requis", "invalid_params")
+    try:
+        if runtime == "node":
+            from apps.node_apps.services import start_node_app
+
+            app = _owned_node(user, app_id)
+            if not app:
+                return _err("App Node introuvable", "not_found")
+            app = start_node_app(app)
+        else:
+            from apps.python_apps.services import start_python_app
+
+            app = _owned_python(user, app_id)
+            if not app:
+                return _err("App Python introuvable", "not_found")
+            app = start_python_app(app)
+        return _ok({"app_id": app.pk, "name": app.name, "status": app.status, "action": "start"})
+    except VZoneAPIException as exc:
+        return _err(str(exc.detail), getattr(exc, "default_code", "error") or "error")
+    except Exception as exc:  # noqa: BLE001
+        return _err(str(exc))
+
+
+@register_tool(
     name="install_dependencies",
     description="Installe les dépendances (pip/npm) d'une app (confirmation requise).",
     parameters={
