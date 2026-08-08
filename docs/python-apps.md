@@ -10,6 +10,19 @@
 - Commande SSH : `source …/virtualenv/…/activate && cd <application_root>`
 - Start / stop / restart, pip install, logs, quotas
 
+## Permissions (jail / SQLite)
+
+Les apps démarrent sous l’UID client (`vzone-runas`). Le panel exécute
+`vzone-fix-app-perms` (sudo) à la **création**, après **pip**, et avant chaque
+**start** pour que `db.sqlite3`, `logs/`, `media/` appartiennent au compte jail.
+
+Sans ce helper : `sudo bash scripts/ensure-mkhome-sudoers.sh`
+
+Réparation manuelle :
+```bash
+sudo /usr/local/sbin/vzone-fix-app-perms <user> /home/<user>/<app_root>
+```
+
 ## Déploiement Django (identique cPanel)
 
 1. CREATE APPLICATION → renseigner **Application root** (ex. `mydjango`)

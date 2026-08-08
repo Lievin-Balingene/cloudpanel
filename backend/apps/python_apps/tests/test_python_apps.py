@@ -242,6 +242,20 @@ def test_is_runas_infra_error_detects_missing_runuser():
 
 
 @pytest.mark.unit
+@pytest.mark.django_db
+def test_fix_client_paths_noop_in_mock(settings, tmp_path):
+    from apps.python_apps.services import fix_client_paths
+
+    settings.VZONE_PYTHON_PROVISION_MODE = "mock"
+    user = UserFactory(username="permuser")
+    root = tmp_path / "app"
+    root.mkdir()
+    (root / "db.sqlite3").write_text("", encoding="utf-8")
+    # Ne doit pas lever (mode mock)
+    fix_client_paths(user, root, required=True, verify_sqlite_in=root)
+
+
+@pytest.mark.unit
 def test_iter_sqlite_files_finds_root_db(tmp_path):
     from apps.python_apps.services import _iter_sqlite_files
 

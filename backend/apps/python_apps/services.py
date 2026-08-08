@@ -464,6 +464,8 @@ def create_python_app(
     rel, app_root = resolve_app_root(owner, rel)
     _scaffold(app_root, mode, framework)
     venv_dir = create_venv(cpanel_venv_path(owner, slug, python_version), python_version)
+    # Propriétaire = compte jail dès la création (évite SQLite/logs readonly plus tard)
+    fix_client_paths(owner, app_root, venv_dir, venv_dir.parent)
 
     if not entrypoint:
         entrypoint = "asgi:application" if mode == PythonApp.Mode.ASGI else "passenger_wsgi.py"
@@ -532,11 +534,23 @@ def install_requirements(app: PythonApp) -> dict:
     py = venv_python(venv_dir)
     if provision_mode() == "mock" or not py.exists():
         log = app_root / "logs" / "pip.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
         log.write_text(f"mock install -r {req.name}\n", encoding="utf-8")
         return {"mode": "mock", "requirements": str(req), "log": str(log)}
-    result = _run([str(py), "-m", "pip", "install", "-r", str(req)], cwd=app_root)
+    # Ownership avant pip jailé
+    fix_client_paths(app.owner, app_root, venv_dir)
+    result = _run_as_owner(
+        app.owner,
+        [str(py), "-m", "pip", "install", "-r", str(req)],
+        cwd=app_root,
+    )
     log = app_root / "logs" / "pip.log"
-    log.write_text(result.stdout + "\n" + result.stderr, encoding="utf-8")
+    try:
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text(result.stdout + "\n" + result.stderr, encoding="utf-8")
+    except OSError:
+        pass
+    fix_client_paths(app.owner, app_root, venv_dir)
     return {"mode": "live", "requirements": str(req), "log": str(log)}
 
 
@@ -570,12 +584,17 @@ def ensure_runtime_deps(app: PythonApp, app_root: Path, py: Path) -> None:
         return
     log = app_root / "logs" / "pip.log"
     log.parent.mkdir(parents=True, exist_ok=True)
+    fix_client_paths(app.owner, app_root, Path(app.venv_path) if app.venv_path else app_root)
     try:
-        result = _run([str(py), "-m", "pip", "install", *missing], cwd=app_root)
-        log.write_text(
-            f"# auto-install avant Start: {' '.join(missing)}\n{result.stdout}\n{result.stderr}\n",
-            encoding="utf-8",
-        )
+        result = _run_as_owner(app.owner, [str(py), "-m", "pip", "install", *missing], cwd=app_root)
+        try:
+            log.write_text(
+                f"# auto-install avant Start: {' '.join(missing)}\n{result.stdout}\n{result.stderr}\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+        fix_client_paths(app.owner, app_root)
     except VZoneAPIException as exc:
         stderr = (exc.extra or {}).get("stderr") or str(exc)
         raise VZoneAPIException(
@@ -1084,61 +1103,113 @@ def _iter_sqlite_files(app_root: Path) -> list[Path]:
     return out
 
 
-def _ensure_app_data_writable(owner: User, app_root: Path) -> None:
-    """
-    Après passage en vzone-runas, le process est le compte client.
-    Les fichiers créés par « vzone » (sqlite, media…) doivent appartenir au jail.
-    """
+FIX_APP_PERMS = Path("/usr/local/sbin/vzone-fix-app-perms")
+
+
+def _jail_name(owner: User) -> str:
     try:
         from apps.accounts.linux_users import jail_username_for
 
-        jail = jail_username_for(owner)
+        return jail_username_for(owner)
     except Exception:  # noqa: BLE001
-        jail = (owner.username or "").strip().lower()
-    if not jail or provision_mode() == "mock":
+        return (owner.username or "").strip().lower()
+
+
+def fix_client_paths(
+    owner: User,
+    *paths: Path,
+    required: bool = False,
+    verify_sqlite_in: Path | None = None,
+) -> None:
+    """
+    Réattribue les chemins au compte jail (via sudo vzone-fix-app-perms).
+
+    À appeler après toute écriture panel (scaffold, pip, logs) pour éviter
+    « attempt to write a readonly database » / PermissionError sous gunicorn runas.
+    """
+    if provision_mode() == "mock":
+        return
+    jail = _jail_name(owner)
+    if not jail:
         return
 
-    fix_bin = Path("/usr/local/sbin/vzone-fix-app-perms")
-    if fix_bin.is_file():
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for raw in paths:
+        if raw is None:
+            continue
         try:
-            proc = subprocess.run(
-                ["sudo", "-n", str(fix_bin), jail, str(app_root)],
-                capture_output=True,
-                text=True,
-                timeout=120,
-                check=False,
-            )
-            if proc.returncode == 0:
-                logger.info("fix-app-perms OK %s %s", jail, app_root)
-            else:
-                logger.warning(
-                    "fix-app-perms rc=%s stderr=%s",
-                    proc.returncode,
-                    (proc.stderr or proc.stdout or "")[:400],
-                )
-        except Exception:  # noqa: BLE001
-            logger.debug("fix-app-perms skip", exc_info=True)
-
-    # Fallback / complément : ACL + chmod (si helper absent ou partiel)
-    _grant_jail_write(app_root, jail, is_dir=True)
-    for db in _iter_sqlite_files(app_root):
-        _grant_jail_write(db, jail, is_dir=False)
-        for suffix in ("-wal", "-shm", "-journal"):
-            side = Path(str(db) + suffix)
-            if side.exists():
-                _grant_jail_write(side, jail, is_dir=False)
-        try:
-            parent = db.parent
-            if parent != app_root:
-                _grant_jail_write(parent, jail, is_dir=True)
+            p = Path(raw)
+            if not p.exists():
+                continue
+            key = str(p.resolve())
         except OSError:
-            pass
-    for name in ("media", "var", "tmp", "staticfiles", "logs"):
-        d = app_root / name
-        if d.is_dir():
-            _grant_jail_write(d, jail, is_dir=True)
+            key = str(raw)
+            p = Path(raw)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(p)
 
-    db_main = app_root / "db.sqlite3"
+    if not unique and verify_sqlite_in is None:
+        return
+
+    if not FIX_APP_PERMS.is_file():
+        msg = (
+            "Helper vzone-fix-app-perms absent. "
+            "Exécutez: sudo bash /opt/vzone-src/scripts/ensure-mkhome-sudoers.sh"
+        )
+        if required:
+            raise VZoneAPIException(detail=msg, code="fix_app_perms_missing", status_code=500)
+        logger.warning(msg)
+    else:
+        for path in unique:
+            try:
+                proc = subprocess.run(
+                    ["sudo", "-n", str(FIX_APP_PERMS), jail, str(path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                    check=False,
+                )
+                if proc.returncode != 0:
+                    err = (proc.stderr or proc.stdout or "")[:400]
+                    logger.warning("fix-app-perms %s %s → %s %s", jail, path, proc.returncode, err)
+                    if required:
+                        raise VZoneAPIException(
+                            detail=(
+                                f"Impossible de corriger les permissions de `{path}` "
+                                f"pour `{jail}`: {err or proc.returncode}. "
+                                f"Manuel: sudo {FIX_APP_PERMS} {jail} {path}"
+                            ),
+                            code="fix_app_perms_failed",
+                            status_code=500,
+                            extra={"path": str(path), "jail": jail},
+                        )
+                else:
+                    logger.info("fix-app-perms OK %s → %s", jail, path)
+            except VZoneAPIException:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("fix-app-perms exception: %s", exc)
+                if required:
+                    raise VZoneAPIException(
+                        detail=f"fix-app-perms a échoué: {exc}",
+                        code="fix_app_perms_failed",
+                        status_code=500,
+                    ) from exc
+
+    # Complément ACL/chmod (sans root)
+    for path in unique:
+        _grant_jail_write(path, jail, is_dir=path.is_dir())
+        if path.is_dir():
+            for db in _iter_sqlite_files(path):
+                _grant_jail_write(db, jail, is_dir=False)
+
+    check_root = verify_sqlite_in
+    if check_root is None:
+        return
+    db_main = Path(check_root) / "db.sqlite3"
     if not db_main.exists():
         return
     try:
@@ -1152,18 +1223,16 @@ def _ensure_app_data_writable(owner: User, app_root: Path) -> None:
             [
                 "bash",
                 "-c",
-                f"test -w {shlex.quote(str(db_main))} && test -w {shlex.quote(str(app_root))}",
+                f"test -w {shlex.quote(str(db_main))} && test -w {shlex.quote(str(check_root))}",
             ],
         )
         proc = subprocess.run(probe, capture_output=True, text=True, timeout=30, check=False)
         if proc.returncode != 0:
             raise VZoneAPIException(
                 detail=(
-                    f"SQLite en lecture seule pour le compte `{jail}` "
-                    f"({db_main}). Exécutez: sudo /usr/local/sbin/vzone-fix-app-perms "
-                    f"{jail} {app_root} puis redémarrez l'app. "
-                    "Ou: sudo chown -R {0}:{0} {1} && sudo chmod 775 {1} && "
-                    "sudo chmod 664 {1}/db.sqlite3".format(jail, app_root)
+                    f"SQLite toujours en lecture seule pour `{jail}` ({db_main}). "
+                    f"Exécutez: sudo {FIX_APP_PERMS} {jail} {check_root} "
+                    f"puis redémarrez l'application."
                 ),
                 code="sqlite_readonly",
                 status_code=400,
@@ -1173,6 +1242,49 @@ def _ensure_app_data_writable(owner: User, app_root: Path) -> None:
         raise
     except Exception:  # noqa: BLE001
         logger.debug("sqlite writable probe skip", exc_info=True)
+
+
+def _run_as_owner(
+    owner: User,
+    cmd: list[str],
+    *,
+    cwd: Path | None = None,
+) -> subprocess.CompletedProcess:
+    """Exécute une commande sous l'UID client si runas dispo (pip, etc.)."""
+    from apps.security.runas import build_runas_cmd, runas_available
+
+    if provision_mode() == "mock" or not runas_available():
+        return _run(cmd, cwd=cwd)
+    jail = _jail_name(owner)
+    full = build_runas_cmd(jail, cmd)
+    try:
+        return subprocess.run(
+            full,
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=str(cwd) if cwd else None,
+            timeout=300,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        stderr = getattr(exc, "stderr", None) or str(exc)
+        raise VZoneAPIException(
+            detail="Échec commande Python (jail).",
+            code="python_cmd_failed",
+            status_code=502,
+            extra={"stderr": stderr, "cmd": full},
+        ) from exc
+
+
+def _ensure_app_data_writable(owner: User, app_root: Path, *extra: Path) -> None:
+    """Garantie ownership jail avant démarrage gunicorn."""
+    fix_client_paths(
+        owner,
+        app_root,
+        *extra,
+        required=True,
+        verify_sqlite_in=app_root,
+    )
 
 
 def _prepare_app_logs(owner: User, app_root: Path) -> tuple[Path, Path]:
@@ -1230,6 +1342,8 @@ def _prepare_app_logs(owner: User, app_root: Path) -> tuple[Path, Path]:
         logs.chmod(0o775)
     except OSError:
         pass
+    # Toujours réaligner le propriétaire après écritures panel
+    fix_client_paths(owner, logs, access_log, error_log, app_root)
     return access_log, error_log
 
 
@@ -1241,7 +1355,7 @@ def start_python_app(app: PythonApp) -> PythonApp:
     venv_dir = Path(app.venv_path) if app.venv_path else cpanel_venv_path(app.owner, app.name, app.python_version)
     py = venv_python(venv_dir)
     access_log, error_log = _prepare_app_logs(app.owner, app_root)
-    _ensure_app_data_writable(app.owner, app_root)
+    _ensure_app_data_writable(app.owner, app_root, venv_dir)
     pid_file = app_root / "logs" / "app.pid"
 
     env = _child_process_env(app, app_root, venv_dir)
