@@ -672,6 +672,24 @@ def _format_start_failure(*, returncode: int | None, stderr_new: str, port: int 
     return "\n".join(parts)
 
 
+def _is_runas_infra_error(err: str) -> bool:
+    """True si l'échec vient de vzone-runas / runuser, pas d'un import Python."""
+    low = (err or "").lower()
+    markers = (
+        "runuser",
+        "vzone-runas",
+        "exec: runuser",
+        "ni runuser ni su",
+        "root requis",
+        "hors groupe",
+        "compte os absent",
+        "username invalide",
+        "username réservé",
+        "home hors",
+    )
+    return any(m in low for m in markers)
+
+
 def _preflight_runtime_module(app: PythonApp, py: Path) -> None:
     """Vérifie que gunicorn/uvicorn est importable avant Popen (évite code 127 opaque)."""
     mod = "uvicorn" if app.mode == PythonApp.Mode.ASGI else "gunicorn"
@@ -705,8 +723,19 @@ def _preflight_runtime_module(app: PythonApp, py: Path) -> None:
             status_code=400,
         ) from exc
     if proc.returncode != 0:
-        err = (proc.stderr or proc.stdout or "").strip()
-        err = _filter_log_noise(err)[:300]
+        err = _filter_log_noise((proc.stderr or proc.stdout or "").strip())[:400]
+        if _is_runas_infra_error(err):
+            raise VZoneAPIException(
+                detail=(
+                    "Impossible d'exécuter sous le compte client (vzone-runas / runuser). "
+                    "Mettez à jour le panel (update.sh réinstalle vzone-runas) "
+                    "ou installez util-linux. "
+                    f"Détail : {err[:220]}"
+                ),
+                code="runas_broken",
+                status_code=500,
+                extra={"module": mod, "returncode": proc.returncode, "stderr": err},
+            )
         raise VZoneAPIException(
             detail=(
                 f"Module `{mod}` absent du virtualenv. "

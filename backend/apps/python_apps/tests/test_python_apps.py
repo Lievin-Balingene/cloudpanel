@@ -12,6 +12,7 @@ from apps.python_apps.models import PythonApp
 from apps.python_apps.services import (
     _filter_log_noise,
     _format_start_failure,
+    _is_runas_infra_error,
     _scaffold,
     create_python_app,
     start_python_app,
@@ -217,3 +218,11 @@ def test_format_start_failure_code_127_without_scanner_noise():
     assert "gunicorn" in msg.lower() or "uvicorn" in msg.lower() or "pip install" in msg.lower()
     assert "xmlrpc" not in msg.lower()
     assert "wlwmanifest" not in msg.lower()
+
+
+@pytest.mark.unit
+def test_is_runas_infra_error_detects_missing_runuser():
+    assert _is_runas_infra_error(
+        "/usr/local/sbin/vzone-runas: line 67: exec: runuser: not found"
+    )
+    assert not _is_runas_infra_error("ModuleNotFoundError: No module named 'gunicorn'")

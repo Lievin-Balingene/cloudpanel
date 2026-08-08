@@ -55,7 +55,27 @@ case "$HOME_DIR" in
     ;;
 esac
 
-# Interdit sudo/su depuis le process client
+# Résoudre runuser/su AVANT de restreindre PATH (runuser est souvent dans /usr/sbin).
+_find_bin() {
+  local name="$1" p
+  p="$(command -v "$name" 2>/dev/null || true)"
+  if [[ -n "$p" && -x "$p" ]]; then
+    printf '%s\n' "$p"
+    return 0
+  fi
+  for p in "/usr/sbin/${name}" "/sbin/${name}" "/usr/bin/${name}" "/bin/${name}"; do
+    if [[ -x "$p" ]]; then
+      printf '%s\n' "$p"
+      return 0
+    fi
+  done
+  return 1
+}
+
+RUNUSER_BIN="$(_find_bin runuser || true)"
+SU_BIN="$(_find_bin su || true)"
+
+# Environnement client : PATH restreint (pas de /sbin) — le helper root utilise un chemin absolu.
 export HOME="$HOME_DIR"
 export USER="$USERNAME"
 export LOGNAME="$USERNAME"
@@ -64,4 +84,19 @@ unset SUDO_COMMAND SUDO_USER SUDO_UID SUDO_GID
 unset LD_PRELOAD LD_LIBRARY_PATH
 
 cd "$HOME_DIR" 2>/dev/null || cd /tmp
-exec runuser -u "$USERNAME" -- "$@"
+
+if [[ -n "$RUNUSER_BIN" ]]; then
+  exec "$RUNUSER_BIN" -u "$USERNAME" -- "$@"
+fi
+
+if [[ -n "$SU_BIN" ]]; then
+  # Fallback si util-linux/runuser absent : quoting bash sûr.
+  _cmd=""
+  for _a in "$@"; do
+    _cmd+="$(printf '%q' "$_a") "
+  done
+  exec "$SU_BIN" -s /bin/bash "$USERNAME" -c "cd $(printf '%q' "$HOME_DIR") && exec ${_cmd}"
+fi
+
+echo "ni runuser ni su disponibles — installez util-linux (runuser)" >&2
+exit 127

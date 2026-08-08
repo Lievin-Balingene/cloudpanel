@@ -34,6 +34,11 @@ install -m 755 "${REPO_DIR}/scripts/vzone-jailterm.sh" /usr/local/sbin/vzone-jai
 install -m 755 "${REPO_DIR}/scripts/vzone-rootterm.sh" /usr/local/sbin/vzone-rootterm
 install -m 755 "${REPO_DIR}/scripts/vzone-runas.sh" /usr/local/sbin/vzone-runas
 
+# runuser est requis (souvent /usr/sbin) — avertir tôt si absent
+if ! command -v runuser >/dev/null 2>&1 && [[ ! -x /usr/sbin/runuser && ! -x /sbin/runuser ]]; then
+  echo "[vzone] Avertissement: runuser introuvable — installez util-linux (vzone-runas utilisera su en secours)" >&2
+fi
+
 # Tickets one-shot rootterm (écrits par API vzone, consommés par rootterm)
 mkdir -p /var/lib/vzone/terminal/tickets
 chown "${VZONE_USER}:${VZONE_USER}" /var/lib/vzone/terminal /var/lib/vzone/terminal/tickets 2>/dev/null || true
