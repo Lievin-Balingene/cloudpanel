@@ -221,6 +221,17 @@ def test_format_start_failure_code_127_without_scanner_noise():
 
 
 @pytest.mark.unit
+def test_format_start_failure_env_double_dash():
+    msg = _format_start_failure(
+        returncode=127,
+        stderr_new="env: '--': No such file or directory",
+    )
+    assert "pip install gunicorn" not in msg.lower()
+    assert "env" in msg.lower()
+    assert _is_runas_infra_error("env: '--': No such file or directory")
+
+
+@pytest.mark.unit
 def test_is_runas_infra_error_detects_missing_runuser():
     assert _is_runas_infra_error(
         "/usr/local/sbin/vzone-runas: line 67: exec: runuser: not found"

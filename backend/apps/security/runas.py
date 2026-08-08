@@ -57,7 +57,11 @@ def build_runas_cmd(
     *,
     env: Mapping[str, str] | None = None,
 ) -> list[str]:
-    """Construit ``sudo -n vzone-runas user -- [env K=V … --] cmd…``."""
+    """Construit ``sudo -n vzone-runas user -- [env K=V …] cmd…``.
+
+    Pas de ``--`` après les assignments ``env`` : sur busybox/certains env,
+    ``env K=V -- cmd`` traite ``--`` comme commande → ``env: '--': No such file``.
+    """
     user = _validate_username(username)
     if not cmd:
         raise VZoneAPIException(detail="Commande vide.", code="empty_cmd", status_code=400)
@@ -80,7 +84,8 @@ def build_runas_cmd(
             # Évite injection via newlines dans les valeurs env
             safe_val = str(val).replace("\n", " ").replace("\r", " ")
             out.append(f"{key}={safe_val}")
-        out.append("--")
+    # Si la commande commence par '-', forcer via env sans '--' ambigu :
+    # préfixer avec le binaire réel (déjà le cas pour python/gunicorn).
     out.extend(str(c) for c in cmd)
     return out
 

@@ -148,3 +148,33 @@ def test_helpers():
         assert_ip_allowed("8.8.8.8")
     record_login_attempt(email="a@b.c", ip="1.2.3.4", success=False, message="fail")
     assert IpAccessRule.objects.count() == 1
+
+
+@pytest.mark.unit
+def test_build_runas_cmd_env_has_no_double_dash(tmp_path, settings, monkeypatch):
+    """Busybox env traite ``--`` comme commande → code 127."""
+    from apps.security import runas as runas_mod
+
+    fake = tmp_path / "vzone-runas"
+    fake.write_text("#!/bin/sh\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setattr(runas_mod, "RUNAS", fake)
+    settings.VZONE_LINUX_USER_PROVISION = "live"
+    settings.VZONE_ALLOW_UNJAILED_SUBPROCESS = False
+
+    cmd = runas_mod.build_runas_cmd(
+        "lievin",
+        ["/home/lievin/virtualenv/vzone/3.12/bin/python", "-m", "gunicorn"],
+        env={"PATH": "/usr/bin", "HOME": "/home/lievin"},
+    )
+    assert cmd[:5] == ["sudo", "-n", str(fake), "lievin", "--"]
+    assert "env" in cmd
+    # Après les KEY=VAL, la commande Python — jamais un "--" orphelin pour env
+    env_idx = cmd.index("env")
+    after_env = cmd[env_idx + 1 :]
+    assert "--" not in after_env
+    assert after_env[-3:] == [
+        "/home/lievin/virtualenv/vzone/3.12/bin/python",
+        "-m",
+        "gunicorn",
+    ]

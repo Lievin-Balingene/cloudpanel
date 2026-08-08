@@ -654,13 +654,24 @@ def _log_bytes_since(path: Path, offset: int) -> str:
 def _format_start_failure(*, returncode: int | None, stderr_new: str, port: int = 0) -> str:
     """Message d'échec clair, sans pollution scanners WordPress."""
     clean = _filter_log_noise(stderr_new).strip()
+    low = clean.lower()
+    # Bug historique : env … -- cmd → env traite "--" comme binaire (code 127)
+    if "env:" in low and ("'--'" in clean or '"--"' in clean or "‘--’" in clean):
+        return (
+            "Échec lancement (env/--) : corrigez le panel (vzone-runas / build_runas_cmd) "
+            "ou mettez à jour (≥ 0.35.7). Détail : "
+            + (clean[-400:] if clean else "env: '--': No such file or directory")
+        )
     parts: list[str] = []
     if returncode is not None:
-        parts.append(_EXIT_HINTS.get(returncode, f"Le process s'est arrêté (code {returncode})."))
+        # Ne pas suggérer gunicorn si la cause est clairement env/--
+        if returncode == 127 and "env:" in low:
+            parts.append("Code 127 : commande introuvable lors du spawn (souvent env/runas).")
+        else:
+            parts.append(_EXIT_HINTS.get(returncode, f"Le process s'est arrêté (code {returncode})."))
     elif port:
         parts.append(f"Le port {port} n'écoute pas après démarrage.")
     if clean:
-        # Garde un extrait utile (traceback / ModuleNotFound)
         parts.append(clean[-900:])
     elif returncode == 127:
         parts.append("Astuce : dans le venv de l'app → pip install gunicorn (WSGI) ou uvicorn (ASGI).")
@@ -686,6 +697,9 @@ def _is_runas_infra_error(err: str) -> bool:
         "username invalide",
         "username réservé",
         "home hors",
+        "env: '--'",
+        'env: "--"',
+        "env: ‘--’",
     )
     return any(m in low for m in markers)
 
