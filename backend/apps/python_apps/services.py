@@ -1035,6 +1035,123 @@ def _build_start_command(app: PythonApp, app_root: Path, py: Path) -> list[str]:
     ]
 
 
+def _grant_jail_write(path: Path, username: str, *, is_dir: bool = False) -> None:
+    """Donne l'écriture au compte jail (ACL si possible, sinon chmod permissif)."""
+    if not path.exists():
+        return
+    try:
+        spec = f"u:{username}:rwx" if is_dir else f"u:{username}:rw"
+        subprocess.run(
+            ["setfacl", "-m", spec, str(path)],
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        pass
+    try:
+        mode = path.stat().st_mode
+        if is_dir:
+            path.chmod(mode | 0o775)
+        else:
+            # SQLite / fichiers données : lecture-écriture pour owner+group+other
+            # (owner est souvent « vzone » après deploy panel, process = jail)
+            path.chmod(0o666)
+    except OSError:
+        pass
+
+
+def _iter_sqlite_files(app_root: Path) -> list[Path]:
+    """db.sqlite3 et cousins à la racine + 1 niveau (évite scan massif)."""
+    found: list[Path] = []
+    patterns = ("*.sqlite3", "*.sqlite", "*.db")
+    for pat in patterns:
+        found.extend(app_root.glob(pat))
+    for sub in ("data", "var", "db", "database", "databases"):
+        d = app_root / sub
+        if d.is_dir():
+            for pat in patterns:
+                found.extend(d.glob(pat))
+    # Déduplique
+    out: list[Path] = []
+    seen: set[str] = set()
+    for p in found:
+        key = str(p.resolve()) if p.exists() else str(p)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(p)
+    return out
+
+
+def _ensure_app_data_writable(owner: User, app_root: Path) -> None:
+    """
+    Après passage en vzone-runas, le process est le compte client.
+    Les fichiers créés par « vzone » (sqlite, media…) doivent rester inscriptibles.
+    """
+    try:
+        from apps.accounts.linux_users import jail_username_for
+
+        jail = jail_username_for(owner)
+    except Exception:  # noqa: BLE001
+        jail = (owner.username or "").strip().lower()
+    if not jail:
+        return
+
+    # Dossier app : journal SQLite (-wal) = écriture dans le répertoire parent
+    _grant_jail_write(app_root, jail, is_dir=True)
+
+    for db in _iter_sqlite_files(app_root):
+        _grant_jail_write(db, jail, is_dir=False)
+        for suffix in ("-wal", "-shm", "-journal"):
+            side = Path(str(db) + suffix)
+            if side.exists():
+                _grant_jail_write(side, jail, is_dir=False)
+        # Parent du fichier db (si pas app_root)
+        try:
+            parent = db.parent
+            if parent != app_root:
+                _grant_jail_write(parent, jail, is_dir=True)
+        except OSError:
+            pass
+
+    for name in ("media", "var", "tmp", "staticfiles", "logs"):
+        d = app_root / name
+        if d.is_dir():
+            _grant_jail_write(d, jail, is_dir=True)
+
+    # Vérifie en jail qu'au moins db.sqlite3 est writable ; sinon message clair au start
+    db_main = app_root / "db.sqlite3"
+    if not db_main.exists() or provision_mode() == "mock":
+        return
+    try:
+        from apps.security.runas import build_runas_cmd, runas_available
+
+        if not runas_available():
+            return
+        import shlex
+
+        probe = build_runas_cmd(
+            jail,
+            [
+                "bash",
+                "-c",
+                f"test -w {shlex.quote(str(db_main))} && test -w {shlex.quote(str(app_root))}",
+            ],
+        )
+        proc = subprocess.run(probe, capture_output=True, text=True, timeout=30, check=False)
+        if proc.returncode != 0:
+            logger.warning(
+                "SQLite non inscriptible pour jail %s (%s) — chmod/ACL appliqués, "
+                "vérifiez: ls -l %s",
+                jail,
+                db_main,
+                db_main,
+            )
+    except Exception:  # noqa: BLE001
+        logger.debug("sqlite writable probe skip", exc_info=True)
+
+
 def _prepare_app_logs(owner: User, app_root: Path) -> tuple[Path, Path]:
     """Crée logs/ accessibles au compte jail (sinon gunicorn → PermissionError)."""
     import shlex
@@ -1080,6 +1197,9 @@ def _prepare_app_logs(owner: User, app_root: Path) -> tuple[Path, Path]:
             )
             probe = build_runas_cmd(jail, ["bash", "-c", script])
             subprocess.run(probe, capture_output=True, text=True, timeout=45, check=False)
+            _grant_jail_write(logs, jail, is_dir=True)
+            _grant_jail_write(access_log, jail, is_dir=False)
+            _grant_jail_write(error_log, jail, is_dir=False)
     except Exception:  # noqa: BLE001
         logger.debug("prepare_app_logs runas skip", exc_info=True)
 
@@ -1098,6 +1218,7 @@ def start_python_app(app: PythonApp) -> PythonApp:
     venv_dir = Path(app.venv_path) if app.venv_path else cpanel_venv_path(app.owner, app.name, app.python_version)
     py = venv_python(venv_dir)
     access_log, error_log = _prepare_app_logs(app.owner, app_root)
+    _ensure_app_data_writable(app.owner, app_root)
     pid_file = app_root / "logs" / "app.pid"
 
     env = _child_process_env(app, app_root, venv_dir)

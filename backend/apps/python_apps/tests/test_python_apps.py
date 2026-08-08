@@ -242,6 +242,18 @@ def test_is_runas_infra_error_detects_missing_runuser():
 
 
 @pytest.mark.unit
+def test_iter_sqlite_files_finds_root_db(tmp_path):
+    from apps.python_apps.services import _iter_sqlite_files
+
+    (tmp_path / "db.sqlite3").write_text("", encoding="utf-8")
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "app.db").write_text("", encoding="utf-8")
+    found = {p.name for p in _iter_sqlite_files(tmp_path)}
+    assert "db.sqlite3" in found
+    assert "app.db" in found
+
+
+@pytest.mark.unit
 def test_gunicorn_logs_to_stdio_not_path():
     from apps.python_apps.models import PythonApp
     from apps.python_apps.services import _build_start_command
