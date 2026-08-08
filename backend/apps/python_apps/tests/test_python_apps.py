@@ -10,10 +10,12 @@ from rest_framework.test import APIClient
 from apps.accounts.factories import UserFactory
 from apps.python_apps.models import PythonApp
 from apps.python_apps.services import (
+    _clip_end,
     _filter_log_noise,
     _format_start_failure,
     _is_runas_infra_error,
     _scaffold,
+    _summarize_traceback,
     create_python_app,
     start_python_app,
     stop_python_app,
@@ -237,3 +239,28 @@ def test_is_runas_infra_error_detects_missing_runuser():
         "/usr/local/sbin/vzone-runas: line 67: exec: runuser: not found"
     )
     assert not _is_runas_infra_error("ModuleNotFoundError: No module named 'gunicorn'")
+
+
+@pytest.mark.unit
+def test_summarize_traceback_keeps_real_exception_not_gunicorn_middle():
+    tb = "\n".join(
+        [
+            'File "/home/lievin/virtualenv/vzone/3.12/lib/python3.10/site-packages/gunicorn/app/base.py", line 235, in run',
+            "    super().run()",
+            'File "/home/lievin/virtualenv/vzone/3.12/lib/python3.10/site-packages/gunicorn/app/base.py", line 71, in run',
+            "    Arbiter(self).run()",
+            'File "/home/x/app/passenger_wsgi.py", line 12, in <module>',
+            "    from django.core.wsgi import get_wsgi_application",
+            "ModuleNotFoundError: No module named 'django'",
+            "Reason: Worker failed to boot.",
+        ]
+    )
+    summary = _summarize_traceback(tb)
+    assert "ModuleNotFoundError" in summary
+    assert "django" in summary
+    msg = _format_start_failure(returncode=1, stderr_new=tb)
+    assert "ModuleNotFoundError" in msg
+    clipped = _clip_end("Code 1 : hint\n" + ("x" * 200) + "\nModuleNotFoundError: No module named 'django'", 80)
+    assert "ModuleNotFoundError" in clipped
+    assert "django" in clipped
+    assert clipped.startswith("…")

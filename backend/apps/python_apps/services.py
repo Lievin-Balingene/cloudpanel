@@ -651,6 +651,57 @@ def _log_bytes_since(path: Path, offset: int) -> str:
         return ""
 
 
+def _clip_end(text: str, limit: int) -> str:
+    """Tronque en gardant la FIN (là où est l'exception Python)."""
+    t = (text or "").strip()
+    if limit <= 0 or len(t) <= limit:
+        return t
+    return "…" + t[-(limit - 1) :]
+
+
+def _summarize_traceback(text: str) -> str:
+    """Extrait les lignes d'exception utiles (fin de traceback), pas le milieu gunicorn."""
+    clean = _filter_log_noise(text).strip()
+    if not clean:
+        return ""
+    lines = [ln.rstrip() for ln in clean.splitlines() if ln.strip()]
+    interesting: list[str] = []
+    for ln in lines:
+        s = ln.strip()
+        if re.search(
+            r"(ModuleNotFoundError|ImportError|ImproperlyConfigured|PermissionError|"
+            r"FileNotFoundError|OSError|RuntimeError|ValueError|KeyError|"
+            r"HaltServer|Worker failed to boot|Address already in use|"
+            r"django\.core\.exceptions|"
+            r"\w+(Error|Exception)\s*:)",
+            s,
+        ):
+            interesting.append(s)
+        elif s.startswith("Reason:"):
+            interesting.append(s)
+    if interesting:
+        return "\n".join(list(dict.fromkeys(interesting))[-5:])
+    return "\n".join(lines[-15:])
+
+
+def _venv_version_mismatch_hint(venv_dir: Path, labeled_version: str) -> str:
+    """Ex. dossier …/3.12/ mais lib/python3.10 → binaire/fallback incohérent."""
+    lib = venv_dir / "lib"
+    if not lib.is_dir():
+        return ""
+    py_dirs = sorted(p.name for p in lib.iterdir() if p.is_dir() and p.name.startswith("python"))
+    if not py_dirs:
+        return ""
+    actual = py_dirs[0]
+    label = (labeled_version or "").strip()
+    if label and label not in actual:
+        return (
+            f" Venv incohérent : dossier « {label} » mais {actual} "
+            f"(recréez le virtualenv avec python{label} installé)."
+        )
+    return ""
+
+
 def _format_start_failure(*, returncode: int | None, stderr_new: str, port: int = 0) -> str:
     """Message d'échec clair, sans pollution scanners WordPress."""
     clean = _filter_log_noise(stderr_new).strip()
@@ -662,17 +713,17 @@ def _format_start_failure(*, returncode: int | None, stderr_new: str, port: int 
             "ou mettez à jour (≥ 0.35.7). Détail : "
             + (clean[-400:] if clean else "env: '--': No such file or directory")
         )
+    summary = _summarize_traceback(clean)
     parts: list[str] = []
     if returncode is not None:
-        # Ne pas suggérer gunicorn si la cause est clairement env/--
         if returncode == 127 and "env:" in low:
             parts.append("Code 127 : commande introuvable lors du spawn (souvent env/runas).")
         else:
             parts.append(_EXIT_HINTS.get(returncode, f"Le process s'est arrêté (code {returncode})."))
     elif port:
         parts.append(f"Le port {port} n'écoute pas après démarrage.")
-    if clean:
-        parts.append(clean[-900:])
+    if summary:
+        parts.append(summary)
     elif returncode == 127:
         parts.append("Astuce : dans le venv de l'app → pip install gunicorn (WSGI) ou uvicorn (ASGI).")
     else:
@@ -681,6 +732,77 @@ def _format_start_failure(*, returncode: int | None, stderr_new: str, port: int 
             "Vérifiez logs/error.log et les dépendances du venv."
         )
     return "\n".join(parts)
+
+
+def _entrypoint_import_module(app: PythonApp) -> str:
+    ep = (app.entrypoint or "").strip() or (
+        "asgi:application" if app.mode == PythonApp.Mode.ASGI else "passenger_wsgi.py"
+    )
+    if ep.endswith(".py"):
+        return ep[:-3].replace("\\", "/").replace("/", ".")
+    if ":" in ep:
+        return ep.split(":", 1)[0].replace("\\", "/").replace("/", ".")
+    return ep.replace("\\", "/").replace("/", ".")
+
+
+def _preflight_app_import(
+    app: PythonApp,
+    app_root: Path,
+    py: Path,
+    env: dict[str, str],
+    *,
+    venv_dir: Path | None = None,
+) -> None:
+    """Importe le module WSGI/ASGI avant gunicorn pour remonter l'erreur réelle."""
+    mod = _entrypoint_import_module(app)
+    if not mod or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", mod):
+        return
+    probe_py = (
+        "import sys, importlib;"
+        f"sys.path.insert(0, {str(app_root)!r});"
+        f"importlib.import_module({mod!r})"
+    )
+    try:
+        from apps.accounts.linux_users import jail_username_for
+        from apps.security.runas import build_runas_cmd, runas_available
+
+        probe = [str(py), "-c", probe_py]
+        if runas_available():
+            jail = jail_username_for(app.owner)
+            probe = build_runas_cmd(jail, probe, env=env)
+        proc = subprocess.run(
+            probe,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+            cwd=str(app_root),
+        )
+    except VZoneAPIException:
+        raise
+    except Exception:  # noqa: BLE001
+        return
+    if proc.returncode == 0:
+        return
+    err = _summarize_traceback((proc.stderr or proc.stdout or "").strip())
+    if _is_runas_infra_error(err):
+        raise VZoneAPIException(
+            detail=f"Préflight import impossible (runas) : {_clip_end(err, 280)}",
+            code="runas_broken",
+            status_code=500,
+            extra={"stderr": err},
+        )
+    hint = _venv_version_mismatch_hint(venv_dir or Path(), app.python_version)
+    raise VZoneAPIException(
+        detail=(
+            f"Échec import `{mod}` (avant gunicorn). "
+            + (_clip_end(err, 500) if err else "Erreur d'import inconnue.")
+            + hint
+        ),
+        code="app_import_failed",
+        status_code=400,
+        extra={"module": mod, "stderr": err[-1500:] if err else ""},
+    )
 
 
 def _is_runas_infra_error(err: str) -> bool:
@@ -946,6 +1068,7 @@ def start_python_app(app: PythonApp) -> PythonApp:
 
     ensure_runtime_deps(app, app_root, py)
     _preflight_runtime_module(app, py)
+    _preflight_app_import(app, app_root, py, env, venv_dir=venv_dir)
 
     if app.mode == PythonApp.Mode.WSGI and not (app_root / "passenger_wsgi.py").exists():
         raise VZoneAPIException(
@@ -1003,13 +1126,17 @@ def start_python_app(app: PythonApp) -> PythonApp:
             extra = {"error": detail, "stderr": new_log[-1500:]}
         if hasattr(exc, "extra") and isinstance(getattr(exc, "extra"), dict):
             extra.update(exc.extra)
-        # Ne jamais stocker le bruit scanners WordPress dans last_error
+        # Ne jamais stocker le bruit scanners WordPress dans last_error ;
+        # tronquer depuis la FIN pour garder ModuleNotFoundError / etc.
         detail_clean = _filter_log_noise(detail).strip()
         if not detail_clean:
             detail_clean = (
                 "Échec au démarrage (voir logs/error.log et les dépendances du venv)."
             )
-        detail_clean = detail_clean[:800]
+        mismatch = _venv_version_mismatch_hint(venv_dir, app.python_version)
+        if mismatch and mismatch.strip() not in detail_clean:
+            detail_clean = f"{detail_clean.rstrip()}{mismatch}"
+        detail_clean = _clip_end(detail_clean, 900)
         app.status = PythonApp.Status.ERROR
         app.last_error = detail_clean
         app.pid = None
@@ -1018,7 +1145,7 @@ def start_python_app(app: PythonApp) -> PythonApp:
         app.save()
         write_app_config(app)
         raise VZoneAPIException(
-            detail=f"Impossible de démarrer l'application : {detail_clean[:400]}",
+            detail=f"Impossible de démarrer l'application : {_clip_end(detail_clean, 520)}",
             code="start_failed",
             status_code=400,
             extra=extra,
