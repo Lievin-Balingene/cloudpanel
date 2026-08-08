@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bot,
@@ -7,14 +8,17 @@ import {
   ChevronRight,
   History,
   Loader2,
+  MapPin,
   Maximize2,
   Minimize2,
   Plus,
   Send,
   Sparkles,
+  Terminal,
   X,
 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
+import { buildUiPageContext } from "@/lib/aiPageContext";
 
 interface AiMessage {
   id?: number;
@@ -58,6 +62,14 @@ interface SendResult {
   tool_trace?: { name?: string; ok?: boolean }[];
   provider?: string;
   model?: string;
+  ui_context?: { label?: string; section?: string; path?: string };
+}
+
+interface JailCommand {
+  id: string;
+  label: string;
+  description: string;
+  needs_app: boolean;
 }
 
 function renderContent(text: string) {
@@ -124,6 +136,8 @@ const WELCOME =
   "Les actions sensibles (clone, install, restart, deploy) demanderont votre confirmation.";
 
 export function AiDeploymentAssistant() {
+  const location = useLocation();
+  const pageCtx = useMemo(() => buildUiPageContext(location.pathname), [location.pathname]);
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -133,6 +147,7 @@ export function AiDeploymentAssistant() {
   const [conversationId, setConversationId] = useState<number | null>(null);
   const [activePlaybookId, setActivePlaybookId] = useState<string | null>(null);
   const [toolNames, setToolNames] = useState<string[]>([]);
+  const autoPageKey = useRef<string>("");
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const qc = useQueryClient();
@@ -145,6 +160,7 @@ export function AiDeploymentAssistant() {
         available: boolean;
         tools: { name: string; dangerous: boolean }[];
         playbooks: Playbook[];
+        jail_commands: JailCommand[];
       }>("/ai/status/"),
     enabled: open,
     staleTime: 60_000,
@@ -157,6 +173,7 @@ export function AiDeploymentAssistant() {
   });
 
   const playbooks = statusQuery.data?.playbooks || [];
+  const jailCommands = statusQuery.data?.jail_commands || [];
   const activePlaybook = useMemo(
     () => playbooks.find((p) => p.id === activePlaybookId) || null,
     [playbooks, activePlaybookId],
@@ -217,7 +234,14 @@ export function AiDeploymentAssistant() {
     mutationFn: async (payload: { text: string; convId: number }) => {
       return apiRequest<SendResult>(`/ai/conversations/${payload.convId}/messages/`, {
         method: "POST",
-        body: JSON.stringify({ message: payload.text }),
+        body: JSON.stringify({
+          message: payload.text,
+          ui_context: {
+            path: pageCtx.path,
+            section: pageCtx.section,
+            portal: pageCtx.portal,
+          },
+        }),
       });
     },
     onSuccess: (data) => {
@@ -283,6 +307,26 @@ export function AiDeploymentAssistant() {
     }
   }
 
+  async function requestJailCommand(cmd: JailCommand) {
+    const text =
+      `Exécute la commande jail autorisée \`${cmd.id}\` (${cmd.label}) ` +
+      (cmd.needs_app ? "sur mon application la plus récente. " : "") +
+      "Demande ma confirmation avant d'exécuter.";
+    await onSend(text);
+  }
+
+  // À l'ouverture (ou changement de page), analyser automatiquement le besoin de la page
+  useEffect(() => {
+    if (!open || !conversationId || sendMut.isPending) return;
+    const key = `${conversationId}:${pageCtx.path}`;
+    if (autoPageKey.current === key) return;
+    autoPageKey.current = key;
+    const sectionsAuto = new Set(["python", "node", "git", "terminal", "files", "domains", "databases"]);
+    if (!sectionsAuto.has(pageCtx.section)) return;
+    void onSend(pageCtx.auto_prompt, conversationId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, conversationId, pageCtx.path, pageCtx.section]);
+
   async function loadConversation(id: number) {
     const detail = await apiRequest<Conversation>(`/ai/conversations/${id}/`);
     setConversationId(detail.id);
@@ -295,6 +339,7 @@ export function AiDeploymentAssistant() {
   async function startPlaybook(pb: Playbook) {
     setActivePlaybookId(pb.id);
     setToolNames([]);
+    autoPageKey.current = "";
     const id = await bootstrapConversation({ title: pb.title, keepWelcome: false });
     setLocalMessages([
       {
@@ -347,6 +392,7 @@ export function AiDeploymentAssistant() {
                   {statusQuery.data
                     ? `${statusQuery.data.provider}${statusQuery.data.available ? " · prêt" : " · mode local"}`
                     : "connexion…"}
+                  {` · ${pageCtx.label}`}
                   {activePlaybook ? ` · ${activePlaybook.title}` : ""}
                 </p>
               </div>
@@ -419,6 +465,24 @@ export function AiDeploymentAssistant() {
 
             <div className={`flex min-w-0 flex-1 flex-col ${expanded ? "sm:flex-row" : ""}`}>
               <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                <div className="flex items-start gap-2 border-b border-cp-border bg-cp-link-soft/40 px-3 py-2 dark:bg-white/5">
+                  <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cp-navy" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-semibold text-cp-navy dark:text-white">
+                      Page : {pageCtx.label}
+                    </p>
+                    <p className="truncate text-[10px] text-cp-muted">{pageCtx.need}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-full border border-cp-border bg-white px-2 py-0.5 text-[10px] font-medium hover:bg-cp-link-soft dark:bg-black/30"
+                    disabled={sendMut.isPending}
+                    onClick={() => void onSend(pageCtx.auto_prompt)}
+                  >
+                    Analyser
+                  </button>
+                </div>
+
                 {playbooks.length > 0 && (
                   <div className="flex gap-1.5 overflow-x-auto border-b border-cp-border px-2.5 py-2">
                     {playbooks.map((pb) => (
@@ -443,6 +507,27 @@ export function AiDeploymentAssistant() {
                     ))}
                   </div>
                 )}
+
+                {(pageCtx.section === "terminal" || pageCtx.section === "files" || pageCtx.section === "python" || pageCtx.section === "node") &&
+                  jailCommands.length > 0 && (
+                    <div className="flex gap-1.5 overflow-x-auto border-b border-cp-border px-2.5 py-1.5">
+                      <span className="inline-flex shrink-0 items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-cp-muted">
+                        <Terminal className="h-3 w-3" /> Jail
+                      </span>
+                      {jailCommands.slice(0, 8).map((cmd) => (
+                        <button
+                          key={cmd.id}
+                          type="button"
+                          title={cmd.description}
+                          disabled={sendMut.isPending}
+                          onClick={() => void requestJailCommand(cmd)}
+                          className="shrink-0 rounded-full border border-dashed border-cp-border bg-white/80 px-2 py-0.5 text-[10px] text-cp-text hover:border-cp-navy dark:bg-black/20"
+                        >
+                          {cmd.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
                 <div className="flex-1 space-y-2.5 overflow-y-auto px-3 py-3 text-sm">
                   {localMessages.map((m, idx) => (

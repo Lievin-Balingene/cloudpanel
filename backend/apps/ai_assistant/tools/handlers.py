@@ -690,3 +690,159 @@ def create_node_app_from_git(user: User, params: dict[str, Any]) -> dict[str, An
         return _err(str(exc.detail), getattr(exc, "default_code", "error") or "error")
     except Exception as exc:  # noqa: BLE001
         return _err(str(exc))
+
+
+@register_tool(
+    name="list_jail_commands",
+    description="Liste les commandes jail autorisées (whitelist) exécutables sous l'UID client.",
+    parameters={"type": "object", "properties": {}, "additionalProperties": False},
+)
+def list_jail_commands(user: User, params: dict[str, Any]) -> dict[str, Any]:
+    del user, params
+    from apps.ai_assistant.services.jail_commands import list_jail_catalog
+
+    return _ok({"commands": list_jail_catalog()})
+
+
+@register_tool(
+    name="get_page_logs",
+    description=(
+        "Lit les logs pertinents selon la page UI (Python/Node) ou runtime fourni. "
+        "Préférer cet outil quand le client est sur /panel/python ou /panel/node."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "runtime": {"type": "string", "enum": ["python", "node", "auto"]},
+            "app_id": {"type": "integer"},
+            "lines": {"type": "integer"},
+        },
+        "additionalProperties": False,
+    },
+)
+def get_page_logs(user: User, params: dict[str, Any]) -> dict[str, Any]:
+    runtime = str(params.get("runtime") or "auto").lower()
+    if runtime == "auto":
+        from apps.node_apps.services import apps_qs as node_qs
+        from apps.python_apps.services import apps_qs as py_qs
+
+        if py_qs(user).exists():
+            runtime = "python"
+        elif node_qs(user).exists():
+            runtime = "node"
+        else:
+            return _err("Aucune application Python/Node sur ce compte.", "no_apps")
+    return get_deployment_logs(
+        user,
+        {
+            "runtime": runtime,
+            "app_id": params.get("app_id"),
+            "lines": params.get("lines") or 120,
+        },
+    )
+
+
+@register_tool(
+    name="run_jail_command",
+    description=(
+        "Exécute UNE commande whitelistée dans le jail du client (UID compte, via vzone-runas). "
+        "Confirmation client obligatoire. Pas de shell libre : seulement command_id du catalogue."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "command_id": {
+                "type": "string",
+                "description": "Id catalogue (pwd, ls_home, tail_error_log, ...)",
+            },
+            "runtime": {"type": "string", "enum": ["python", "node"]},
+            "app_id": {"type": "integer"},
+        },
+        "required": ["command_id"],
+        "additionalProperties": False,
+    },
+    dangerous=True,
+)
+def run_jail_command(user: User, params: dict[str, Any]) -> dict[str, Any]:
+    import subprocess
+    from pathlib import Path
+
+    from apps.accounts.linux_users import jail_username_for
+    from apps.ai_assistant.services.jail_commands import get_jail_command
+    from apps.files.services import user_home
+    from apps.security.runas import build_runas_cmd
+
+    command_id = str(params.get("command_id") or "").strip()
+    meta = get_jail_command(command_id)
+    if not meta:
+        return _err(f"Commande non autorisée: {command_id}", "jail_denied")
+
+    jail = jail_username_for(user)
+    home = user_home(user)
+    argv_tpl: list[str] = list(meta["argv"])
+    app_root = ""
+    venv_python = ""
+
+    if meta.get("needs_app"):
+        runtime = str(params.get("runtime") or meta.get("runtime") or "python").lower()
+        app_id = params.get("app_id")
+        if runtime == "node":
+            app = _owned_node(user, int(app_id) if app_id else None)
+        else:
+            app = _owned_python(user, int(app_id) if app_id else None)
+        if not app:
+            return _err("Application introuvable pour cette commande jail.", "not_found")
+        rel = (getattr(app, "relative_root", "") or "").strip().replace("\\", "/")
+        if not rel or ".." in Path(rel).parts:
+            return _err("Chemin app invalide.", "invalid_path")
+        root = (home / rel).resolve()
+        try:
+            root.relative_to(home.resolve())
+        except ValueError:
+            return _err("Chemin hors home.", "path_forbidden")
+        app_root = str(root)
+        if command_id == "pip_freeze_venv":
+            venv_path = Path(getattr(app, "venv_path", "") or "")
+            candidate = venv_path / "bin" / "python"
+            if not candidate.exists():
+                return _err("Venv Python introuvable.", "no_venv")
+            venv_python = str(candidate)
+
+    argv: list[str] = []
+    for part in argv_tpl:
+        s = str(part)
+        s = s.replace("{app_root}", app_root).replace("{venv_python}", venv_python)
+        if "{" in s or "}" in s:
+            return _err("Template commande invalide.", "bad_template")
+        argv.append(s)
+
+    joined = " ".join(argv)
+    if any(ch in joined for ch in (";", "|", "&", "`", "$", "\n", "\r", ">", "<")):
+        return _err("Caractères interdits.", "jail_denied")
+
+    try:
+        cmd = build_runas_cmd(jail, argv)
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=45,
+            cwd=str(home) if home.exists() else None,
+            check=False,
+        )
+        out = (proc.stdout or "")[-6000]
+        err = (proc.stderr or "")[-2000]
+        return _ok(
+            {
+                "command_id": command_id,
+                "label": meta["label"],
+                "argv": argv,
+                "exit_code": proc.returncode,
+                "stdout": strip_prompt_injection(redact_text(out)),
+                "stderr": strip_prompt_injection(redact_text(err)),
+            }
+        )
+    except VZoneAPIException as exc:
+        return _err(str(exc.detail), getattr(exc, "default_code", "error") or "error")
+    except Exception as exc:  # noqa: BLE001
+        return _err(str(exc))

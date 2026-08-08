@@ -6,7 +6,7 @@ registry.register(
     ModuleMeta(
         name="ai_assistant",
         label="AI Deployment Assistant",
-        version="0.34.1",
+        version="0.34.2",
         description=(
             "Assistant IA de déploiement : diagnostic logs, guidance étape par étape, "
             "tools contrôlés (sans shell libre)."

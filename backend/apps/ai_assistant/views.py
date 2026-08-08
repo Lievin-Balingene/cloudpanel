@@ -25,6 +25,7 @@ from apps.ai_assistant.services import (
 )
 from apps.ai_assistant.tools import ensure_tools_loaded, list_tool_specs
 from apps.ai_assistant.services.playbooks import list_playbooks
+from apps.ai_assistant.services.jail_commands import list_jail_catalog
 from apps.core.exceptions import VZoneAPIException
 
 
@@ -56,6 +57,7 @@ class AiStatusView(APIView):
                         for t in list_tool_specs()
                     ],
                     "playbooks": list_playbooks(),
+                    "jail_commands": list_jail_catalog(),
                 },
             }
         )
@@ -122,6 +124,7 @@ class ConversationMessageView(APIView):
                 conv,
                 ser.validated_data["message"],
                 ip_address=_client_ip(request),
+                ui_context=ser.validated_data.get("ui_context") or {},
             )
         except VZoneAPIException as exc:
             return Response(

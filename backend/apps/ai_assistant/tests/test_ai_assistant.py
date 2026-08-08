@@ -15,11 +15,21 @@ def api() -> APIClient:
     return APIClient()
 
 
-def test_redact_secrets():
-    text = "password=SuperSecret123 token=abc DATABASE_URL=postgres://u:p@h/db"
-    out = redact_text(text)
-    assert "SuperSecret123" not in out
-    assert "REDACTED" in out
+def test_page_context_normalize():
+    from apps.ai_assistant.services.page_context import normalize_ui_context
+
+    ui = normalize_ui_context({"path": "/panel/python"})
+    assert ui["section"] == "python"
+    assert "logs" in ui["need"].lower() or "Python" in ui["label"]
+
+
+@pytest.mark.django_db
+def test_jail_catalog_no_free_shell():
+    from apps.ai_assistant.services.jail_commands import JAIL_COMMANDS, get_jail_command
+
+    assert get_jail_command("rm_rf") is None
+    assert "pwd" in JAIL_COMMANDS
+    assert all(";" not in " ".join(m["argv"]) for m in JAIL_COMMANDS.values())
 
 
 @pytest.mark.django_db

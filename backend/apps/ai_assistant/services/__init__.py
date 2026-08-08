@@ -32,6 +32,7 @@ def send_message(
     text: str,
     *,
     ip_address: str | None = None,
+    ui_context: dict | None = None,
 ) -> dict:
     if conversation.owner_id != user.pk and getattr(user, "role", None) != User.Role.ADMINISTRATOR:
         from apps.core.exceptions import VZoneAPIException
@@ -44,6 +45,7 @@ def send_message(
         conversation=conversation,
         user_text=text,
         ip_address=ip_address,
+        ui_context=ui_context,
     )
 
 

@@ -47,6 +47,85 @@ class MockProvider:
                 model="mock-coach",
             )
 
+        # Contexte page (injecté en system)
+        page_blob = " ".join(
+            (m.content or "").lower()
+            for m in messages
+            if m.role == "system" and "page actuelle" in (m.content or "").lower()
+        )
+        if "python" in page_blob and any(
+            k in last_user for k in ("page", "suis sur", "analyse", "log", "statut", "erreur", "app")
+        ):
+            calls = []
+            if "check_application_status" in tool_names:
+                calls.append(
+                    ToolCallRequest(id=str(uuid4()), name="check_application_status", arguments={})
+                )
+            if "get_page_logs" in tool_names:
+                calls.append(
+                    ToolCallRequest(
+                        id=str(uuid4()),
+                        name="get_page_logs",
+                        arguments={"runtime": "python", "lines": 100},
+                    )
+                )
+            elif "get_deployment_logs" in tool_names:
+                calls.append(
+                    ToolCallRequest(
+                        id=str(uuid4()),
+                        name="get_deployment_logs",
+                        arguments={"runtime": "python", "lines": 100},
+                    )
+                )
+            if "analyze_deployment_error" in tool_names:
+                calls.append(
+                    ToolCallRequest(
+                        id=str(uuid4()),
+                        name="analyze_deployment_error",
+                        arguments={"runtime": "python"},
+                    )
+                )
+            if calls:
+                return ChatResult(
+                    content="Je détecte la page Python — statut + logs en cours…",
+                    tool_calls=calls,
+                    provider=self.name,
+                    model="mock-coach",
+                )
+        if "node" in page_blob and any(
+            k in last_user for k in ("page", "suis sur", "analyse", "log", "statut", "erreur", "app")
+        ):
+            calls = []
+            if "check_application_status" in tool_names:
+                calls.append(
+                    ToolCallRequest(id=str(uuid4()), name="check_application_status", arguments={})
+                )
+            if "get_page_logs" in tool_names:
+                calls.append(
+                    ToolCallRequest(
+                        id=str(uuid4()),
+                        name="get_page_logs",
+                        arguments={"runtime": "node", "lines": 100},
+                    )
+                )
+            if calls:
+                return ChatResult(
+                    content="Je détecte la page Node — statut + logs…",
+                    tool_calls=calls,
+                    provider=self.name,
+                    model="mock-coach",
+                )
+        if ("terminal" in page_blob or "file manager" in page_blob) and "list_jail_commands" in tool_names:
+            if any(k in last_user for k in ("page", "suis sur", "jail", "commande", "lister", "home")):
+                return ChatResult(
+                    content="Catalogue des commandes jail…",
+                    tool_calls=[
+                        ToolCallRequest(id=str(uuid4()), name="list_jail_commands", arguments={})
+                    ],
+                    provider=self.name,
+                    model="mock-coach",
+                )
+
         # Intent → tool calls lecture uniquement
         if any(k in last_user for k in ("log", "erreur", "error", "failed", "échou")):
             calls: list[ToolCallRequest] = []

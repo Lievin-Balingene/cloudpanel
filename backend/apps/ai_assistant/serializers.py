@@ -47,6 +47,8 @@ class ConversationDetailSerializer(ConversationSerializer):
 
 class SendMessageSerializer(serializers.Serializer):
     message = serializers.CharField(max_length=8000)
+    ui_context = serializers.DictField(required=False, allow_empty=True)
+    auto = serializers.BooleanField(required=False, default=False)
 
 
 class ConfirmActionSerializer(serializers.Serializer):
