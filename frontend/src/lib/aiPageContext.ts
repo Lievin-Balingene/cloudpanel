@@ -1,4 +1,4 @@
-"""Helpers frontend : page courante → besoin immédiat assistant."""
+/** Helpers frontend : page courante → besoin immédiat assistant. */
 
 export type UiPageContext = {
   path: string;
