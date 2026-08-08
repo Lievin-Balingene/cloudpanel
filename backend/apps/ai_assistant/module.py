@@ -6,7 +6,7 @@ registry.register(
     ModuleMeta(
         name="ai_assistant",
         label="AI Deployment Assistant",
-        version="0.35.1",
+        version="0.35.2",
         description=(
             "Assistant IA conversationnel (style ChatGPT) : dialogue multi-tours, "
             "tools contrôlés, contexte page, jail whitelist."

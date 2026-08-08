@@ -142,12 +142,7 @@ def run_assistant_turn(
             logger.warning("AI provider error, fallback mock: %s", exc)
             provider = get_provider("mock")
             result = provider.chat(messages, tools=tools, temperature=temperature)
-            # Note courte une seule fois (pas de pavé à chaque tour)
-            if result.content and "mode local" not in result.content.lower():
-                result.content = (
-                    result.content.rstrip()
-                    + f"\n\n_(Mode local — LLM indisponible : {str(exc)[:100]})_"
-                )
+            # Pas de pavé d'erreur dans le chat — le bandeau UI indique déjà le mode local
 
         provider_name = result.provider or provider_name
         model_name = result.model or model_name
@@ -254,9 +249,12 @@ def run_assistant_turn(
             "(Ollama / provider) ou reformulez votre demande."
         )
 
-    # Pied de page court en mock (évite le pavé Ollama répété)
+    # Pied de page mock discret (une seule fois, sans jargon technique)
     if (provider_name or "").lower() == "mock" and "mode local" not in final_content.lower():
-        final_content = final_content.rstrip() + "\n\n_(Mode local / mock — sans LLM distant.)_"
+        # Ne pas polluer le small talk
+        low = final_content.lower()
+        if not any(k in low for k in ("ça va", "salut", "content de te parler", "à bientôt")):
+            final_content = final_content.rstrip() + "\n\n_(Mode local.)_"
 
     suggestions = _suggest_followups(safe_user, final_content, ui)
     assistant_msg = Message.objects.create(

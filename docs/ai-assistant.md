@@ -26,8 +26,19 @@ sudo systemctl restart vzone-api
 
 Sans Ollama, le provider `mock` guide quand même (heuristiques + tools lecture).
 Si Ollama time out (modèle trop lourd / RAM), un coupe-circuit bascule sur mock pendant
-`VZONE_AI_OLLAMA_CIRCUIT_SEC` (défaut 300s) pour ne pas bloquer le chat.
-Timeout chat : `VZONE_AI_TIMEOUT_SEC` (défaut 25s). Sur petit VPS, préférez `llama3.2:1b`.
+`VZONE_AI_OLLAMA_CIRCUIT_SEC` (défaut 600s). Timeout chat : `VZONE_AI_TIMEOUT_SEC` (défaut **8s**).
+
+Sur petit VPS, au choix :
+```bash
+# A) forcer le mock (recommandé si < 8 Go RAM)
+VZONE_AI_PROVIDER=mock
+
+# B) modèle léger
+ollama pull llama3.2:1b
+VZONE_AI_OLLAMA_MODEL=llama3.2:1b
+VZONE_AI_PROVIDER=auto
+```
+
 
 ## Couverture panneau client
 

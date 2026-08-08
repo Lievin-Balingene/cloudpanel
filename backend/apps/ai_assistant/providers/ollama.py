@@ -22,9 +22,9 @@ _circuit_reason: str = ""
 def _open_circuit(reason: str, seconds: int | None = None) -> None:
     global _circuit_open_until, _circuit_reason
     ttl = seconds if seconds is not None else int(
-        getattr(settings, "VZONE_AI_OLLAMA_CIRCUIT_SEC", 300) or 300
+        getattr(settings, "VZONE_AI_OLLAMA_CIRCUIT_SEC", 600) or 600
     )
-    _circuit_open_until = time.time() + max(30, ttl)
+    _circuit_open_until = time.time() + max(60, ttl)
     _circuit_reason = reason[:200]
     logger.warning("Ollama circuit open %ss: %s", ttl, _circuit_reason)
 
@@ -46,8 +46,8 @@ class OllamaProvider:
             getattr(settings, "VZONE_AI_OLLAMA_URL", "http://127.0.0.1:11434") or ""
         ).rstrip("/")
         self.model = getattr(settings, "VZONE_AI_OLLAMA_MODEL", "llama3.2") or "llama3.2"
-        # Timeout chat plus court par défaut : un hang ne doit pas geler le panel 90s
-        self.timeout = int(getattr(settings, "VZONE_AI_TIMEOUT_SEC", 25) or 25)
+        # Timeout court : sur petit VPS Ollama charge le modèle et bloque le chat
+        self.timeout = int(getattr(settings, "VZONE_AI_TIMEOUT_SEC", 8) or 8)
 
     def is_available(self) -> bool:
         if not self.base_url:
