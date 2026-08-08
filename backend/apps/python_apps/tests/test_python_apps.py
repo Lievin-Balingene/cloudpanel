@@ -242,7 +242,20 @@ def test_is_runas_infra_error_detects_missing_runuser():
 
 
 @pytest.mark.unit
-def test_summarize_traceback_keeps_real_exception_not_gunicorn_middle():
+def test_gunicorn_logs_to_stdio_not_path():
+    from apps.python_apps.models import PythonApp
+    from apps.python_apps.services import _build_start_command
+
+    app = PythonApp(
+        name="demo",
+        mode=PythonApp.Mode.WSGI,
+        entrypoint="passenger_wsgi.py",
+        port=8100,
+    )
+    cmd = _build_start_command(app, Path("/tmp/app"), Path("/tmp/py"))
+    assert "--error-logfile" in cmd
+    assert cmd[cmd.index("--error-logfile") + 1] == "-"
+    assert cmd[cmd.index("--access-logfile") + 1] == "-"
     tb = "\n".join(
         [
             'File "/home/lievin/virtualenv/vzone/3.12/lib/python3.10/site-packages/gunicorn/app/base.py", line 235, in run',

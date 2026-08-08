@@ -714,6 +714,13 @@ def _format_start_failure(*, returncode: int | None, stderr_new: str, port: int 
             + (clean[-400:] if clean else "env: '--': No such file or directory")
         )
     summary = _summarize_traceback(clean)
+    if "permission denied" in (summary or clean).lower() and "error.log" in (summary or clean).lower():
+        summary = (
+            (summary + "\n" if summary else "")
+            + "Les logs appartiennent souvent au user panel (vzone) alors que "
+            "gunicorn tourne en jail client — mettez à jour le panel (≥ 0.35.9) "
+            "ou : chmod 666 ~/…/logs/*.log"
+        )
     parts: list[str] = []
     if returncode is not None:
         if returncode == 127 and "env:" in low:
@@ -1018,12 +1025,69 @@ def _build_start_command(app: PythonApp, app_root: Path, py: Path) -> list[str]:
         str(app_root),
         "--workers",
         "1",
+        # « - » = stdout/stderr hérités (FD ouverts par le panel).
+        # Évite PermissionError si error.log est owned par vzone et non par le jail.
         "--access-logfile",
-        str(app_root / "logs" / "access.log"),
+        "-",
         "--error-logfile",
-        str(app_root / "logs" / "error.log"),
+        "-",
         "--capture-output",
     ]
+
+
+def _prepare_app_logs(owner: User, app_root: Path) -> tuple[Path, Path]:
+    """Crée logs/ accessibles au compte jail (sinon gunicorn → PermissionError)."""
+    import shlex
+
+    logs = app_root / "logs"
+    access_log = logs / "access.log"
+    error_log = logs / "error.log"
+    try:
+        logs.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        logger.warning("mkdir logs %s: %s", logs, exc)
+
+    # Fichiers créés par le process « vzone » : ouvrir en écriture pour le jail
+    for path in (access_log, error_log):
+        if not path.exists():
+            try:
+                path.touch()
+            except OSError:
+                pass
+        try:
+            # 666 : panel (vzone) + client (jail) peuvent append ; ACL home peut déjà suffire
+            path.chmod(0o666)
+        except OSError:
+            pass
+
+    try:
+        from apps.accounts.linux_users import jail_username_for
+        from apps.security.runas import build_runas_cmd, runas_available
+
+        if runas_available() and provision_mode() != "mock":
+            jail = jail_username_for(owner)
+            # Recrée sous UID client si le fichier est encore owned par vzone
+            script = (
+                f"mkdir -p {shlex.quote(str(logs))} && "
+                f"chmod u+w {shlex.quote(str(logs))} 2>/dev/null || true; "
+                # Si non inscriptible : supprimer (dir owned par le client) puis retoucher
+                f"for f in {shlex.quote(str(access_log))} {shlex.quote(str(error_log))}; do "
+                f"  if ! test -w \"$f\" 2>/dev/null; then rm -f \"$f\"; fi; "
+                f"  touch \"$f\" 2>/dev/null || true; "
+                f"  chmod 664 \"$f\" 2>/dev/null || true; "
+                f"done; "
+                f"chmod 775 {shlex.quote(str(logs))} 2>/dev/null || true"
+            )
+            probe = build_runas_cmd(jail, ["bash", "-c", script])
+            subprocess.run(probe, capture_output=True, text=True, timeout=45, check=False)
+    except Exception:  # noqa: BLE001
+        logger.debug("prepare_app_logs runas skip", exc_info=True)
+
+    try:
+        logs.chmod(0o775)
+    except OSError:
+        pass
+    return access_log, error_log
 
 
 @transaction.atomic
@@ -1033,9 +1097,8 @@ def start_python_app(app: PythonApp) -> PythonApp:
     _, app_root = resolve_app_root(app.owner, app.relative_root)
     venv_dir = Path(app.venv_path) if app.venv_path else cpanel_venv_path(app.owner, app.name, app.python_version)
     py = venv_python(venv_dir)
+    access_log, error_log = _prepare_app_logs(app.owner, app_root)
     pid_file = app_root / "logs" / "app.pid"
-    error_log = app_root / "logs" / "error.log"
-    (app_root / "logs").mkdir(parents=True, exist_ok=True)
 
     env = _child_process_env(app, app_root, venv_dir)
 
@@ -1084,7 +1147,7 @@ def start_python_app(app: PythonApp) -> PythonApp:
     try:
         from apps.accounts.linux_users import jail_username_for
 
-        access_f = open(app_root / "logs" / "access.log", "a", encoding="utf-8")
+        access_f = open(access_log, "a", encoding="utf-8")
         error_f = open(error_log, "a", encoding="utf-8")
         jail = jail_username_for(app.owner)
         spawn_cmd = build_runas_cmd(jail, cmd, env=env)
