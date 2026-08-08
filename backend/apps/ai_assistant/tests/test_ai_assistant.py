@@ -110,7 +110,24 @@ def test_mock_list_apps_intent_calls_tool():
     assert r.tool_calls[0].name == "check_application_status"
 
 
-def test_mock_stop_intent_lists_then_stops():
+def test_mock_smalltalk_how_are_you():
+    from apps.ai_assistant.providers import ChatMessage
+    from apps.ai_assistant.providers.mock import MockProvider
+
+    p = MockProvider()
+    r = p.chat(
+        [
+            ChatMessage(role="user", content="salut"),
+            ChatMessage(role="assistant", content="Salut !"),
+            ChatMessage(role="user", content="comment vas-tu"),
+        ],
+        tools=[],
+    )
+    assert not r.tool_calls
+    low = r.content.lower()
+    assert "ça va" in low or "ca va" in low
+    assert "stoppe mon application" not in low
+
     from apps.ai_assistant.providers import ChatMessage, ToolSpec
     from apps.ai_assistant.providers.mock import MockProvider
 

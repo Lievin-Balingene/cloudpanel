@@ -586,25 +586,53 @@ def _guess_runtime(text: str) -> str:
 
 def _converse(last_user: str, prev_assistant: str, user_turns: list[str]) -> str:
     text = (last_user or "").strip()
-    low = text.lower()
+    low = text.lower().strip()
 
-    if re.search(r"\b(bonjour|salut|hello|hey|coucou)\b", low) and len(low) < 40:
+    # —— Small talk / politesse (réponses humaines, pas de dump panel) ——
+    if re.search(
+        r"\b(comment\s+vas[-\s]?tu|ça\s+va|ca\s+va|comment\s+ça\s+va|comment\s+ca\s+va|"
+        r"how\s+are\s+you|tu\s+vas\s+bien|quoi\s+de\s+neuf)\b",
+        low,
+    ):
         return (
-            "Salut ! Je suis **V-zone AI** (mode local).\n\n"
-            "Je peux agir tout de suite, par ex. :\n"
-            "- *liste mes applications Python*\n"
-            "- *stoppe mon application Python*\n"
-            "- *analyse mes logs*\n\n"
-            "Qu'est-ce que tu veux faire ?"
+            "Ça va très bien, merci 😊 Et toi ?\n\n"
+            "Quand tu veux, on peut enchaîner sur ton panel "
+            "(apps, domaines, mails, fichiers…) — ou juste discuter."
         )
 
-    if any(k in low for k in ("merci", "thanks", "nickel", "parfait", "super")):
-        return "Avec plaisir. Tu veux enchaîner (stop, start, logs…) ?"
-
-    if any(k in low for k in ("qui es-tu", "tu peux quoi", "que peux-tu", "tes capacités")):
+    if re.search(r"\b(bonjour|salut|hello|hey|coucou|bonsoir)\b", low) and len(low) < 48:
         return (
-            "Assistant V-zone (mode local) : liste apps, logs, et **stop / start / restart** "
-            "après ta confirmation.\n\nEssaie : *stoppe mon application Python*."
+            "Salut ! Content de te parler.\n\n"
+            "Je peux discuter normalement **ou** agir sur ton compte V-zone "
+            "(lister/arrêter des apps, domaines, SSL, DB, emails…). "
+            "Dis-moi juste ce dont tu as besoin."
+        )
+
+    if any(k in low for k in ("merci", "thanks", "nickel", "parfait", "super", "top", "cool")):
+        return "Avec plaisir 🙂 Tu as autre chose en tête ?"
+
+    if any(k in low for k in ("au revoir", "bye", "à plus", "a plus", "ciao", "bonne soirée", "bonne nuit")):
+        return "À bientôt ! N'hésite pas si tu as besoin du panel."
+
+    if any(
+        k in low
+        for k in (
+            "qui es-tu",
+            "tu peux quoi",
+            "que peux-tu",
+            "tes capacités",
+            "tu sais faire",
+            "aide-moi",
+            "aide moi",
+        )
+    ):
+        return (
+            "Je suis **V-zone AI**, l'assistant du panneau.\n\n"
+            "En mode local (sans LLM distant) je suis surtout fort pour **agir** :\n"
+            "- apps Python/Node (liste, stop, start, logs)\n"
+            "- domaines, SSL, bases, emails, fichiers, cron, WP, backups…\n\n"
+            "Tu peux aussi me poser une question technique. "
+            "Exemple : *liste mes domaines* ou *explique-moi WSGI*."
         )
 
     if any(k in low for k in ("wsgi", "asgi", "passenger", "gunicorn", "uvicorn")):
@@ -613,6 +641,15 @@ def _converse(last_user: str, prev_assistant: str, user_turns: list[str]) -> str
             "- **ASGI** : async (FastAPI, uvicorn).\n"
             "- Sur V-zone : app → port local → domaine en reverse-proxy.\n\n"
             "Tu configures Django ou FastAPI ?"
+        )
+
+    if any(k in low for k in ("c'est quoi", "cest quoi", "explique", "comment marche", "différenc", "pourquoi")):
+        return (
+            f"Bonne question sur : « {text[:160]} ».\n\n"
+            "En mode local je n'ai pas un grand modèle derrière moi — "
+            "pour les longues explications, Ollama change la donne. "
+            "Pour **ton** compte, je peux aller chercher les infos live.\n\n"
+            "Tu veux une explication courte, ou que je regarde quelque chose sur le panel ?"
         )
 
     url = ""
@@ -624,19 +661,28 @@ def _converse(last_user: str, prev_assistant: str, user_turns: list[str]) -> str
         return (
             "OK pour le déploiement"
             + (f" (`{url}`)" if url else "")
-            + ". Dis-moi : runtime (Django/Node), domaine, besoin d'une base ? "
-            "Ou *liste mes apps* / *stoppe mon app Python*."
+            + ". Dis-moi où tu en es : repo prêt ? domaine ? erreur sous les yeux ? "
+            "On avance message par message."
         )
 
+    # Multi-tours : ne pas forcer le panel sur du bavardage
     if len(user_turns) >= 2 and prev_assistant:
+        if len(text) < 80 and not any(
+            k in low for k in ("app", "domaine", "log", "mail", "fichier", "ssl", "base", "cron")
+        ):
+            return (
+                f"Oui — « {text[:200]} ».\n\n"
+                "Je t'écoute. Tu peux parler librement ; dès que tu veux du concret sur le serveur, "
+                "dis par ex. *liste mes apps* ou *montre mes domaines*."
+            )
         return (
-            f"Bien reçu : « {text[:240]} ».\n\n"
-            "Je peux **lister**, **arrêter**, **démarrer** ou lire les **logs**. "
-            "Ex. *stoppe mon application Python*."
+            f"Compris : « {text[:240]} ».\n\n"
+            "Si c'est lié au panel, je peux agir tout de suite "
+            "(liste / stop / logs / domaines…). Sinon reformule et j'y réponds au mieux."
         )
 
     return (
         f"Compris : « {text[:280]} ».\n\n"
-        "Essaie une action claire : *liste mes applications Python*, "
-        "*stoppe mon application Python*, ou *analyse mes logs*."
+        "Dis-moi ce que tu veux — discussion, debug, ou une action panel "
+        "(*liste mes applications*, *mes domaines*, *mes mails*…)."
     )
