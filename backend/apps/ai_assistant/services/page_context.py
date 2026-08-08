@@ -71,8 +71,11 @@ PAGE_CATALOG: dict[str, dict[str, Any]] = {
     "wordpress": {
         "label": "WordPress",
         "need": "Installation / sites WP.",
-        "suggested_tools": ["check_domain_configuration", "check_web_server"],
-        "auto_prompt": "Je suis sur WordPress. Aide-moi pour l'installation ou un diagnostic domaine/web.",
+        "suggested_tools": ["list_wordpress_sites", "list_domains"],
+        "auto_prompt": (
+            "Je suis sur WordPress. Liste mes sites. "
+            "Pour installer : indique un sous-domaine (ex. crée WordPress sur wp.exemple.com)."
+        ),
     },
     "files": {
         "label": "File Manager",

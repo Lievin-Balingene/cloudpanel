@@ -80,11 +80,11 @@ const STARTERS = [
   { label: "Vue du compte", prompt: "Montre la vue d'ensemble de mon compte" },
   { label: "Mes apps", prompt: "Liste moi mes applications Python et Node" },
   { label: "Mes domaines", prompt: "Liste mes domaines et le statut SSL" },
+  { label: "Sites WordPress", prompt: "Liste mes sites WordPress" },
+          { label: "Installer WordPress", prompt: "Crée un site WordPress sur wp.exemple.com" },
   { label: "Bases de données", prompt: "Liste mes bases de données" },
   { label: "Emails", prompt: "Liste mes boîtes mail" },
   { label: "Sauvegardes", prompt: "Liste mes sauvegardes" },
-  { label: "Arrêter une app", prompt: "Stoppe mon application Python" },
-  { label: "Fichiers home", prompt: "Liste les fichiers à la racine de mon home" },
 ] as const;
 
 function renderContent(text: string) {
@@ -361,17 +361,30 @@ export function AiDeploymentAssistant() {
 
   const confirmMut = useMutation({
     mutationFn: (payload: { token: string; confirm: boolean }) =>
-      apiRequest<{ ok?: boolean; cancelled?: boolean; result?: unknown }>("/ai/actions/confirm/", {
+      apiRequest<{
+        ok?: boolean;
+        cancelled?: boolean;
+        result?: unknown;
+        pending_actions?: PendingAction[];
+      }>("/ai/actions/confirm/", {
         method: "POST",
         body: JSON.stringify(payload),
       }),
     onSuccess: (data, vars) => {
-      setPending((prev) => prev.filter((p) => p.token !== vars.token));
+      const followUps = data.pending_actions || [];
+      setPending((prev) => [
+        ...prev.filter((p) => p.token !== vars.token),
+        ...followUps,
+      ]);
       const ok = Boolean(data.ok);
       const label = !vars.confirm
         ? "Action annulée."
         : ok
-          ? "**Action exécutée.**\n\n```json\n" +
+          ? "**Action exécutée.**"
+            + (followUps.length
+              ? "\n\nProchaine étape prête — confirme **Exécuter** ci-dessous."
+              : "")
+            + "\n\n```json\n" +
             JSON.stringify(data.result ?? {}, null, 2).slice(0, 1800) +
             "\n```"
           : "**Action échouée.** Vérifiez les logs ou reformulez.";

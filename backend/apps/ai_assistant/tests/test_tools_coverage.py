@@ -83,6 +83,7 @@ def test_mock_intents_panel_coverage():
         ("Liste mes bases de données", "list_databases"),
         ("Liste mes tâches cron", "list_cron_jobs"),
         ("Liste mes sites wordpress", "list_wordpress_sites"),
+        ("cree un nouveau site wordpress avec le sous domaine wp.7une.info", "list_domains"),
         ("Liste les fichiers à la racine", "list_files"),
         ("Liste mes comptes ftp", "list_ftp_accounts"),
         ("Liste mes sauvegardes", "list_backups"),
@@ -96,3 +97,74 @@ def test_mock_intents_panel_coverage():
         r = p.chat([ChatMessage(role="user", content=prompt)], tools=tools)
         assert r.tool_calls, f"Aucun tool pour: {prompt}"
         assert r.tool_calls[0].name == expected, f"{prompt} → {r.tool_calls[0].name} ≠ {expected}"
+
+
+def test_mock_wordpress_create_chains_install_when_domain_exists():
+    from apps.ai_assistant.providers import ChatMessage, ToolSpec
+    from apps.ai_assistant.providers.mock import MockProvider, _extract_hostname
+
+    assert _extract_hostname("cree wp sur wp.7une.info") == "wp.7une.info"
+
+    p = MockProvider()
+    tools = [
+        ToolSpec(name=n, description=n, parameters={"type": "object", "properties": {}})
+        for n in ("list_domains", "list_wordpress_sites", "install_wordpress", "create_domain")
+    ]
+    # Marque install_wordpress comme dangereuse n'est pas requis pour le mock packing
+    r = p.chat(
+        [
+            ChatMessage(
+                role="user",
+                content="cree un nouveau site wordpress avec le sous domaine wp.7une.info",
+            ),
+            ChatMessage(
+                role="tool",
+                name="list_domains",
+                content='{"ok": true, "domains": [{"id": 11, "name": "7une.info"}, {"id": 42, "name": "wp.7une.info"}]}',
+            ),
+            ChatMessage(
+                role="tool",
+                name="list_wordpress_sites",
+                content='{"ok": true, "sites": []}',
+            ),
+        ],
+        tools=tools,
+    )
+    assert r.tool_calls
+    assert r.tool_calls[0].name == "install_wordpress"
+    assert r.tool_calls[0].arguments.get("domain_id") == 42
+
+
+def test_mock_wordpress_create_chains_subdomain_when_missing():
+    from apps.ai_assistant.providers import ChatMessage, ToolSpec
+    from apps.ai_assistant.providers.mock import MockProvider
+
+    p = MockProvider()
+    tools = [
+        ToolSpec(name=n, description=n, parameters={"type": "object", "properties": {}})
+        for n in ("list_domains", "list_wordpress_sites", "install_wordpress", "create_domain")
+    ]
+    r = p.chat(
+        [
+            ChatMessage(
+                role="user",
+                content="cree un nouveau site wordpress avec le sous domaine wp.7une.info",
+            ),
+            ChatMessage(
+                role="tool",
+                name="list_domains",
+                content='{"ok": true, "domains": [{"id": 11, "name": "7une.info"}]}',
+            ),
+            ChatMessage(
+                role="tool",
+                name="list_wordpress_sites",
+                content='{"ok": true, "sites": []}',
+            ),
+        ],
+        tools=tools,
+    )
+    assert r.tool_calls
+    assert r.tool_calls[0].name == "create_domain"
+    assert r.tool_calls[0].arguments.get("name") == "wp.7une.info"
+    assert r.tool_calls[0].arguments.get("parent_id") == 11
+    assert r.tool_calls[0].arguments.get("domain_type") == "subdomain"

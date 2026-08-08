@@ -38,9 +38,12 @@ class MockProvider:
             last_user = user_turns[-1]
         last_user_l = last_user.lower()
 
-        # Après tool(s) → éventuellement enchaîner stop/start/restart, sinon synthèse
+        # Après tool(s) → éventuellement enchaîner stop/start/restart / WP, sinon synthèse
         if messages and messages[-1].role == "tool":
             follow = _lifecycle_after_tools(messages, tool_names, last_user_l)
+            if follow is not None:
+                return follow
+            follow = _wordpress_after_tools(messages, tool_names, last_user_l)
             if follow is not None:
                 return follow
             return ChatResult(
@@ -155,6 +158,265 @@ def _infer_app_id_from_history(messages: list[ChatMessage], last_user_l: str) ->
     return None
 
 
+def _extract_hostname(text: str) -> str | None:
+    """Extrait un FQDN (ex. wp.7une.info) depuis le message utilisateur."""
+    raw = (text or "").lower()
+    m = re.search(
+        r"(?:sous[-\s]?domaine|domaine|hostname|host|url|sur|pour|avec)\s+"
+        r"(?:le\s+|la\s+|l['\u2019]\s*)?(?:https?://)?([a-z0-9][a-z0-9.-]*\.[a-z]{2,})",
+        raw,
+    )
+    if m:
+        return m.group(1).rstrip(".").strip()
+    found = re.findall(
+        r"\b(?:https?://)?([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+        r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)\b",
+        raw,
+    )
+    skip_suffix = (".json", ".py", ".js", ".ts", ".md", ".txt", ".log", ".php")
+    for h in found:
+        host = h.rstrip(".")
+        if any(host.endswith(s) for s in skip_suffix):
+            continue
+        if host.count(".") < 1:
+            continue
+        if host in {"wordpress.com", "wordpress.org", "example.com", "localhost.local"}:
+            continue
+        return host
+    return None
+
+
+def _wants_wordpress_install(text: str) -> bool:
+    t = (text or "").lower()
+    has_wp = "wordpress" in t or "word press" in t or bool(re.search(r"\bwp\b", t))
+    if not has_wp:
+        return False
+    return any(
+        k in t
+        for k in (
+            "crée",
+            "cree",
+            "créer",
+            "creer",
+            "install",
+            "installe",
+            "nouveau site",
+            "nouvelle install",
+            "ajouter un site",
+            "setup wordpress",
+            "deploy wordpress",
+        )
+    )
+
+
+def _parent_hostname(host: str) -> str | None:
+    parts = (host or "").strip(".").split(".")
+    if len(parts) < 3:
+        return None
+    return ".".join(parts[1:])
+
+
+def _domains_from_tool_payload(data: dict[str, Any]) -> list[dict]:
+    payload = data.get("data") if isinstance(data.get("data"), dict) else data
+    if not isinstance(payload, dict):
+        return []
+    items = payload.get("domains") or []
+    return [d for d in items if isinstance(d, dict)]
+
+
+def _wp_sites_from_tool_payload(data: dict[str, Any]) -> list[dict]:
+    payload = data.get("data") if isinstance(data.get("data"), dict) else data
+    if not isinstance(payload, dict):
+        return []
+    items = payload.get("sites") or []
+    return [s for s in items if isinstance(s, dict)]
+
+
+def _wordpress_after_tools(
+    messages: list[ChatMessage],
+    tool_names: set[str],
+    last_user_l: str,
+) -> ChatResult | None:
+    """Après list_domains / list_wordpress : propose create_domain ou install_wordpress."""
+    if not _wants_wordpress_install(last_user_l):
+        return None
+
+    recent: list[ChatMessage] = []
+    for m in reversed(messages):
+        if m.role != "tool":
+            break
+        recent.append(m)
+    recent.reverse()
+    if not recent:
+        return None
+
+    names = {(m.name or "") for m in recent}
+    if "install_wordpress" in names:
+        return None
+
+    # create_domain vient de réussir → enchaîner l'install WP
+    for m in recent:
+        if (m.name or "") != "create_domain":
+            continue
+        try:
+            data = json.loads(m.content or "{}")
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict) or data.get("pending_confirmation"):
+            return None
+        if not data.get("ok", True):
+            return None
+        payload = data.get("data") if isinstance(data.get("data"), dict) else None
+        if payload is None and isinstance(data.get("result"), dict):
+            payload = data["result"]
+        if payload is None:
+            payload = data
+        if not isinstance(payload, dict):
+            continue
+        did = payload.get("id")
+        if did and "install_wordpress" in tool_names:
+            title = str(payload.get("name") or "Mon site").split(".")[0] or "Mon site"
+            return ChatResult(
+                content=(
+                    f"Domaine **{payload.get('name')}** prêt. "
+                    "Je prépare l'installation WordPress — clique **Exécuter** pour confirmer."
+                ),
+                tool_calls=[
+                    ToolCallRequest(
+                        id=str(uuid4()),
+                        name="install_wordpress",
+                        arguments={
+                            "domain_id": int(did),
+                            "title": title[:80],
+                            "admin_user": "admin",
+                        },
+                    )
+                ],
+                provider="mock",
+                model="mock-coach",
+            )
+
+    if "list_domains" not in names:
+        return None
+
+    domains: list[dict] = []
+    wp_sites: list[dict] = []
+    for m in recent:
+        try:
+            data = json.loads(m.content or "{}")
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        if (m.name or "") == "list_domains":
+            domains = _domains_from_tool_payload(data)
+        elif (m.name or "") == "list_wordpress_sites":
+            wp_sites = _wp_sites_from_tool_payload(data)
+
+    host = _extract_hostname(last_user_l)
+    if not host:
+        return ChatResult(
+            content=(
+                "Pour installer WordPress, indique le **domaine ou sous-domaine** cible.\n"
+                "Exemple : *crée un site WordPress sur blog.exemple.com*"
+            ),
+            provider="mock",
+            model="mock-coach",
+        )
+
+    match = next(
+        (d for d in domains if str(d.get("name") or "").lower() == host),
+        None,
+    )
+    if match:
+        did = int(match.get("id") or 0)
+        already = next(
+            (s for s in wp_sites if int(s.get("domain_id") or 0) == did),
+            None,
+        )
+        if already:
+            return ChatResult(
+                content=(
+                    f"WordPress est **déjà installé** sur `{host}` "
+                    f"(site #{already.get('id')} — {already.get('site_url') or already.get('title')}).\n\n"
+                    "Autre chose ? (SSL / liste / supprimer)"
+                ),
+                provider="mock",
+                model="mock-coach",
+            )
+        if "install_wordpress" not in tool_names or not did:
+            return None
+        title = host.split(".")[0] or "Mon site"
+        return ChatResult(
+            content=(
+                f"Le domaine **{host}** existe (id {did}). "
+                "Je prépare **install_wordpress** — clique **Exécuter** pour confirmer."
+            ),
+            tool_calls=[
+                ToolCallRequest(
+                    id=str(uuid4()),
+                    name="install_wordpress",
+                    arguments={
+                        "domain_id": did,
+                        "title": title[:80],
+                        "admin_user": "admin",
+                    },
+                )
+            ],
+            provider="mock",
+            model="mock-coach",
+        )
+
+    # Domaine absent → créer le sous-domaine si parent connu
+    parent_name = _parent_hostname(host)
+    parent = None
+    if parent_name:
+        parent = next(
+            (d for d in domains if str(d.get("name") or "").lower() == parent_name),
+            None,
+        )
+    if parent and "create_domain" in tool_names:
+        return ChatResult(
+            content=(
+                f"**{host}** n'existe pas encore. Je prépare la création du sous-domaine "
+                f"sous **{parent.get('name')}** — clique **Exécuter**, "
+                "puis j'enchaînerai l'installation WordPress."
+            ),
+            tool_calls=[
+                ToolCallRequest(
+                    id=str(uuid4()),
+                    name="create_domain",
+                    arguments={
+                        "name": host,
+                        "domain_type": "subdomain",
+                        "parent_id": int(parent["id"]),
+                        "create_dns_zone": True,
+                    },
+                )
+            ],
+            provider="mock",
+            model="mock-coach",
+        )
+
+    lines = [
+        f"Je ne trouve pas **{host}** dans tes domaines.",
+    ]
+    if parent_name and not parent:
+        lines.append(
+            f"Le parent **{parent_name}** est aussi absent — crée d'abord ce domaine "
+            "(page Domaines), puis redemande l'install WP."
+        )
+    elif domains:
+        sample = ", ".join(f"`{d.get('name')}`" for d in domains[:8])
+        lines.append(f"Domaines disponibles : {sample}")
+        lines.append("Indique un domaine existant, ou crée le sous-domaine dans Domaines.")
+    return ChatResult(
+        content="\n".join(lines),
+        provider="mock",
+        model="mock-coach",
+    )
+
+
 def _extract_app_id(text: str) -> int | None:
     m = re.search(r"\b(?:id\s*[:=]?\s*|#\s*|app\s+)(\d{1,9})\b", text.lower())
     if m:
@@ -244,8 +506,30 @@ def _detect_intent(
 
     if wants_list and any(k in last_user_l for k in ("cron", "tâche planif", "tache planif", "crontab")):
         return {"say": "Je liste tes tâches cron…", "tools": [("list_cron_jobs", {})]}
+
+    # WordPress : créer / installer AVANT le simple listage
+    if _wants_wordpress_install(last_user_l):
+        host = _extract_hostname(last_user_l)
+        say = "Je prépare l'installation WordPress"
+        if host:
+            say += f" sur **{host}**"
+        say += " — je vérifie d'abord tes domaines et sites WP…"
+        return {
+            "say": say,
+            "tools": [("list_domains", {}), ("list_wordpress_sites", {})],
+        }
     if any(k in last_user_l for k in ("wordpress", "wp ")) or (wants_list and "wp" in last_user_l):
         return {"say": "Je liste tes sites WordPress…", "tools": [("list_wordpress_sites", {})]}
+    if "wordpress" in page_blob and any(
+        k in last_user_l for k in ("aide", "help", "je suis sur", "sites wp")
+    ):
+        return {
+            "say": (
+                "Tu es sur WordPress. Je liste tes sites. "
+                "Pour en créer un : *crée un site WordPress sur sous.domaine.tld*."
+            ),
+            "tools": [("list_wordpress_sites", {})],
+        }
 
     if any(k in last_user_l for k in ("fichier", "dossier", "répertoire", "repertoire", "file manager")):
         path = ""
@@ -575,7 +859,14 @@ def _synthesize_tools(messages: list[ChatMessage]) -> str:
                 parts.append(f"**{name}** (ok={ok}) :\n```json\n{snippet}\n```")
 
     body = "\n\n".join(p for p in parts if p) or "Aucune donnée retournée par les outils."
-    return body + "\n\nAutre chose ? (stop / start / logs / liste)"
+    names_used = {(m.name or "") for m in tool_msgs}
+    if names_used & {"list_wordpress_sites", "install_wordpress", "delete_wordpress", "create_domain"}:
+        footer = "\n\nAutre chose ? (installer WP / SSL / liste domaines)"
+    elif names_used & {"list_domains", "issue_ssl_certificate", "get_ssl_status"}:
+        footer = "\n\nAutre chose ? (SSL / WordPress / liste)"
+    else:
+        footer = "\n\nAutre chose ? (stop / start / logs / liste)"
+    return body + footer
 
 
 def _format_apps(data: dict) -> str:

@@ -35,29 +35,36 @@ def list_wordpress_sites(user: User, params: dict[str, Any]) -> dict[str, Any]:
     name="install_wordpress",
     description=(
         "Installe WordPress sur un domaine du compte (confirmation requise). "
-        "Ne renvoie jamais le mot de passe admin en clair."
+        "Accepte domain_id ou domain_name. Ne renvoie jamais le mot de passe admin en clair."
     ),
     parameters={
         "type": "object",
         "properties": {
             "domain_id": {"type": "integer"},
+            "domain_name": {"type": "string"},
             "title": {"type": "string"},
             "admin_user": {"type": "string"},
             "admin_email": {"type": "string"},
             "admin_password": {"type": "string"},
             "locale": {"type": "string"},
         },
-        "required": ["domain_id"],
         "additionalProperties": False,
     },
     dangerous=True,
 )
 def install_wordpress(user: User, params: dict[str, Any]) -> dict[str, Any]:
+    from apps.domains.services import domains_queryset_for
     from apps.wordpress.services import install_wordpress as svc
 
     domain_id = require_int(params, "domain_id")
+    domain_name = require_str(params, "domain_name", max_len=253)
+    if not domain_id and domain_name:
+        d = domains_queryset_for(user).filter(name__iexact=domain_name.strip().lower()).first()
+        if not d:
+            return err(f"Domaine introuvable : {domain_name}", "not_found")
+        domain_id = d.pk
     if not domain_id:
-        return err("domain_id requis")
+        return err("domain_id ou domain_name requis")
 
     def _run():
         site, _password = svc(

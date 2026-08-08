@@ -55,7 +55,8 @@ const SECTIONS: Record<
   wordpress: {
     label: "WordPress",
     need: "Sites WP",
-    auto_prompt: "Je suis sur WordPress. Aide installation ou diagnostic domaine/web.",
+    auto_prompt:
+      "Je suis sur WordPress. Liste mes sites WP. Pour en créer un, dis-moi le sous-domaine (ex. wp.exemple.com).",
   },
   files: {
     label: "File Manager",

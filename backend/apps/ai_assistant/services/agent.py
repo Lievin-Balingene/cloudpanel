@@ -203,6 +203,20 @@ def run_assistant_turn(
                     }
                     conversation.context = ctx2
                     conversation.save(update_fields=["context", "updated_at"])
+                # WP : après create_domain confirmé → enchaîner install_wordpress
+                if tool.spec.name == "create_domain" and args.get("name"):
+                    last_u = ""
+                    for m in reversed(messages):
+                        if m.role == "user" and m.content:
+                            last_u = m.content
+                            break
+                    from apps.ai_assistant.providers.mock import _wants_wordpress_install
+
+                    if _wants_wordpress_install(last_u.lower()):
+                        ctx2 = dict(conversation.context or {})
+                        ctx2["wp_install_after"] = str(args["name"]).strip().lower()
+                        conversation.context = ctx2
+                        conversation.save(update_fields=["context", "updated_at"])
                 pending_actions.append(
                     {
                         "token": action.token,
@@ -439,6 +453,26 @@ def confirm_pending_action(
             }
             conv.context = ctx
             conv.save(update_fields=["context", "updated_at"])
+
+        follow_up_pending = None
+        if (
+            action.tool_name == "create_domain"
+            and result.get("ok")
+            and action.conversation
+        ):
+            follow_up_pending = _maybe_queue_wp_install_after_domain(
+                user=user,
+                conversation=action.conversation,
+                create_result=result,
+                ip_address=ip_address,
+            )
+
+        extra_note = ""
+        if follow_up_pending:
+            extra_note = (
+                "\n\nProchaine étape : **Installer WordPress** — "
+                "confirme avec le bouton **Exécuter** ci-dessous."
+            )
         Message.objects.create(
             conversation=action.conversation,
             role=Message.Role.ASSISTANT,
@@ -450,13 +484,70 @@ def confirm_pending_action(
                     if not result.get("ok") and result.get("error")
                     else ""
                 )
+                + extra_note
                 + "\n```json\n"
                 + json.dumps(action.result, ensure_ascii=False, indent=2)[:2000]
                 + "\n```"
             ),
             metadata={"pending_token": token, "result": action.result},
         )
+        out: dict[str, Any] = {
+            "ok": bool(result.get("ok")),
+            "result": action.result,
+            "status": action.status,
+        }
+        if follow_up_pending:
+            out["pending_actions"] = [
+                {
+                    "token": follow_up_pending.token,
+                    "tool_name": follow_up_pending.tool_name,
+                    "description": follow_up_pending.description,
+                    "params": redact_obj(follow_up_pending.params),
+                    "expires_at": follow_up_pending.expires_at.isoformat(),
+                }
+            ]
+        return out
     return {"ok": bool(result.get("ok")), "result": action.result, "status": action.status}
+
+
+def _maybe_queue_wp_install_after_domain(
+    *,
+    user: User,
+    conversation: Conversation,
+    create_result: dict[str, Any],
+    ip_address: str | None,
+) -> PendingAction | None:
+    """Si create_domain faisait partie d'un flux WP, enfile install_wordpress."""
+    ctx = dict(conversation.context or {})
+    host = str(ctx.pop("wp_install_after", "") or "").strip().lower()
+    if not host:
+        return None
+    conversation.context = ctx
+    conversation.save(update_fields=["context", "updated_at"])
+
+    payload = create_result.get("result") if isinstance(create_result.get("result"), dict) else None
+    if payload is None and isinstance(create_result.get("data"), dict):
+        payload = create_result["data"]
+    if payload is None:
+        payload = create_result
+    name = str(payload.get("name") or "").strip().lower()
+    domain_id = payload.get("id")
+    if not domain_id or (name and name != host):
+        # name manquant : on fait confiance à wp_install_after + id
+        if not domain_id:
+            return None
+    try:
+        domain_id = int(domain_id)
+    except (TypeError, ValueError):
+        return None
+    title = (name or host).split(".")[0] or "Mon site"
+    return _create_pending(
+        user,
+        conversation,
+        "install_wordpress",
+        {"domain_id": domain_id, "title": title[:80], "admin_user": "admin"},
+        ip_address,
+    )
 
 
 def _sanitize_tool_args(args: dict[str, Any]) -> dict[str, Any]:
