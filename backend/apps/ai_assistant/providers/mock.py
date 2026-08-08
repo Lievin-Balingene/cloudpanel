@@ -188,6 +188,73 @@ def _detect_intent(
         k in last_user_l for k in ("app", "application", "projet", "site", "service")
     )
 
+    # —— Panneau client (lecture / actions fréquentes) ——
+    if any(k in last_user_l for k in ("vue d'ensemble", "overview", "mon compte", "espace disque", "quota")):
+        return {"say": "Je charge la vue d'ensemble du compte…", "tools": [("get_account_overview", {})]}
+    if any(k in last_user_l for k in ("mon package", "mon forfait", "limites du package")):
+        return {"say": "Je regarde ton package…", "tools": [("get_my_package", {})]}
+    if any(k in last_user_l for k in ("2fa", "sécurité", "securite")) and "mot de passe" not in last_user_l:
+        return {"say": "Je consulte le statut sécurité (lecture)…", "tools": [("get_security_status", {})]}
+
+    if wants_list and any(k in last_user_l for k in ("domaine", "domain")):
+        return {"say": "Je liste tes domaines…", "tools": [("list_domains", {})]}
+    if any(k in last_user_l for k in ("ssl", "let's encrypt", "letsencrypt", "certificat")):
+        if any(k in last_user_l for k in ("émet", "emet", "émettre", "emettre", "installer", "créer", "creer")):
+            return {"say": "Je liste les domaines pour préparer le SSL…", "tools": [("list_domains", {})]}
+        return {"say": "Je liste tes domaines / SSL…", "tools": [("list_domains", {})]}
+
+    if wants_list and any(k in last_user_l for k in ("base", "database", "mysql", "postgres", "bdd")):
+        return {"say": "Je liste tes bases de données…", "tools": [("list_databases", {})]}
+    if any(k in last_user_l for k in ("crée une base", "creer une base", "nouvelle base", "create database")):
+        return {"say": "Dis-moi le nom et le moteur (mysql/postgresql) — ou confirme après liste…", "tools": [("list_databases", {})]}
+
+    if wants_list and any(k in last_user_l for k in ("cron", "tâche planif", "tache planif", "crontab")):
+        return {"say": "Je liste tes tâches cron…", "tools": [("list_cron_jobs", {})]}
+    if any(k in last_user_l for k in ("wordpress", "wp ")) or (wants_list and "wp" in last_user_l):
+        return {"say": "Je liste tes sites WordPress…", "tools": [("list_wordpress_sites", {})]}
+
+    if any(k in last_user_l for k in ("fichier", "dossier", "répertoire", "repertoire", "file manager")):
+        path = ""
+        m = re.search(r"(?:dans|path|chemin)\s+[«\"]?([^\s»\"]+)", last_user_l)
+        if m:
+            path = m.group(1)
+        if any(k in last_user_l for k in ("cherche", "search", "trouve")):
+            q = last_user_l.split("cherche")[-1].strip()[:80] if "cherche" in last_user_l else ""
+            return {
+                "say": "Je cherche dans tes fichiers…",
+                "tools": [("search_account_files", {"query": q or "*", "path": path or ""})],
+            }
+        return {
+            "say": "Je liste le contenu du home…",
+            "tools": [("list_files", {"path": path or ""})],
+        }
+
+    if wants_list and "ftp" in last_user_l:
+        return {"say": "Je liste tes comptes FTP…", "tools": [("list_ftp_accounts", {})]}
+    if wants_list and any(k in last_user_l for k in ("backup", "sauvegarde")):
+        return {"say": "Je liste tes sauvegardes…", "tools": [("list_backups", {})]}
+    if any(k in last_user_l for k in ("lance une sauvegarde", "créer un backup", "creer un backup", "faire un backup")):
+        return {
+            "say": "Je prépare une sauvegarde complète — confirmation requise…",
+            "tools": [("create_backup", {"backup_type": "full"})],
+        }
+
+    if wants_list and any(k in last_user_l for k in ("mail", "email", "boîte", "boite", "mailbox")):
+        return {"say": "Je liste tes boîtes mail…", "tools": [("list_mailboxes", {})]}
+    if wants_list and any(k in last_user_l for k in ("dns", "zone dns", "enregistrement")):
+        return {"say": "Je liste tes zones DNS…", "tools": [("list_dns_zones", {})]}
+    if wants_list and "php" in last_user_l:
+        return {
+            "say": "Je regarde les versions / sélecteurs PHP…",
+            "tools": [("list_php_versions", {}), ("list_php_selectors", {})],
+        }
+    if wants_list and any(k in last_user_l for k in ("git", "dépôt", "depot", "repo")):
+        return {"say": "Je liste tes dépôts Git…", "tools": [("list_git_repos", {})]}
+    if wants_list and any(k in last_user_l for k in ("docker", "conteneur", "container")):
+        return {"say": "Je liste tes conteneurs Docker…", "tools": [("list_docker_containers", {})]}
+    if any(k in last_user_l for k in ("kubernetes", "k8s", "kubectl")):
+        return {"say": "Vue Kubernetes…", "tools": [("get_k8s_overview", {})]}
+
     if wants_list and (mentions_python or mentions_node or mentions_apps or "python" in page_blob):
         return {
             "say": "Je liste tes applications sur le compte…",
@@ -198,12 +265,6 @@ def _detect_intent(
         return {
             "say": "Je vérifie le statut de tes apps…",
             "tools": [("check_application_status", {})],
-        }
-
-    if any(k in last_user_l for k in ("domaine", "domain", "dns")) and wants_list:
-        return {
-            "say": "Je regarde tes domaines…",
-            "tools": [("get_deployment_context", {})],
         }
 
     page_auto = any(k in last_user_l for k in ("je suis sur", "page setup", "vérifie le statut"))
@@ -251,7 +312,11 @@ def _detect_intent(
     if any(k in last_user_l for k in ("contexte", "compte", "ce que j'ai", "ce que j ai")):
         return {
             "say": "Je regarde ce qui existe déjà sur ton compte…",
-            "tools": [("get_deployment_context", {}), ("check_application_status", {})],
+            "tools": [
+                ("get_account_overview", {}),
+                ("get_deployment_context", {}),
+                ("check_application_status", {}),
+            ],
         }
 
     return None

@@ -77,10 +77,14 @@ interface JailCommand {
 }
 
 const STARTERS = [
-  { label: "Mes apps Python", prompt: "Liste moi mes applications Python" },
+  { label: "Vue du compte", prompt: "Montre la vue d'ensemble de mon compte" },
+  { label: "Mes apps", prompt: "Liste moi mes applications Python et Node" },
+  { label: "Mes domaines", prompt: "Liste mes domaines et le statut SSL" },
+  { label: "Bases de données", prompt: "Liste mes bases de données" },
+  { label: "Emails", prompt: "Liste mes boîtes mail" },
+  { label: "Sauvegardes", prompt: "Liste mes sauvegardes" },
   { label: "Arrêter une app", prompt: "Stoppe mon application Python" },
-  { label: "Analyser les logs", prompt: "Analyse mes logs d'erreur" },
-  { label: "Déployer Django", prompt: "Aide-moi à déployer une app Django depuis GitHub" },
+  { label: "Fichiers home", prompt: "Liste les fichiers à la racine de mon home" },
 ] as const;
 
 function renderContent(text: string) {
@@ -164,9 +168,10 @@ function guessCompletedSteps(playbook: Playbook | null, messages: AiMessage[], t
 }
 
 const WELCOME =
-  "Salut ! Je suis **V-zone AI**.\n\n" +
-  "Je peux lister, **arrêter / démarrer** tes apps, lire les logs, ou guider un déploiement. " +
-  "Les actions sensibles demandent ta confirmation (bouton Exécuter).";
+  "Salut ! Je suis **V-zone AI** — assistant du panneau client.\n\n" +
+  "Je peux **lister et piloter** apps, domaines, SSL, DB, email, fichiers, cron, " +
+  "WordPress, FTP, backups, Git, Docker… Les actions sensibles demandent ta confirmation. " +
+  "Mot de passe / 2FA : je guide seulement (pas d'exécution).";
 
 function providerLabel(provider?: string, available?: boolean): { text: string; tone: "ok" | "warn" | "muted" } {
   if (!provider) return { text: "Connexion…", tone: "muted" };

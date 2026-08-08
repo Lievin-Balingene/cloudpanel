@@ -57,7 +57,24 @@ def list_tool_specs(*, include_dangerous: bool = True) -> list[ToolSpec]:
 
 
 def ensure_tools_loaded() -> None:
-    # Import side-effects
-    from apps.ai_assistant.tools import handlers  # noqa: F401
+    # Import side-effects — enregistre tous les handlers whitelistés
+    from apps.ai_assistant.tools import (  # noqa: F401
+        handlers,
+        handlers_account,
+        handlers_apps_extra,
+        handlers_backups,
+        handlers_cron,
+        handlers_databases,
+        handlers_dns,
+        handlers_docker,
+        handlers_domains,
+        handlers_email,
+        handlers_files,
+        handlers_ftp,
+        handlers_git_extra,
+        handlers_k8s,
+        handlers_php,
+        handlers_wordpress,
+    )
 
     return None

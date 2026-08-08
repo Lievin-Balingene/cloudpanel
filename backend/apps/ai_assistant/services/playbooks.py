@@ -68,14 +68,60 @@ PLAYBOOKS: list[dict[str, Any]] = [
         "runtime": "php",
         "icon": "wp",
         "prompt": (
-            "Je veux installer WordPress. Demande le domaine et oriente-moi vers "
-            "le module WordPress du panel ; vérifie domaines et stack web."
+            "Je veux installer WordPress. Liste mes domaines, aide-moi à choisir, "
+            "puis prépare install_wordpress (confirmation) et propose le SSL."
         ),
         "steps": [
             {"id": "domain", "label": "Choisir / vérifier le domaine"},
             {"id": "web", "label": "Stack web"},
-            {"id": "install", "label": "Installation WordPress (module panel)"},
+            {"id": "install", "label": "Installation WordPress"},
             {"id": "ssl", "label": "SSL (optionnel)"},
+        ],
+    },
+    {
+        "id": "ssl-letsencrypt",
+        "title": "SSL Let's Encrypt",
+        "runtime": "any",
+        "icon": "ssl",
+        "prompt": (
+            "Je veux un certificat SSL Let's Encrypt. Liste mes domaines, "
+            "demande lequel, puis prépare issue_ssl_certificate avec confirmation."
+        ),
+        "steps": [
+            {"id": "domain", "label": "Choisir le domaine"},
+            {"id": "dns", "label": "Vérifier DNS / A"},
+            {"id": "ssl", "label": "Émettre le certificat"},
+            {"id": "status", "label": "Vérifier le statut SSL"},
+        ],
+    },
+    {
+        "id": "backup-now",
+        "title": "Sauvegarde compte",
+        "runtime": "any",
+        "icon": "backup",
+        "prompt": (
+            "Montre mes sauvegardes existantes puis propose de lancer une sauvegarde complète "
+            "(create_backup) avec confirmation."
+        ),
+        "steps": [
+            {"id": "list", "label": "Lister les backups"},
+            {"id": "create", "label": "Lancer une sauvegarde"},
+            {"id": "status", "label": "Suivre le statut"},
+        ],
+    },
+    {
+        "id": "email-mailbox",
+        "title": "Boîte email",
+        "runtime": "any",
+        "icon": "mail",
+        "prompt": (
+            "Je veux gérer mes emails. Liste mes boîtes mail et guide-moi pour en créer une "
+            "(sans afficher le mot de passe)."
+        ),
+        "steps": [
+            {"id": "list", "label": "Lister domaines / mailboxes"},
+            {"id": "create", "label": "Créer une boîte"},
+            {"id": "dns", "label": "DKIM / DNS mail (optionnel)"},
         ],
     },
 ]
