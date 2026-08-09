@@ -42,7 +42,8 @@ fi
 groupadd --system "${CLIENTS_GROUP}" 2>/dev/null || true
 
 mkdir -p \
-  "${HOME_DIR}"/{public_html/cgi-bin,public_html/.well-known,private_html,public_ftp,mail,tmp,logs,etc,ssl/{certs,keys,csrs},domains,.trash,.htpasswds,.spamassassin,.cpanel}
+  "${HOME_DIR}"/{public_html/cgi-bin,public_html/.well-known,private_html,public_ftp,mail,tmp,logs,etc,ssl/{certs,keys,csrs},domains,.trash,.htpasswds,.spamassassin,.cpanel,.local/lib,.cache/pip}
+
 
 [[ -e "${HOME_DIR}/www" ]] || ln -sfn public_html "${HOME_DIR}/www"
 [[ -e "${HOME_DIR}/access-logs" ]] || ln -sfn logs "${HOME_DIR}/access-logs"

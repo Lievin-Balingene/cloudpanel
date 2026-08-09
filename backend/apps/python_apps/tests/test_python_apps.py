@@ -1,6 +1,7 @@
 """Tests module applications Python."""
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -281,7 +282,44 @@ def test_stop_python_app_survives_pid_unlink_permission(settings, py_root, monke
 
 
 @pytest.mark.unit
-def test_parse_and_resolve_python_version():
+@pytest.mark.django_db
+def test_resolve_app_venv_prefers_existing_activate(settings, py_root):
+    from apps.python_apps.services import (
+        create_python_app,
+        enter_command_for,
+        resolve_app_venv_dir,
+    )
+
+    settings.VZONE_PYTHON_PROVISION_MODE = "mock"
+    user = UserFactory(username="venvuser")
+    app = create_python_app(owner=user, name="web", relative_root="web", python_version="3.12")
+    # Simule bascule : DB dit encore 3.12 mais seul 3.10 existe sur disque
+    stale = Path(app.venv_path)
+    real = stale.parent / "3.10"
+    if stale.exists():
+        shutil.rmtree(stale, ignore_errors=True)
+    real.mkdir(parents=True)
+    (real / "bin").mkdir()
+    (real / "bin" / "activate").write_text("# activate\n", encoding="utf-8")
+    (real / "pyvenv.cfg").write_text("home = mock\n", encoding="utf-8")
+    app.venv_path = str(stale)
+    app.python_version = "3.12"
+    app.save(update_fields=["venv_path", "python_version"])
+
+    resolved = resolve_app_venv_dir(app)
+    assert resolved == real
+    cmd = enter_command_for(app)
+    assert "3.10" in cmd.replace("\\", "/")
+    assert "3.12" not in cmd.replace("\\", "/")
+
+
+@pytest.mark.unit
+def test_extract_missing_module():
+    from apps.python_apps.services import _extract_missing_module
+
+    assert _extract_missing_module("ModuleNotFoundError: No module named 'pymysql'") == "pymysql"
+    assert _extract_missing_module("No module named 'django.db'") == "django"
+
     from apps.python_apps.services import (
         _parse_python_version_output,
         resolve_python_version,

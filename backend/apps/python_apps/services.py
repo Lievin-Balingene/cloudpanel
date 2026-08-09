@@ -431,15 +431,76 @@ def absolute_app_root(app: PythonApp) -> Path:
     return app_root
 
 
+def resolve_app_venv_dir(app: PythonApp) -> Path:
+    """
+    Chemin venv réellement utilisable (bin/activate présent).
+    Évite source …/3.12/bin/activate alors que l'app a basculé en 3.10.
+    """
+    candidates: list[Path] = []
+    if app.venv_path:
+        candidates.append(Path(app.venv_path))
+    candidates.append(cpanel_venv_path(app.owner, app.name, app.python_version))
+    base = user_home(app.owner) / "virtualenv" / app.name
+    if base.is_dir():
+        try:
+            children = sorted(
+                (p for p in base.iterdir() if p.is_dir()),
+                key=lambda p: p.name,
+                reverse=True,
+            )
+            candidates.extend(children)
+        except OSError:
+            pass
+    seen: set[str] = set()
+    for cand in candidates:
+        key = str(cand)
+        if key in seen:
+            continue
+        seen.add(key)
+        if (cand / "bin" / "activate").is_file() or (cand / "Scripts" / "activate.bat").is_file():
+            return cand
+    return candidates[0] if candidates else cpanel_venv_path(
+        app.owner, app.name, app.python_version or "3.12"
+    )
+
+
 def enter_command_for(app: PythonApp) -> str:
     """
     Une ligne à coller dans le terminal SSH (cPanel Application Manager) :
     source ~/virtualenv/<app>/<ver>/bin/activate && cd <application_root>
     """
     app_root = absolute_app_root(app)
-    venv = Path(app.venv_path) if app.venv_path else cpanel_venv_path(app.owner, app.name, app.python_version)
+    venv = resolve_app_venv_dir(app)
     activate = venv / "bin" / "activate"
     return f"source {activate} && cd {app_root}"
+
+
+def refresh_enter_scripts(app: PythonApp) -> None:
+    """Réécrit ENTER.sh / DEPLOY.sh avec le venv actuel (après bascule 3.12→3.10)."""
+    try:
+        deploy_info(app)
+    except Exception:  # noqa: BLE001
+        logger.debug("refresh_enter_scripts skip", exc_info=True)
+
+
+def ensure_client_pip_dirs(owner: User) -> None:
+    """Crée ~/.local et ~/.cache owned par le jail (pip user install / cache)."""
+    home = user_home(owner)
+    for rel in (".local", ".local/lib", ".cache", ".cache/pip"):
+        path = home / rel
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            continue
+    try:
+        from apps.accounts.linux_users import jail_username_for
+
+        jail = jail_username_for(owner)
+        fix_client_paths(owner, home / ".local", home / ".cache")
+        # Si fix-app-perms refuse hors app, chown via runas touch
+        del jail
+    except Exception:  # noqa: BLE001
+        logger.debug("ensure_client_pip_dirs skip", exc_info=True)
 
 
 def deploy_script_for(app: PythonApp) -> str:
@@ -645,13 +706,21 @@ def install_requirements(app: PythonApp) -> dict:
     req = app_root / (app.requirements_file or "requirements.txt")
     if not req.exists():
         raise VZoneAPIException(detail="requirements.txt introuvable.", code="no_requirements", status_code=400)
-    venv_dir = Path(app.venv_path) if app.venv_path else cpanel_venv_path(app.owner, app.name, app.python_version)
-    py = venv_python(venv_dir)
+    venv_dir = resolve_app_venv_dir(app)
+    # Aligne venv / version système avant pip
+    if provision_mode() != "mock" and should_execute():
+        venv_dir, py = _ensure_venv_matches_labeled_version(
+            app, app.owner, venv_dir, app.python_version
+        )
+        refresh_enter_scripts(app)
+    else:
+        py = venv_python(venv_dir)
     if provision_mode() == "mock" or not py.exists():
         log = app_root / "logs" / "pip.log"
         log.parent.mkdir(parents=True, exist_ok=True)
         log.write_text(f"mock install -r {req.name}\n", encoding="utf-8")
-        return {"mode": "mock", "requirements": str(req), "log": str(log)}
+        return {"mode": "mock", "requirements": str(req), "log": str(log), "venv": str(venv_dir)}
+    ensure_client_pip_dirs(app.owner)
     # Ownership avant pip jailé
     fix_client_paths(app.owner, app_root, venv_dir)
     result = _run_as_owner(
@@ -666,7 +735,7 @@ def install_requirements(app: PythonApp) -> dict:
     except OSError:
         pass
     fix_client_paths(app.owner, app_root, venv_dir)
-    return {"mode": "live", "requirements": str(req), "log": str(log)}
+    return {"mode": "live", "requirements": str(req), "log": str(log), "venv": str(venv_dir)}
 
 
 def _module_importable(py: Path, module: str) -> bool:
@@ -850,10 +919,23 @@ def _ensure_venv_matches_labeled_version(
     Retourne (venv_dir, python_binaire_venv).
     Si 3.12 demandé mais seul 3.10 est dispo → bascule app + recree sous …/3.10/.
     """
-    version = (labeled_version or "3.12").strip() or "3.12"
+    # Préfère un venv qui existe vraiment (évite …/3.12 disparu après bascule)
+    existing = resolve_app_venv_dir(app)
+    if (existing / "bin" / "activate").is_file() or (existing / "pyvenv.cfg").is_file():
+        venv_dir = existing
+        if str(existing) != (app.venv_path or ""):
+            app.venv_path = str(existing)
+            # Nom du dossier parent = version (…/virtualenv/app/3.10)
+            leaf = existing.name.strip()
+            if re.fullmatch(r"\d+\.\d+", leaf):
+                app.python_version = leaf
+            app.save(update_fields=["venv_path", "python_version", "updated_at"])
+
+    version = (app.python_version or labeled_version or "3.12").strip() or "3.12"
     hint = _venv_version_mismatch_hint(venv_dir, version)
 
     if not hint and venv_python(venv_dir).exists():
+        refresh_enter_scripts(app)
         return venv_dir, venv_python(venv_dir)
 
     if provision_mode() == "mock":
@@ -894,6 +976,7 @@ def _ensure_venv_matches_labeled_version(
         # Nettoie l'ancien dossier incohérent (ex. …/3.12/ avec python3.10)
         if venv_dir != target_dir and venv_dir.exists():
             shutil.rmtree(venv_dir, ignore_errors=True)
+
     # Recrée si absent ou toujours incohérent
     need_recreate = (
         not (target_dir / "pyvenv.cfg").exists()
@@ -922,6 +1005,11 @@ def _ensure_venv_matches_labeled_version(
             status_code=400,
             extra={"venv": str(target_dir)},
         )
+    if str(target_dir) != (app.venv_path or ""):
+        app.venv_path = str(target_dir)
+        app.python_version = resolved_ver
+        app.save(update_fields=["venv_path", "python_version", "updated_at"])
+    refresh_enter_scripts(app)
     return target_dir, py
 
 
@@ -1059,6 +1147,19 @@ def _entrypoint_import_module(app: PythonApp) -> str:
     return ep.replace("\\", "/").replace("/", ".")
 
 
+def _extract_missing_module(err: str) -> str | None:
+    m = re.search(
+        r"ModuleNotFoundError:\s*No module named ['\"]([^'\"]+)['\"]",
+        err or "",
+    )
+    if not m:
+        m = re.search(r"No module named ['\"]([^'\"]+)['\"]", err or "")
+    if not m:
+        return None
+    # 'pymysql' ou 'django.db' → paquet top-level
+    return m.group(1).split(".")[0].strip() or None
+
+
 def _preflight_app_import(
     app: PythonApp,
     app_root: Path,
@@ -1076,7 +1177,8 @@ def _preflight_app_import(
         f"sys.path.insert(0, {str(app_root)!r});"
         f"importlib.import_module({mod!r})"
     )
-    try:
+
+    def _run_probe() -> subprocess.CompletedProcess:
         from apps.accounts.linux_users import jail_username_for
         from apps.security.runas import build_runas_cmd, runas_available
 
@@ -1084,7 +1186,7 @@ def _preflight_app_import(
         if runas_available():
             jail = jail_username_for(app.owner)
             probe = build_runas_cmd(jail, probe, env=env)
-        proc = subprocess.run(
+        return subprocess.run(
             probe,
             capture_output=True,
             text=True,
@@ -1092,6 +1194,9 @@ def _preflight_app_import(
             check=False,
             cwd=str(app_root),
         )
+
+    try:
+        proc = _run_probe()
     except VZoneAPIException:
         raise
     except Exception:  # noqa: BLE001
@@ -1106,16 +1211,58 @@ def _preflight_app_import(
             status_code=500,
             extra={"stderr": err},
         )
+
+    # Venv souvent vide après bascule 3.12→3.10 : pip -r puis retry
+    missing = _extract_missing_module(err or (proc.stderr or ""))
+    if missing and provision_mode() != "mock" and should_execute():
+        logger.warning(
+            "Préflight %s : module `%s` manquant — pip install (requirements / paquet)",
+            app.name,
+            missing,
+        )
+        ensure_client_pip_dirs(app.owner)
+        fix_client_paths(
+            app.owner,
+            app_root,
+            Path(venv_dir) if venv_dir else resolve_app_venv_dir(app),
+        )
+        req = app_root / (app.requirements_file or "requirements.txt")
+        try:
+            if req.is_file():
+                _run_as_owner(
+                    app.owner,
+                    [str(py), "-m", "pip", "install", "-r", str(req)],
+                    cwd=app_root,
+                )
+            else:
+                _run_as_owner(
+                    app.owner,
+                    [str(py), "-m", "pip", "install", missing],
+                    cwd=app_root,
+                )
+            proc = _run_probe()
+            if proc.returncode == 0:
+                return
+            err = _summarize_traceback((proc.stderr or proc.stdout or "").strip())
+        except VZoneAPIException as pip_exc:
+            err = f"{err}\nPip auto-install échoué : {pip_exc.detail}"
+
     hint = _venv_version_mismatch_hint(venv_dir or Path(), app.python_version)
     raise VZoneAPIException(
         detail=(
             f"Échec import `{mod}` (avant gunicorn). "
             + (_clip_end(err, 500) if err else "Erreur d'import inconnue.")
+            + (
+                f" Installez dans le venv : `source {resolve_app_venv_dir(app)}/bin/activate "
+                f"&& pip install {missing or '-r requirements.txt'}`."
+                if missing
+                else ""
+            )
             + hint
         ),
         code="app_import_failed",
         status_code=400,
-        extra={"module": mod, "stderr": err[-1500:] if err else ""},
+        extra={"module": mod, "stderr": err[-1500:] if err else "", "missing": missing or ""},
     )
 
 
@@ -1711,6 +1858,8 @@ def start_python_app(app: PythonApp) -> PythonApp:
     venv_dir, py = _ensure_venv_matches_labeled_version(
         app, app.owner, venv_dir, app.python_version
     )
+    ensure_client_pip_dirs(app.owner)
+    refresh_enter_scripts(app)
     access_log, error_log = _prepare_app_logs(app.owner, app_root)
     _ensure_app_data_writable(app.owner, app_root, venv_dir)
     pid_file = app_root / "logs" / "app.pid"

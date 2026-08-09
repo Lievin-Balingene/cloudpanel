@@ -65,6 +65,12 @@ def _prepare_jail(user: object) -> tuple[str, str, str | None]:
         ensure_linux_user(user, home=Path(home))  # type: ignore[arg-type]
     except Exception as exc:  # noqa: BLE001
         logger.warning("ensure_linux_user: %s", exc)
+    try:
+        from apps.python_apps.services import ensure_client_pip_dirs
+
+        ensure_client_pip_dirs(user)  # type: ignore[arg-type]
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("ensure_client_pip_dirs: %s", exc)
     if not linux_user_exists(jail) or not user_in_clients_group(jail):
         try:
             provision_home_via_root(jail)
