@@ -281,6 +281,52 @@ def test_stop_python_app_survives_pid_unlink_permission(settings, py_root, monke
 
 
 @pytest.mark.unit
+def test_venv_version_mismatch_hint(tmp_path):
+    from apps.python_apps.services import _venv_version_mismatch_hint
+
+    venv = tmp_path / "3.12"
+    (venv / "lib" / "python3.10").mkdir(parents=True)
+    hint = _venv_version_mismatch_hint(venv, "3.12")
+    assert "3.12" in hint and "python3.10" in hint
+
+    ok = tmp_path / "ok"
+    (ok / "lib" / "python3.12").mkdir(parents=True)
+    assert _venv_version_mismatch_hint(ok, "3.12") == ""
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_open_app_log_append_recovers_permission(settings, tmp_path, monkeypatch):
+    from apps.accounts.factories import UserFactory
+    from apps.python_apps.services import _open_app_log_append
+
+    settings.VZONE_PYTHON_PROVISION_MODE = "mock"
+    user = UserFactory(username="loguser")
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    path = logs / "access.log"
+    path.write_text("", encoding="utf-8")
+
+    real_open = open
+    calls = {"n": 0}
+
+    def flaky_open(file, *args, **kwargs):
+        if str(file).endswith("access.log") and calls["n"] == 0:
+            calls["n"] += 1
+            raise PermissionError(13, "Permission denied", str(file))
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", flaky_open)
+    monkeypatch.setattr(
+        "apps.python_apps.services._reclaim_app_logs_for_panel",
+        lambda *a, **k: None,
+    )
+    fh = _open_app_log_append(user, path)
+    fh.close()
+    assert calls["n"] == 1
+
+
+@pytest.mark.unit
 def test_iter_sqlite_files_finds_root_db(tmp_path):
     from apps.python_apps.services import _iter_sqlite_files
 

@@ -711,14 +711,173 @@ def _venv_version_mismatch_hint(venv_dir: Path, labeled_version: str) -> str:
     py_dirs = sorted(p.name for p in lib.iterdir() if p.is_dir() and p.name.startswith("python"))
     if not py_dirs:
         return ""
-    actual = py_dirs[0]
     label = (labeled_version or "").strip()
-    if label and label not in actual:
-        return (
-            f" Venv incohérent : dossier « {label} » mais {actual} "
-            f"(recréez le virtualenv avec python{label} installé)."
+    if not label:
+        return ""
+    if any(label in name for name in py_dirs):
+        return ""
+    actual = py_dirs[0]
+    return (
+        f" Venv incohérent : dossier « {label} » mais {actual} "
+        f"(recréez le virtualenv avec python{label} installé)."
+    )
+
+
+def _ensure_venv_matches_labeled_version(
+    owner: User,
+    venv_dir: Path,
+    labeled_version: str,
+) -> Path:
+    """
+    Si le venv (ex. …/3.12/) contient lib/python3.10, on le recrée.
+    Sinon gunicorn tourne avec un mauvais interpréteur / deps.
+    """
+    hint = _venv_version_mismatch_hint(venv_dir, labeled_version)
+    if not hint:
+        return venv_python(venv_dir)
+
+    logger.warning("venv mismatch %s — tentative de recreation", hint.strip())
+    version = (labeled_version or "3.12").strip() or "3.12"
+    if provision_mode() == "mock":
+        return venv_python(venv_dir)
+
+    if not should_execute():
+        raise VZoneAPIException(
+            detail=hint.strip(),
+            code="venv_version_mismatch",
+            status_code=400,
+            extra={"venv": str(venv_dir), "expected": version},
         )
-    return ""
+
+    # pythonX.Y doit exister sur le serveur
+    py_bin = python_binary(version)
+    try:
+        probe = subprocess.run(
+            [py_bin, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        ver_out = (probe.stdout or probe.stderr or "").strip()
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise VZoneAPIException(
+            detail=(
+                f"Python {version} introuvable sur le serveur ({exc}). "
+                f"Installez python{version} ou changez la version de l'app."
+            ),
+            code="python_version_missing",
+            status_code=400,
+            extra={"python_version": version, "binary": py_bin},
+        ) from exc
+    if probe.returncode != 0 or (version not in ver_out and f"Python {version}" not in ver_out):
+        # Tolère « Python 3.12.x »
+        if version not in ver_out:
+            raise VZoneAPIException(
+                detail=(
+                    f"Le binaire `{py_bin}` ne fournit pas Python {version} ({ver_out or 'échec'}). "
+                    f"Installez python{version}-venv ou sélectionnez une autre version d'app."
+                ),
+                code="python_version_missing",
+                status_code=400,
+                extra={"python_version": version, "binary": py_bin, "version_out": ver_out},
+            )
+
+    shutil.rmtree(venv_dir, ignore_errors=True)
+    create_venv(venv_dir, version)
+    fix_client_paths(owner, venv_dir, venv_dir.parent)
+    still = _venv_version_mismatch_hint(venv_dir, version)
+    if still:
+        raise VZoneAPIException(
+            detail=still.strip(),
+            code="venv_version_mismatch",
+            status_code=400,
+            extra={"venv": str(venv_dir), "expected": version},
+        )
+    return venv_python(venv_dir)
+
+
+def _reclaim_app_logs_for_panel(owner: User, logs: Path, *files: Path) -> None:
+    """Après chown jail, le panel doit pouvoir append access/error.log."""
+    import shlex
+
+    for path in files:
+        try:
+            if path.exists():
+                path.chmod(0o666)
+        except OSError:
+            pass
+    try:
+        if logs.exists():
+            logs.chmod(0o775)
+    except OSError:
+        pass
+
+    fix_client_paths(owner, logs, *files)
+
+    try:
+        from apps.accounts.linux_users import jail_username_for
+        from apps.security.runas import build_runas_cmd, runas_available
+
+        if not (runas_available() and provision_mode() != "mock"):
+            return
+        jail = jail_username_for(owner)
+        file_list = " ".join(shlex.quote(str(p)) for p in files if p)
+        script = (
+            f"mkdir -p {shlex.quote(str(logs))} && chmod 775 {shlex.quote(str(logs))} 2>/dev/null || true; "
+            f"for f in {file_list}; do "
+            f"  rm -f \"$f\" 2>/dev/null || true; "
+            f"  touch \"$f\" 2>/dev/null || true; "
+            f"  chmod 666 \"$f\" 2>/dev/null || true; "
+            f"done"
+        )
+        subprocess.run(
+            build_runas_cmd(jail, ["bash", "-c", script]),
+            capture_output=True,
+            text=True,
+            timeout=45,
+            check=False,
+        )
+        fix_client_paths(owner, logs, *files)
+        for path in files:
+            try:
+                if path.exists():
+                    path.chmod(0o666)
+            except OSError:
+                pass
+            try:
+                subprocess.run(
+                    ["setfacl", "-m", f"u:vzone:rw", str(path)],
+                    capture_output=True,
+                    timeout=10,
+                    check=False,
+                )
+            except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+                pass
+    except Exception:  # noqa: BLE001
+        logger.debug("reclaim app logs skip", exc_info=True)
+
+
+def _open_app_log_append(owner: User, path: Path):
+    """Ouvre un log en append ; récupère PermissionError post-chown jail."""
+    try:
+        return open(path, "a", encoding="utf-8")
+    except OSError as first:
+        logger.warning("open log %s: %s — reclaim", path, first)
+        _reclaim_app_logs_for_panel(owner, path.parent, path)
+        try:
+            return open(path, "a", encoding="utf-8")
+        except OSError as second:
+            raise VZoneAPIException(
+                detail=(
+                    f"Permission denied sur `{path.name}` ({second}). "
+                    "Les logs sont owned par le compte jail : "
+                    f"sudo {FIX_APP_PERMS} {_jail_name(owner)} {path.parent}"
+                ),
+                code="log_permission",
+                status_code=500,
+                extra={"path": str(path)},
+            ) from second
 
 
 def _format_start_failure(*, returncode: int | None, stderr_new: str, port: int = 0) -> str:
@@ -733,12 +892,13 @@ def _format_start_failure(*, returncode: int | None, stderr_new: str, port: int 
             + (clean[-400:] if clean else "env: '--': No such file or directory")
         )
     summary = _summarize_traceback(clean)
-    if "permission denied" in (summary or clean).lower() and "error.log" in (summary or clean).lower():
+    if "permission denied" in (summary or clean).lower() and (
+        "error.log" in (summary or clean).lower() or "access.log" in (summary or clean).lower()
+    ):
         summary = (
             (summary + "\n" if summary else "")
-            + "Les logs appartiennent souvent au user panel (vzone) alors que "
-            "gunicorn tourne en jail client — mettez à jour le panel (≥ 0.35.9) "
-            "ou : chmod 666 ~/…/logs/*.log"
+            + "Logs non inscriptibles (jail vs panel). Mettez à jour (≥ 0.35.28) "
+            "ou : sudo vzone-fix-app-perms <user> ~/…/logs && chmod 666 ~/…/logs/*.log"
         )
     parts: list[str] = []
     if returncode is not None:
@@ -1409,6 +1569,8 @@ def _prepare_app_logs(owner: User, app_root: Path) -> tuple[Path, Path]:
         pass
     # Toujours réaligner le propriétaire après écritures panel
     fix_client_paths(owner, logs, access_log, error_log, app_root)
+    # Panel doit pouvoir rouvrir les logs en append (FD pour gunicorn)
+    _reclaim_app_logs_for_panel(owner, logs, access_log, error_log)
     return access_log, error_log
 
 
@@ -1418,7 +1580,7 @@ def start_python_app(app: PythonApp) -> PythonApp:
         raise VZoneAPIException(detail="Application désactivée.", code="inactive", status_code=400)
     _, app_root = resolve_app_root(app.owner, app.relative_root)
     venv_dir = Path(app.venv_path) if app.venv_path else cpanel_venv_path(app.owner, app.name, app.python_version)
-    py = venv_python(venv_dir)
+    py = _ensure_venv_matches_labeled_version(app.owner, venv_dir, app.python_version)
     access_log, error_log = _prepare_app_logs(app.owner, app_root)
     _ensure_app_data_writable(app.owner, app_root, venv_dir)
     pid_file = app_root / "logs" / "app.pid"
@@ -1434,7 +1596,11 @@ def start_python_app(app: PythonApp) -> PythonApp:
                 extra={"venv": str(venv_dir)},
             )
         fake_pid = 10000 + (app.pk or 1)
-        pid_file.write_text(str(fake_pid), encoding="utf-8")
+        try:
+            pid_file.write_text(str(fake_pid), encoding="utf-8")
+        except OSError:
+            _reclaim_app_logs_for_panel(app.owner, pid_file.parent, pid_file)
+            pid_file.write_text(str(fake_pid), encoding="utf-8")
         app.pid = fake_pid
         app.status = PythonApp.Status.RUNNING
         app.last_error = ""
@@ -1470,8 +1636,8 @@ def start_python_app(app: PythonApp) -> PythonApp:
     try:
         from apps.accounts.linux_users import jail_username_for
 
-        access_f = open(access_log, "a", encoding="utf-8")
-        error_f = open(error_log, "a", encoding="utf-8")
+        access_f = _open_app_log_append(app.owner, access_log)
+        error_f = _open_app_log_append(app.owner, error_log)
         jail = jail_username_for(app.owner)
         spawn_cmd = build_runas_cmd(jail, cmd, env=env)
         proc = subprocess.Popen(
@@ -1497,7 +1663,11 @@ def start_python_app(app: PythonApp) -> PythonApp:
             raise RuntimeError(
                 _format_start_failure(returncode=proc.returncode, stderr_new=new_log)
             )
-        pid_file.write_text(str(proc.pid), encoding="utf-8")
+        try:
+            pid_file.write_text(str(proc.pid), encoding="utf-8")
+        except OSError:
+            _reclaim_app_logs_for_panel(app.owner, pid_file.parent, pid_file)
+            pid_file.write_text(str(proc.pid), encoding="utf-8")
         app.pid = proc.pid
         app.status = PythonApp.Status.RUNNING
         app.last_error = ""
@@ -1519,15 +1689,22 @@ def start_python_app(app: PythonApp) -> PythonApp:
             detail_clean = (
                 "Échec au démarrage (voir logs/error.log et les dépendances du venv)."
             )
-        mismatch = _venv_version_mismatch_hint(venv_dir, app.python_version)
-        if mismatch and mismatch.strip() not in detail_clean:
-            detail_clean = f"{detail_clean.rstrip()}{mismatch}"
+        # N'ajoute le hint venv que si ce n'est pas déjà un problème de perms logs
+        if "permission denied" not in detail_clean.lower() and "log_permission" not in str(
+            getattr(exc, "code", "") or extra.get("code") or ""
+        ):
+            mismatch = _venv_version_mismatch_hint(venv_dir, app.python_version)
+            if mismatch and mismatch.strip() not in detail_clean:
+                detail_clean = f"{detail_clean.rstrip()}{mismatch}"
         detail_clean = _clip_end(detail_clean, 900)
         app.status = PythonApp.Status.ERROR
         app.last_error = detail_clean
         app.pid = None
-        if pid_file.exists():
-            pid_file.unlink(missing_ok=True)
+        try:
+            if pid_file.exists():
+                pid_file.unlink(missing_ok=True)
+        except OSError:
+            _clear_app_pid_file(app.owner, pid_file)
         app.save()
         write_app_config(app)
         raise VZoneAPIException(

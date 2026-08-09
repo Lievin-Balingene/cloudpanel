@@ -91,4 +91,23 @@ if command -v setfacl >/dev/null 2>&1; then
   setfacl -R -d -m "u:${VZONE_USER}:rwx" "$TARGET_REAL" 2>/dev/null || true
 fi
 
+# Logs / pid : le panel (vzone) doit pouvoir append (stdout gunicorn via FD)
+# même après chown jail — sinon start → Permission denied sur access.log
+if [[ -d "${TARGET_REAL}/logs" ]]; then
+  chmod 775 "${TARGET_REAL}/logs" 2>/dev/null || true
+  find "${TARGET_REAL}/logs" -maxdepth 1 -type f \( -name '*.log' -o -name 'app.pid' \) \
+    -exec chmod 666 {} \; 2>/dev/null || true
+  if command -v setfacl >/dev/null 2>&1; then
+    VZONE_USER="${VZONE_USER:-vzone}"
+    find "${TARGET_REAL}/logs" -maxdepth 1 -type f \( -name '*.log' -o -name 'app.pid' \) \
+      -exec setfacl -m "u:${VZONE_USER}:rw" {} \; 2>/dev/null || true
+    setfacl -m "u:${VZONE_USER}:rwx" "${TARGET_REAL}/logs" 2>/dev/null || true
+  fi
+elif [[ -f "$TARGET_REAL" && "$TARGET_REAL" == *.log ]]; then
+  chmod 666 "$TARGET_REAL" 2>/dev/null || true
+  if command -v setfacl >/dev/null 2>&1; then
+    setfacl -m "u:${VZONE_USER:-vzone}:rw" "$TARGET_REAL" 2>/dev/null || true
+  fi
+fi
+
 echo "OK ${USERNAME} → ${TARGET_REAL}"
