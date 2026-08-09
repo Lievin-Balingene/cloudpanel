@@ -958,6 +958,71 @@ def _kill_app_pid(pid: int | None) -> None:
             return
 
 
+def _read_app_pid_file(pid_file: Path, fallback: int | None) -> int | None:
+    """Lit logs/app.pid sans faire planter le stop/start (perms jail)."""
+    try:
+        if not pid_file.exists():
+            return fallback
+        return int(pid_file.read_text(encoding="utf-8").strip())
+    except ValueError:
+        return fallback
+    except OSError as exc:
+        logger.warning("lecture pid %s: %s", pid_file, exc)
+        return fallback
+
+
+def _clear_app_pid_file(owner: User, pid_file: Path) -> None:
+    """
+    Supprime logs/app.pid même si owned par le compte jail.
+
+    Après fix-app-perms / chown jail, le panel (user vzone) peut ne plus
+    pouvoir unlink → PermissionError → HTTP 500. On répare puis on retente ;
+    le stop DB doit quand même aboutir.
+    """
+    try:
+        if not pid_file.exists():
+            return
+    except OSError:
+        return
+
+    def _try_unlink() -> bool:
+        try:
+            pid_file.unlink(missing_ok=True)
+            return True
+        except OSError as exc:
+            logger.warning("unlink pid %s: %s", pid_file, exc)
+            return False
+
+    if _try_unlink():
+        return
+
+    try:
+        fix_client_paths(owner, pid_file.parent, pid_file)
+    except Exception:  # noqa: BLE001
+        logger.debug("fix-app-perms avant unlink pid échoué", exc_info=True)
+
+    if _try_unlink():
+        return
+
+    try:
+        from apps.accounts.linux_users import jail_username_for
+        from apps.security.runas import runas_available
+        import shlex
+
+        if runas_available() and provision_mode() != "mock":
+            jail = jail_username_for(owner)
+            cmd = build_runas_cmd(
+                jail,
+                ["bash", "-c", f"rm -f -- {shlex.quote(str(pid_file))}"],
+            )
+            subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+    except Exception:  # noqa: BLE001
+        logger.warning("runas rm pid %s échoué", pid_file, exc_info=True)
+
+    # Dernier essai ; si ça échoue encore on laisse le fichier — statut DB = stopped
+    _try_unlink()
+
+
 def normalize_app_domain(value: str) -> str:
     """Normalise Application URL (sans schéma / chemin / www)."""
     v = (value or "").strip().lower()
@@ -1481,18 +1546,12 @@ def start_python_app(app: PythonApp) -> PythonApp:
 def stop_python_app(app: PythonApp) -> PythonApp:
     _, app_root = resolve_app_root(app.owner, app.relative_root)
     pid_file = app_root / "logs" / "app.pid"
-    pid = app.pid
-    if pid_file.exists():
-        try:
-            pid = int(pid_file.read_text(encoding="utf-8").strip())
-        except ValueError:
-            pid = app.pid
+    pid = _read_app_pid_file(pid_file, app.pid)
 
     if provision_mode() != "mock" and pid and should_execute():
         _kill_app_pid(pid)
 
-    if pid_file.exists():
-        pid_file.unlink(missing_ok=True)
+    _clear_app_pid_file(app.owner, pid_file)
     app.pid = None
     app.status = PythonApp.Status.STOPPED
     app.last_error = ""

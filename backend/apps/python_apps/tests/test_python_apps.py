@@ -256,6 +256,31 @@ def test_fix_client_paths_noop_in_mock(settings, tmp_path):
 
 
 @pytest.mark.unit
+@pytest.mark.django_db
+def test_stop_python_app_survives_pid_unlink_permission(settings, py_root, monkeypatch):
+    """PermissionError sur logs/app.pid ne doit plus remonter en HTTP 500."""
+    from pathlib import Path as PathCls
+
+    settings.VZONE_PYTHON_PROVISION_MODE = "mock"
+    user = UserFactory(username="stopperm")
+    app = create_python_app(owner=user, name="vzone", relative_root="vzone")
+    app = start_python_app(app)
+    assert app.status == PythonApp.Status.RUNNING
+
+    real_unlink = PathCls.unlink
+
+    def flaky_unlink(self, *args, **kwargs):
+        if self.name == "app.pid":
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(PathCls, "unlink", flaky_unlink)
+    stopped = stop_python_app(app)
+    assert stopped.status == PythonApp.Status.STOPPED
+    assert stopped.pid is None
+
+
+@pytest.mark.unit
 def test_iter_sqlite_files_finds_root_db(tmp_path):
     from apps.python_apps.services import _iter_sqlite_files
 
