@@ -394,16 +394,52 @@ def test_mock_list_mailboxes_not_hijacked_by_file_manager_page():
         "Tools suggérées: list_files\n"
         "Runtime page: n/a\n"
     )
+    for prompt in (
+        "Liste mes boîtes mail",
+        "montre mes emails",
+        "affiche la messagerie",
+    ):
+        r = p.chat(
+            [
+                ChatMessage(role="system", content=sys_msg),
+                ChatMessage(role="user", content=prompt),
+            ],
+            tools=tools,
+        )
+        assert r.tool_calls, prompt
+        assert r.tool_calls[0].name == "list_mailboxes", f"{prompt} → {r.tool_calls[0].name}"
+
+
+def test_mock_message_beats_page_for_domains_and_apps():
+    from apps.ai_assistant.providers import ChatMessage, ToolSpec
+    from apps.ai_assistant.providers.mock import MockProvider
+
+    p = MockProvider()
+    tools = [
+        ToolSpec(name=n, description=n, parameters={"type": "object", "properties": {}})
+        for n in ("list_domains", "list_files", "check_application_status", "list_mailboxes")
+    ]
+    sys_files = (
+        "Page actuelle: File Manager (/panel/files)\n"
+        "Besoin immédiat: Fichiers.\nRuntime page: n/a\n"
+    )
     r = p.chat(
         [
-            ChatMessage(role="system", content=sys_msg),
-            ChatMessage(role="user", content="Liste mes boîtes mail"),
+            ChatMessage(role="system", content=sys_files),
+            ChatMessage(role="user", content="Montre mes domaines"),
         ],
         tools=tools,
     )
-    assert r.tool_calls
-    assert r.tool_calls[0].name == "list_mailboxes"
-    assert r.tool_calls[0].name != "list_files"
+    assert r.tool_calls[0].name == "list_domains"
+
+    r2 = p.chat(
+        [
+            ChatMessage(role="system", content=sys_files),
+            ChatMessage(role="user", content="Liste mes applications python"),
+        ],
+        tools=tools,
+    )
+    assert r2.tool_calls[0].name == "check_application_status"
 
 
 def test_mock_create_mailbox_flow():

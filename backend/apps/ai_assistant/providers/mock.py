@@ -932,6 +932,419 @@ def _extract_app_id(text: str) -> int | None:
     return None
 
 
+def _norm_text(text: str) -> str:
+    """Minuscules + sans accents pour un matching robuste."""
+    import unicodedata
+
+    raw = (text or "").lower().strip()
+    return "".join(
+        c for c in unicodedata.normalize("NFD", raw) if unicodedata.category(c) != "Mn"
+    )
+
+
+def _score_keywords(text_n: str, keywords: dict[str, float]) -> float:
+    score = 0.0
+    for kw, pts in keywords.items():
+        if kw in text_n:
+            score += pts
+    return score
+
+
+def _page_help_only(text_n: str) -> bool:
+    """True si le message est surtout une demande d'aide contextuelle (vague)."""
+    helpish = any(
+        k in text_n
+        for k in (
+            "aide",
+            "help",
+            "je suis sur",
+            "aide-moi",
+            "aide moi",
+            "que faire",
+            "que peux-tu",
+            "tu peux m aider",
+        )
+    )
+    if not helpish:
+        return False
+    topics = (
+        "mail",
+        "email",
+        "messagerie",
+        "boite",
+        "domaine",
+        "ssl",
+        "fichier",
+        "dossier",
+        "wordpress",
+        "base",
+        "database",
+        "cron",
+        "backup",
+        "sauvegarde",
+        "ftp",
+        "docker",
+        "git",
+        "python",
+        "node",
+        "dns",
+        "php",
+    )
+    return not any(t in text_n for t in topics)
+
+
+def _intent_from_scores(
+    text: str,
+    text_n: str,
+    *,
+    page_sec: str,
+    page_runtime: str,
+    page_help: bool,
+    tool_names: set[str],
+) -> dict | None:
+    """Choisit l'intent le plus aligné sur le MESSAGE (page = bonus faible seulement)."""
+    del page_runtime  # réservé (logs runtime via page plus bas)
+    wants_list = any(
+        k in text_n
+        for k in (
+            "liste",
+            "lister",
+            "list ",
+            "montre",
+            "montrer",
+            "affiche",
+            "quels sont",
+            "quelles sont",
+            "vois mes",
+            "voir mes",
+            "donne-moi",
+            "donne moi",
+            "mes ",
+        )
+    )
+    createish = any(
+        k in text_n
+        for k in ("cree", "creer", "ajoute", "ajouter", "nouveau", "nouveua", "installe", "installer")
+    )
+
+    candidates: list[tuple[str, float, str, dict]] = []
+
+    def add(intent_id: str, score: float, section: str, payload: dict) -> None:
+        if score <= 0:
+            return
+        if page_help and section and page_sec == section:
+            score += 1.5
+        candidates.append((intent_id, score, section, payload))
+
+    mail_score = _score_keywords(
+        text_n,
+        {
+            "boites mail": 12,
+            "boite mail": 12,
+            "comptes mail": 11,
+            "compte mail": 10,
+            "compte de messagerie": 12,
+            "messagerie": 9,
+            "mailbox": 9,
+            "courriel": 8,
+            "e-mail": 8,
+            "email": 7,
+            "boites": 5,
+            "boite": 4,
+            "mail": 3,
+        },
+    )
+    if mail_score >= 3:
+        if createish and mail_score >= 4:
+            addr = _extract_email_address(text)
+            say = "Compris — création d'une boîte mail"
+            if addr:
+                say += f" **{addr[0]}@{addr[1]}**"
+            say += ". Je vérifie tes domaines mail…"
+            add(
+                "create_mailbox",
+                mail_score + 8,
+                "email",
+                {"say": say, "tools": [("list_mailboxes", {})]},
+            )
+        elif wants_list or mail_score >= 5 or "boite" in text_n or "messagerie" in text_n:
+            add(
+                "list_mailboxes",
+                mail_score + (4 if wants_list else 0),
+                "email",
+                {
+                    "say": "Compris — je liste tes **domaines mail et boîtes**…",
+                    "tools": [("list_mailboxes", {})],
+                },
+            )
+
+    dom_score = _score_keywords(
+        text_n, {"domaines": 8, "domaine": 6, "domain": 5, "sous-domaine": 7, "sous domaine": 7}
+    )
+    ssl_score = _score_keywords(
+        text_n, {"ssl": 8, "lets encrypt": 9, "letsencrypt": 9, "certificat": 7, "https": 4}
+    )
+    if dom_score >= 4 and (wants_list or createish or dom_score >= 6):
+        add(
+            "list_domains",
+            dom_score + (3 if wants_list else 0),
+            "domains",
+            {"say": "Compris — je liste tes **domaines**…", "tools": [("list_domains", {})]},
+        )
+    if ssl_score >= 5:
+        add(
+            "ssl",
+            ssl_score,
+            "domains",
+            {
+                "say": "Compris — je regarde tes domaines pour le **SSL**…",
+                "tools": [("list_domains", {})],
+            },
+        )
+
+    wp_score = _score_keywords(
+        text_n, {"wordpress": 10, "wordpresse": 10, "sites wp": 9, " wp": 4, "wp ": 4}
+    )
+    if wp_score >= 4:
+        if createish or _wants_wordpress_install(text):
+            host = _extract_hostname(text)
+            say = "Compris — installation WordPress"
+            if host:
+                say += f" sur **{host}**"
+            say += " — je vérifie domaines et sites WP…"
+            add(
+                "install_wp",
+                wp_score + 10,
+                "wordpress",
+                {"say": say, "tools": [("list_domains", {}), ("list_wordpress_sites", {})]},
+            )
+        else:
+            add(
+                "list_wp",
+                wp_score + (3 if wants_list else 0),
+                "wordpress",
+                {
+                    "say": "Compris — je liste tes **sites WordPress**…",
+                    "tools": [("list_wordpress_sites", {})],
+                },
+            )
+
+    file_score = _score_keywords(
+        text_n,
+        {
+            "file manager": 10,
+            "fichiers": 8,
+            "fichier": 6,
+            "dossiers": 7,
+            "dossier": 5,
+            "repertoire": 6,
+            "home": 2,
+        },
+    )
+    if mail_score >= 5:
+        file_score -= 20
+    if file_score >= 4 and (wants_list or "cherche" in text_n or "trouve" in text_n or createish):
+        if "cherche" in text_n or "trouve" in text_n or "search" in text_n:
+            q = text.split("cherche")[-1].strip()[:80] if "cherche" in text else ""
+            add(
+                "search_files",
+                file_score + 5,
+                "files",
+                {
+                    "say": "Compris — je cherche dans tes fichiers…",
+                    "tools": [("search_account_files", {"query": q or "*", "path": ""})],
+                },
+            )
+        else:
+            add(
+                "list_files",
+                file_score + (3 if wants_list else 0),
+                "files",
+                {
+                    "say": "Compris — je liste le contenu du **home**…",
+                    "tools": [("list_files", {"path": ""})],
+                },
+            )
+
+    db_score = _score_keywords(
+        text_n,
+        {
+            "bases de donnees": 10,
+            "base de donnees": 9,
+            "databases": 8,
+            "database": 7,
+            "mysql": 6,
+            "postgres": 6,
+            "bdd": 6,
+            "bases": 4,
+        },
+    )
+    if db_score >= 4 and (wants_list or createish):
+        add(
+            "list_db",
+            db_score + (3 if wants_list else 0),
+            "databases",
+            {"say": "Compris — je liste tes **bases de données**…", "tools": [("list_databases", {})]},
+        )
+
+    cron_score = _score_keywords(text_n, {"cron": 8, "tache planif": 8, "crontab": 7, "planifiee": 4})
+    if cron_score >= 4 and wants_list:
+        add(
+            "list_cron",
+            cron_score + 3,
+            "cron",
+            {"say": "Compris — je liste tes **tâches cron**…", "tools": [("list_cron_jobs", {})]},
+        )
+
+    ftp_score = _score_keywords(text_n, {"ftp": 8, "sftp": 6})
+    if ftp_score >= 4 and wants_list:
+        add(
+            "list_ftp",
+            ftp_score + 3,
+            "ftp",
+            {"say": "Compris — je liste tes **comptes FTP**…", "tools": [("list_ftp_accounts", {})]},
+        )
+
+    bak_score = _score_keywords(text_n, {"sauvegardes": 9, "sauvegarde": 7, "backups": 8, "backup": 7})
+    if bak_score >= 4:
+        if createish or "lance" in text_n or "faire un" in text_n:
+            add(
+                "create_backup",
+                bak_score + 6,
+                "backups",
+                {
+                    "say": "Compris — je prépare une **sauvegarde** (confirmation)…",
+                    "tools": [("create_backup", {"backup_type": "full"})],
+                },
+            )
+        elif wants_list:
+            add(
+                "list_backups",
+                bak_score + 3,
+                "backups",
+                {"say": "Compris — je liste tes **sauvegardes**…", "tools": [("list_backups", {})]},
+            )
+
+    dns_score = _score_keywords(text_n, {"dns": 8, "zone dns": 9, "enregistrement": 5})
+    if dns_score >= 4 and wants_list:
+        add(
+            "list_dns",
+            dns_score + 3,
+            "dns",
+            {"say": "Compris — je liste tes **zones DNS**…", "tools": [("list_dns_zones", {})]},
+        )
+
+    php_score = _score_keywords(text_n, {"php": 6, "selecteur php": 9})
+    if php_score >= 5 and wants_list:
+        add(
+            "list_php",
+            php_score + 2,
+            "php",
+            {
+                "say": "Compris — je regarde les versions PHP…",
+                "tools": [("list_php_versions", {}), ("list_php_selectors", {})],
+            },
+        )
+
+    git_score = _score_keywords(text_n, {"git": 6, "depot": 6, "repo": 5, "github": 5})
+    if git_score >= 4 and wants_list:
+        add(
+            "list_git",
+            git_score + 3,
+            "git",
+            {"say": "Compris — je liste tes **dépôts Git**…", "tools": [("list_git_repos", {})]},
+        )
+
+    docker_score = _score_keywords(text_n, {"docker": 8, "conteneur": 7, "container": 7})
+    if docker_score >= 4 and wants_list:
+        add(
+            "list_docker",
+            docker_score + 3,
+            "docker",
+            {
+                "say": "Compris — je liste tes **conteneurs Docker**…",
+                "tools": [("list_docker_containers", {})],
+            },
+        )
+
+    if any(k in text_n for k in ("kubernetes", "k8s", "kubectl")):
+        add("k8s", 10, "", {"say": "Compris — vue **Kubernetes**…", "tools": [("get_k8s_overview", {})]})
+
+    apps_score = _score_keywords(
+        text_n,
+        {
+            "applications": 8,
+            "application": 5,
+            "apps": 6,
+            "python": 4,
+            "node": 4,
+            "django": 5,
+            "flask": 4,
+            "fastapi": 4,
+        },
+    )
+    if apps_score >= 4 and wants_list:
+        add(
+            "list_apps",
+            apps_score + 3,
+            "python" if "python" in text_n or "django" in text_n else ("node" if "node" in text_n else ""),
+            {
+                "say": "Compris — je liste tes **applications**…",
+                "tools": [("check_application_status", {})],
+            },
+        )
+
+    overview_score = _score_keywords(
+        text_n,
+        {
+            "vue d'ensemble": 10,
+            "overview": 8,
+            "espace disque": 8,
+            "quota": 6,
+            "mon package": 8,
+            "mon forfait": 7,
+        },
+    )
+    if overview_score >= 5:
+        if "package" in text_n or "forfait" in text_n:
+            add(
+                "package",
+                overview_score,
+                "package",
+                {"say": "Compris — je regarde ton **package**…", "tools": [("get_my_package", {})]},
+            )
+        else:
+            add(
+                "overview",
+                overview_score,
+                "home",
+                {
+                    "say": "Compris — je charge la **vue d'ensemble**…",
+                    "tools": [("get_account_overview", {})],
+                },
+            )
+
+    if "2fa" in text_n or ("securite" in text_n and "mot de passe" not in text_n):
+        add(
+            "security",
+            8,
+            "security",
+            {"say": "Compris — statut **sécurité** (lecture)…", "tools": [("get_security_status", {})]},
+        )
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    _best_id, best_score, _sec, payload = candidates[0]
+    if best_score < 4:
+        return None
+    tools = payload.get("tools") or []
+    if tools and not any(n in tool_names for n, _a in tools):
+        return None
+    return payload
+
+
 def _detect_intent(
     last_user_l: str,
     messages: list[ChatMessage],
@@ -939,11 +1352,13 @@ def _detect_intent(
     *,
     user_turns: list[str] | None = None,
 ) -> dict | None:
+    """Intent message-first : le texte utilisateur prime toujours sur la page UI."""
     turns = user_turns or []
     page = _page_meta(messages)
     page_sec = _page_section(page)
     page_runtime = (page.get("runtime") or "").lower()
-    page_blob = f"{page.get('label', '')} {page.get('path', '')} {page.get('need', '')} {page_runtime}".lower()
+    text_n = _norm_text(last_user_l)
+    page_help = _page_help_only(text_n)
 
     lifecycle = _lifecycle_verb(last_user_l)
     if lifecycle:
@@ -960,301 +1375,137 @@ def _detect_intent(
         labels = {"stop": "arrêt", "start": "démarrage", "restart": "redémarrage"}
         if app_id and tool in tool_names:
             return {
-                "say": f"Je prépare le {labels[lifecycle]} de l'app #{app_id} — confirmation requise…",
-                "tools": [(tool, {"runtime": runtime if runtime in {"python", "node"} else "python", "app_id": app_id})],
+                "say": f"Compris — {labels[lifecycle]} de l'app #{app_id} (confirmation)…",
+                "tools": [
+                    (
+                        tool,
+                        {
+                            "runtime": runtime if runtime in {"python", "node"} else "python",
+                            "app_id": app_id,
+                        },
+                    )
+                ],
             }
         return {
-            "say": f"Je regarde tes apps pour préparer le {labels[lifecycle]}…",
+            "say": f"Compris — je regarde tes apps pour le {labels[lifecycle]}…",
             "tools": [("check_application_status", {})],
         }
 
-    wants_list = any(
-        k in last_user_l
-        for k in (
-            "liste",
-            "lister",
-            "list ",
-            "montre",
-            "montrer",
-            "affiche",
-            "quels sont",
-            "quelles sont",
-            "mes app",
-            "mes application",
-            "mes site",
-        )
-    )
-    mentions_python = "python" in last_user_l or "django" in last_user_l or "flask" in last_user_l
-    mentions_node = "node" in last_user_l or "npm" in last_user_l
-    mentions_apps = any(
-        k in last_user_l for k in ("app", "application", "projet", "site", "service")
-    )
-
-    # —— Panneau client (lecture / actions fréquentes) ——
-    if any(k in last_user_l for k in ("vue d'ensemble", "overview", "mon compte", "espace disque", "quota")):
-        return {"say": "Je charge la vue d'ensemble du compte…", "tools": [("get_account_overview", {})]}
-    if any(k in last_user_l for k in ("mon package", "mon forfait", "limites du package")):
-        return {"say": "Je regarde ton package…", "tools": [("get_my_package", {})]}
-    if any(k in last_user_l for k in ("2fa", "sécurité", "securite")) and "mot de passe" not in last_user_l:
-        return {"say": "Je consulte le statut sécurité (lecture)…", "tools": [("get_security_status", {})]}
-
-    if wants_list and any(k in last_user_l for k in ("domaine", "domain")):
-        return {"say": "Je liste tes domaines…", "tools": [("list_domains", {})]}
-    if any(k in last_user_l for k in ("ssl", "let's encrypt", "letsencrypt", "certificat")):
-        if any(k in last_user_l for k in ("émet", "emet", "émettre", "emettre", "installer", "créer", "creer")):
-            return {"say": "Je liste les domaines pour préparer le SSL…", "tools": [("list_domains", {})]}
-        return {"say": "Je liste tes domaines / SSL…", "tools": [("list_domains", {})]}
-
-    if wants_list and any(k in last_user_l for k in ("base", "database", "mysql", "postgres", "bdd")):
-        return {"say": "Je liste tes bases de données…", "tools": [("list_databases", {})]}
-    if any(k in last_user_l for k in ("crée une base", "creer une base", "nouvelle base", "create database")):
-        return {"say": "Dis-moi le nom et le moteur (mysql/postgresql) — ou confirme après liste…", "tools": [("list_databases", {})]}
-
-    if wants_list and any(k in last_user_l for k in ("cron", "tâche planif", "tache planif", "crontab")):
-        return {"say": "Je liste tes tâches cron…", "tools": [("list_cron_jobs", {})]}
-
-    # WordPress : créer / installer (+ suite « le sous-domaine c'est X » / « vas-y »)
     if _wordpress_flow_active(last_user_l, messages, turns):
         host = _resolve_wp_host(last_user_l, messages, turns)
-        say = "Je prépare l'installation WordPress"
+        say = "Compris — installation WordPress"
         if host:
             say += f" sur **{host}**"
-        say += " — je vérifie d'abord tes domaines et sites WP…"
+        say += " — je vérifie domaines et sites WP…"
         return {
             "say": say,
             "tools": [("list_domains", {}), ("list_wordpress_sites", {})],
         }
-    if any(k in last_user_l for k in ("wordpress", "wordpresse", "wp ")) or (wants_list and "wp" in last_user_l):
-        return {"say": "Je liste tes sites WordPress…", "tools": [("list_wordpress_sites", {})]}
-    if "wordpress" in page_blob and any(
-        k in last_user_l for k in ("aide", "help", "je suis sur", "sites wp")
-    ):
-        return {
-            "say": (
-                "Tu es sur WordPress. Je liste tes sites. "
-                "Pour en créer un : *crée un site WordPress sur sous.domaine.tld*."
-            ),
-            "tools": [("list_wordpress_sites", {})],
-        }
 
-    # —— Email : listage explicite AVANT le contexte page (évite File Manager → list_files)
-    mail_in_msg = any(
-        k in last_user_l
-        for k in (
-            "email",
-            "e-mail",
-            "messagerie",
-            "mailbox",
-            "boîte mail",
-            "boite mail",
-            "boîtes mail",
-            "boites mail",
-            "compte mail",
-            "comptes mail",
-            "courriel",
-        )
-    ) or (
-        "mail" in last_user_l
-        and any(k in last_user_l for k in ("boîte", "boite", "liste", "montre", "affiche", "mes "))
-    )
-    if _wants_create_mailbox(last_user_l):
-        addr = _extract_email_address(last_user_l)
-        say = "Je prépare la création d'une boîte mail"
-        if addr:
-            say += f" **{addr[0]}@{addr[1]}**"
-        say += " — je vérifie d'abord tes domaines mail…"
-        return {"say": say, "tools": [("list_mailboxes", {})]}
-    if mail_in_msg and (
-        wants_list
-        or any(k in last_user_l for k in ("boîte", "boite", "compte", "adresse", "messagerie"))
-    ):
-        return {"say": "Je liste tes domaines mail et boîtes…", "tools": [("list_mailboxes", {})]}
-
-    # Aide contextuelle page (uniquement « aide / je suis sur », pas les listes métier)
-    page_help = any(
-        k in last_user_l
-        for k in ("aide", "help", "je suis sur", "aide-moi", "aide moi", "que faire")
-    )
-    if page_help:
-        if page_sec == "email" or mail_in_msg:
-            return {
-                "say": (
-                    "Tu es sur Email. Je liste tes domaines mail et boîtes. "
-                    "Pour créer : *crée contact@domaine.tld mot de passe Secret1234*."
-                ),
-                "tools": [("list_mailboxes", {})],
-            }
-        if page_sec == "ftp":
-            return {"say": "Tu es sur FTP. Je liste tes comptes…", "tools": [("list_ftp_accounts", {})]}
-        if page_sec == "cron":
-            return {"say": "Tu es sur Cron. Je liste tes tâches…", "tools": [("list_cron_jobs", {})]}
-        if page_sec == "backups":
-            return {"say": "Tu es sur Backups. Je liste tes sauvegardes…", "tools": [("list_backups", {})]}
-        if page_sec == "files":
-            return {"say": "Tu es sur File Manager. Je liste le home…", "tools": [("list_files", {"path": ""})]}
-        if page_sec == "domains":
-            return {"say": "Tu es sur Domaines. Je liste tes domaines…", "tools": [("list_domains", {})]}
-        if page_sec == "databases":
-            return {"say": "Tu es sur Databases. Je liste tes bases…", "tools": [("list_databases", {})]}
-        if page_sec == "dns":
-            return {"say": "Tu es sur DNS. Je liste tes zones…", "tools": [("list_dns_zones", {})]}
-
-    # Fichiers : créer / écrire AVANT le simple listage
     if _wants_mkdir(last_user_l):
         name = _extract_path_name(last_user_l, kind="dir")
         if name and "mkdir_path" in tool_names:
             return {
-                "say": (
-                    f"Je prépare la création du dossier **{name}** — "
-                    "clique **Exécuter** pour confirmer."
-                ),
+                "say": f"Compris — création du dossier **{name}** (confirmation)…",
                 "tools": [("mkdir_path", {"path": name})],
             }
-        return {
-            "say": (
-                "Pour créer un dossier, indique le nom.\n"
-                "Exemple : *crée un dossier logs*"
-            ),
-        }
+        return {"say": "Pour créer un dossier, indique le nom (ex. *crée un dossier logs*)."}
     if _wants_write_file(last_user_l):
         path = _extract_path_name(last_user_l, kind="file")
         if path and "write_file" in tool_names:
-            content = _extract_file_content(last_user_l)
             return {
-                "say": (
-                    f"Je prépare la création du fichier **{path}** — "
-                    "clique **Exécuter** pour confirmer."
-                ),
-                "tools": [("write_file", {"path": path, "content": content})],
+                "say": f"Compris — création du fichier **{path}** (confirmation)…",
+                "tools": [
+                    (
+                        "write_file",
+                        {"path": path, "content": _extract_file_content(last_user_l)},
+                    )
+                ],
             }
         return {
-            "say": (
-                "Pour créer un fichier, indique le nom (ex. `notes.txt`).\n"
-                "Exemple : *crée un fichier du nom lievin.txt*"
-            ),
+            "say": "Pour créer un fichier, indique le nom (ex. *crée un fichier du nom notes.txt*)."
         }
     if _wants_delete_path(last_user_l):
         path = _extract_path_name(last_user_l, kind="any")
         if path and "delete_paths" in tool_names:
             return {
-                "say": (
-                    f"Je prépare la suppression de **{path}** — "
-                    "clique **Exécuter** pour confirmer."
-                ),
+                "say": f"Compris — suppression de **{path}** (confirmation)…",
                 "tools": [("delete_paths", {"paths": [path]})],
             }
 
-    if any(k in last_user_l for k in ("fichier", "dossier", "répertoire", "repertoire", "file manager")):
-        path = ""
-        m = re.search(r"(?:dans|path|chemin)\s+[«\"]?([^\s»\"]+)", last_user_l)
-        if m:
-            path = m.group(1)
-        if any(k in last_user_l for k in ("cherche", "search", "trouve")):
-            q = last_user_l.split("cherche")[-1].strip()[:80] if "cherche" in last_user_l else ""
-            return {
-                "say": "Je cherche dans tes fichiers…",
-                "tools": [("search_account_files", {"query": q or "*", "path": path or ""})],
-            }
-        return {
-            "say": "Je liste le contenu du home…",
-            "tools": [("list_files", {"path": path or ""})],
-        }
+    scored = _intent_from_scores(
+        last_user_l,
+        text_n,
+        page_sec=page_sec,
+        page_runtime=page_runtime,
+        page_help=page_help and len(text_n) < 120,
+        tool_names=tool_names,
+    )
+    if scored:
+        return scored
 
-    if wants_list and "ftp" in last_user_l:
-        return {"say": "Je liste tes comptes FTP…", "tools": [("list_ftp_accounts", {})]}
-    if wants_list and any(k in last_user_l for k in ("backup", "sauvegarde")):
-        return {"say": "Je liste tes sauvegardes…", "tools": [("list_backups", {})]}
-    if any(k in last_user_l for k in ("lance une sauvegarde", "créer un backup", "creer un backup", "faire un backup")):
-        return {
-            "say": "Je prépare une sauvegarde complète — confirmation requise…",
-            "tools": [("create_backup", {"backup_type": "full"})],
-        }
-
-    if wants_list and any(k in last_user_l for k in ("mail", "email", "boîte", "boite", "mailbox", "messagerie")):
-        return {"say": "Je liste tes boîtes mail…", "tools": [("list_mailboxes", {})]}
-    if wants_list and any(k in last_user_l for k in ("dns", "zone dns", "enregistrement")):
-        return {"say": "Je liste tes zones DNS…", "tools": [("list_dns_zones", {})]}
-    if wants_list and "php" in last_user_l:
-        return {
-            "say": "Je regarde les versions / sélecteurs PHP…",
-            "tools": [("list_php_versions", {}), ("list_php_selectors", {})],
-        }
-    if wants_list and any(k in last_user_l for k in ("git", "dépôt", "depot", "repo")):
-        return {"say": "Je liste tes dépôts Git…", "tools": [("list_git_repos", {})]}
-    if wants_list and any(k in last_user_l for k in ("docker", "conteneur", "container")):
-        return {"say": "Je liste tes conteneurs Docker…", "tools": [("list_docker_containers", {})]}
-    if any(k in last_user_l for k in ("kubernetes", "k8s", "kubectl")):
-        return {"say": "Vue Kubernetes…", "tools": [("get_k8s_overview", {})]}
-
-    if wants_list and (mentions_python or mentions_node or mentions_apps):
-        return {
-            "say": "Je liste tes applications sur le compte…",
-            "tools": [("check_application_status", {})],
-        }
-
-    if any(k in last_user_l for k in ("statut", "status", "running", "qui tourne", "état")):
-        return {
-            "say": "Je vérifie le statut de tes apps…",
-            "tools": [("check_application_status", {})],
-        }
-
-    page_auto = any(k in last_user_l for k in ("je suis sur", "page setup", "vérifie le statut"))
-    on_python_page = page_sec == "python" or page_runtime == "python"
-    on_node_page = page_sec == "node" or page_runtime == "node"
-    if (on_python_page or mentions_python) and (
-        "log" in last_user_l or "statut" in last_user_l or (page_auto and on_python_page)
+    if page_help or (
+        any(k in text_n for k in ("aide", "help", "je suis sur")) and len(text_n) < 100
     ):
-        return {
-            "say": "Ok, je regarde le statut et les logs Python…",
-            "tools": [
-                ("check_application_status", {}),
-                ("get_page_logs", {"runtime": "python", "lines": 100}),
-                ("analyze_deployment_error", {"runtime": "python"}),
-            ],
+        page_defaults = {
+            "email": (
+                "Tu es sur Email. Je liste tes boîtes.",
+                [("list_mailboxes", {})],
+            ),
+            "ftp": ("Tu es sur FTP. Je liste tes comptes…", [("list_ftp_accounts", {})]),
+            "cron": ("Tu es sur Cron. Je liste tes tâches…", [("list_cron_jobs", {})]),
+            "backups": ("Tu es sur Backups. Je liste tes sauvegardes…", [("list_backups", {})]),
+            "files": ("Tu es sur File Manager. Je liste le home…", [("list_files", {"path": ""})]),
+            "domains": ("Tu es sur Domaines. Je liste tes domaines…", [("list_domains", {})]),
+            "databases": ("Tu es sur Databases. Je liste tes bases…", [("list_databases", {})]),
+            "dns": ("Tu es sur DNS. Je liste tes zones…", [("list_dns_zones", {})]),
+            "wordpress": (
+                "Tu es sur WordPress. Je liste tes sites.",
+                [("list_wordpress_sites", {})],
+            ),
+            "python": (
+                "Tu es sur Python. Je regarde statut et logs…",
+                [
+                    ("check_application_status", {}),
+                    ("get_page_logs", {"runtime": "python", "lines": 100}),
+                    ("analyze_deployment_error", {"runtime": "python"}),
+                ],
+            ),
+            "node": (
+                "Tu es sur Node. Je regarde statut et logs…",
+                [
+                    ("check_application_status", {}),
+                    ("get_page_logs", {"runtime": "node", "lines": 100}),
+                ],
+            ),
         }
+        if page_sec in page_defaults:
+            say, tools = page_defaults[page_sec]
+            return {"say": say, "tools": tools}
 
-    if (on_node_page or mentions_node) and (
-        "log" in last_user_l or "statut" in last_user_l or (page_auto and on_node_page)
-    ):
-        return {
-            "say": "Ok, je regarde tes apps Node et les logs…",
-            "tools": [
-                ("check_application_status", {}),
-                ("get_page_logs", {"runtime": "node", "lines": 100}),
-            ],
-        }
-
-    if any(k in last_user_l for k in ("log", "erreur", "error", "failed", "échou", "traceback")):
+    if any(k in text_n for k in ("log", "erreur", "error", "failed", "echou", "traceback")):
         rt = _guess_runtime(last_user_l + " " + page_runtime)
         return {
-            "say": "Je récupère les logs pour comprendre l'erreur…",
+            "say": "Compris — je récupère les **logs**…",
             "tools": [
                 ("get_deployment_logs", {"runtime": rt, "lines": 80}),
                 ("analyze_deployment_error", {"runtime": rt}),
             ],
         }
 
-    if "jail" in last_user_l or (
-        "commande" in last_user_l and any(k in last_user_l for k in ("liste", "dispo", "autoris"))
+    if "jail" in text_n or (
+        "commande" in text_n and any(k in text_n for k in ("liste", "dispo", "autoris"))
     ):
         return {
-            "say": "Voici le catalogue des commandes jail autorisées…",
+            "say": "Compris — catalogue des commandes jail…",
             "tools": [("list_jail_commands", {})],
         }
 
     if any(
-        k in last_user_l
-        for k in (
-            "contexte",
-            "ce que j'ai",
-            "ce que j ai",
-            "mon compte",
-            "vue d'ensemble",
-            "sur mon compte",
-        )
-    ) and "messagerie" not in last_user_l and "mail" not in last_user_l:
+        k in text_n for k in ("contexte", "ce que j'ai", "ce que j ai", "sur mon compte")
+    ) and "mail" not in text_n and "messagerie" not in text_n:
         return {
-            "say": "Je regarde ce qui existe déjà sur ton compte…",
+            "say": "Compris — je regarde ce qui existe sur ton compte…",
             "tools": [
                 ("get_account_overview", {}),
                 ("get_deployment_context", {}),
@@ -1835,24 +2086,22 @@ def _converse(
             "On avance message par message."
         )
 
-    # Multi-tours : ne pas forcer le panel sur du bavardage
-    if len(user_turns) >= 2 and prev_assistant:
-        if len(text) < 80 and not any(
-            k in low for k in ("app", "domaine", "log", "mail", "fichier", "ssl", "base", "cron")
-        ):
-            return (
-                f"Oui — « {text[:200]} ».\n\n"
-                "Je t'écoute. Tu peux parler librement ; dès que tu veux du concret sur le serveur, "
-                "dis par ex. *liste mes apps* ou *montre mes domaines*."
-            )
-        return (
-            f"Compris : « {text[:240]} ».\n\n"
-            "Si c'est lié au panel, je peux agir tout de suite "
-            "(liste / stop / logs / domaines…). Sinon reformule et j'y réponds au mieux."
-        )
+    # Multi-tours / fallback : toujours refléter le message, proposer l'action la plus proche
+    hint = ""
+    tn = _norm_text(low)
+    if any(k in tn for k in ("mail", "boite", "messagerie", "email")):
+        hint = "Ex. *liste mes boîtes mail* ou *crée contact@domaine.tld mot de passe …*"
+    elif any(k in tn for k in ("fichier", "dossier", "repertoire")):
+        hint = "Ex. *liste mes fichiers* ou *crée un fichier du nom notes.txt*"
+    elif any(k in tn for k in ("domaine", "ssl", "wordpress", "wp")):
+        hint = "Ex. *liste mes domaines* / *liste mes sites WordPress*"
+    elif any(k in tn for k in ("app", "python", "node")):
+        hint = "Ex. *liste mes applications* ou *arrête l'app #ID*"
+    else:
+        hint = "Ex. *liste mes domaines*, *mes mails*, *mes apps*…"
 
     return (
-        f"Compris : « {text[:280]} ».\n\n"
-        "Dis-moi ce que tu veux — discussion, debug, ou une action panel "
-        "(*liste mes applications*, *mes domaines*, *mes mails*…)."
+        f"J'ai bien lu : « {text[:240]} ».\n\n"
+        "Reformule en une action claire du panneau et j'exécute tout de suite.\n"
+        f"{hint}"
     )

@@ -191,6 +191,7 @@ def describe_ui_context(ui: dict[str, Any]) -> str:
         f"Tools suggérées: {', '.join(ui.get('suggested_tools') or [])}",
         f"Runtime page: {runtime or 'n/a'}",
         "Adapte ta première réponse à cette page.",
+        "IMPORTANT: le message utilisateur prime toujours sur cette page.",
     ]
     if runtime in {"python", "node"}:
         lines.append(
