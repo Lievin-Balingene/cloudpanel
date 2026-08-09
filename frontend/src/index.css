@@ -208,6 +208,13 @@ html.dark body {
 /* —— V-zone AI assistant —— */
 .vz-ai-fab {
   animation: vz-ai-enter 0.45s var(--vz-ease) both;
+  background: linear-gradient(145deg, #1a2b3c 0%, #243b53 55%, #1a2b3c 100%);
+  box-shadow:
+    0 10px 28px rgba(26, 43, 60, 0.35),
+    0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+}
+.vz-ai-fab:hover {
+  transform: translateY(-1px);
 }
 .vz-ai-fab-ring {
   position: absolute;
@@ -217,26 +224,64 @@ html.dark body {
   animation: vz-ai-pulse 2.4s ease-out infinite;
   pointer-events: none;
 }
+.vz-ai-fab-glow {
+  position: absolute;
+  inset: 2px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.35), transparent 65%);
+  pointer-events: none;
+}
 .vz-ai-panel {
-  border-radius: 18px;
+  border-radius: 22px;
   border: 1px solid rgba(44, 62, 80, 0.12);
-  background: #f4f7fb;
+  background:
+    radial-gradient(120% 80% at 100% -10%, rgba(56, 120, 180, 0.12), transparent 42%),
+    radial-gradient(90% 60% at -10% 100%, rgba(249, 115, 22, 0.07), transparent 40%),
+    linear-gradient(180deg, #f7fafc 0%, #eef3f8 100%);
   box-shadow:
-    0 8px 28px rgba(26, 43, 60, 0.18),
-    0 2px 8px rgba(26, 43, 60, 0.08);
+    0 18px 50px rgba(26, 43, 60, 0.22),
+    0 4px 14px rgba(26, 43, 60, 0.1);
   animation: vz-ai-enter 0.35s var(--vz-ease) both;
+  backdrop-filter: blur(8px);
 }
 .dark .vz-ai-panel {
-  background: #121a24;
+  background:
+    radial-gradient(120% 80% at 100% -10%, rgba(56, 120, 180, 0.18), transparent 42%),
+    radial-gradient(90% 60% at -10% 100%, rgba(249, 115, 22, 0.08), transparent 40%),
+    linear-gradient(180deg, #121a24 0%, #0d141c 100%);
   border-color: rgba(255, 255, 255, 0.08);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+}
+.vz-ai-header {
+  background:
+    linear-gradient(120deg, #152433 0%, #1a2b3c 45%, #243b53 100%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  position: relative;
+  overflow: hidden;
+}
+.vz-ai-header::after {
+  content: "";
+  position: absolute;
+  inset: auto -20% -60% auto;
+  width: 180px;
+  height: 180px;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.12), transparent 70%);
+  pointer-events: none;
+}
+.vz-ai-header-avatar {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0.06));
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.2),
+    0 6px 14px rgba(0, 0, 0, 0.18);
 }
 .vz-ai-aside {
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.55);
   border-right: 1px solid rgba(44, 62, 80, 0.1);
+  backdrop-filter: blur(10px);
 }
 .dark .vz-ai-aside {
-  background: rgba(0, 0, 0, 0.22);
+  background: rgba(0, 0, 0, 0.28);
   border-color: rgba(255, 255, 255, 0.08);
 }
 .vz-ai-pill {
@@ -266,27 +311,34 @@ html.dark body {
   height: 6px;
   border-radius: 999px;
 }
+.vz-ai-thread {
+  background: transparent;
+  scrollbar-width: thin;
+}
 .vz-ai-bubble-user {
   border-radius: 18px 18px 6px 18px;
-  background: linear-gradient(145deg, #1a2b3c, #243447);
+  background: linear-gradient(145deg, #1a2b3c, #2a4056);
   color: #fff;
   padding: 11px 15px;
-  box-shadow: 0 2px 10px rgba(26, 43, 60, 0.18);
+  box-shadow:
+    0 4px 14px rgba(26, 43, 60, 0.2),
+    0 0 0 1px rgba(255, 255, 255, 0.06) inset;
   font-size: 13.5px;
   line-height: 1.5;
 }
 .vz-ai-bubble-bot {
   border-radius: 18px 18px 18px 6px;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.92);
   color: #2c3e50;
   padding: 12px 15px;
   border: 1px solid rgba(44, 62, 80, 0.07);
   box-shadow:
     0 1px 2px rgba(26, 43, 60, 0.04),
-    0 4px 14px rgba(26, 43, 60, 0.05);
+    0 8px 22px rgba(26, 43, 60, 0.06);
+  backdrop-filter: blur(8px);
 }
 .dark .vz-ai-bubble-bot {
-  background: rgba(255, 255, 255, 0.055);
+  background: rgba(255, 255, 255, 0.06);
   color: #e8eef6;
   border-color: rgba(255, 255, 255, 0.08);
 }
@@ -362,12 +414,14 @@ html.dark body {
   color: #fca5a5;
 }
 .vz-ai-confirm {
-  border-radius: 14px;
+  border-radius: 16px;
   border: 1px solid rgba(251, 191, 36, 0.55);
-  background: linear-gradient(145deg, #fffbeb, #fff7ed);
+  background:
+    linear-gradient(145deg, #fffbeb, #fff7ed),
+    radial-gradient(80% 60% at 100% 0%, rgba(251, 146, 60, 0.15), transparent 50%);
   padding: 12px 14px;
   color: #78350f;
-  box-shadow: 0 2px 10px rgba(180, 83, 9, 0.08);
+  box-shadow: 0 6px 18px rgba(180, 83, 9, 0.1);
 }
 .dark .vz-ai-confirm {
   background: linear-gradient(145deg, rgba(120, 53, 15, 0.35), rgba(67, 20, 7, 0.35));
@@ -378,22 +432,90 @@ html.dark body {
   animation: vz-ai-msg-in 0.28s var(--vz-ease) both;
 }
 .vz-ai-starters {
-  animation: vz-ai-msg-in 0.4s var(--vz-ease) 0.08s both;
+  animation: none;
+}
+.vz-ai-starter {
+  border-radius: 16px;
+  border: 1px solid rgba(44, 62, 80, 0.1);
+  background: rgba(255, 255, 255, 0.82);
+  padding: 11px 13px;
+  text-align: left;
+  box-shadow: 0 2px 8px rgba(26, 43, 60, 0.05);
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  animation: vz-ai-msg-in 0.4s var(--vz-ease) both;
+}
+.vz-ai-starter:hover {
+  transform: translateY(-2px);
+  border-color: rgba(26, 43, 60, 0.28);
+  box-shadow: 0 10px 22px rgba(26, 43, 60, 0.1);
+}
+.dark .vz-ai-starter {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
 }
 .vz-ai-thinking {
-  border-radius: 18px 18px 18px 6px;
+  border-radius: 20px 20px 20px 8px;
   border: 1px solid rgba(44, 62, 80, 0.08);
   background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(241, 245, 249, 0.98));
-  padding: 12px 14px;
-  box-shadow: 0 4px 16px rgba(26, 43, 60, 0.06);
+    linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(241, 245, 249, 0.9)),
+    radial-gradient(90% 80% at 0% 0%, rgba(56, 120, 180, 0.1), transparent 55%);
+  padding: 13px 14px;
+  box-shadow: 0 8px 24px rgba(26, 43, 60, 0.08);
+  position: relative;
+  overflow: hidden;
+}
+.vz-ai-thinking::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    110deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.35) 48%,
+    transparent 66%
+  );
+  background-size: 200% 100%;
+  animation: vz-ai-sheen 2.4s ease-in-out infinite;
+  pointer-events: none;
 }
 .dark .vz-ai-thinking {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.03));
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03)),
+    radial-gradient(90% 80% at 0% 0%, rgba(56, 120, 180, 0.16), transparent 55%);
   border-color: rgba(255, 255, 255, 0.08);
 }
+.vz-ai-think-pct {
+  font-size: 11px;
+  font-weight: 700;
+  color: #1a2b3c;
+  background: rgba(26, 43, 60, 0.07);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.dark .vz-ai-think-pct {
+  color: #e2e8f0;
+  background: rgba(255, 255, 255, 0.08);
+}
+.vz-ai-think-track {
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(26, 43, 60, 0.08);
+  overflow: hidden;
+}
+.dark .vz-ai-think-track {
+  background: rgba(255, 255, 255, 0.08);
+}
+.vz-ai-think-track-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #1a2b3c, #3b82f6, #f97316);
+  background-size: 200% 100%;
+  animation: vz-ai-shimmer 1.6s linear infinite;
+  transition: width 0.45s var(--vz-ease);
+}
 .vz-ai-avatar-think {
-  background: linear-gradient(145deg, rgba(26, 43, 60, 0.12), rgba(26, 43, 60, 0.04));
+  background: linear-gradient(145deg, rgba(26, 43, 60, 0.14), rgba(59, 130, 246, 0.12));
+  box-shadow: 0 0 0 1px rgba(26, 43, 60, 0.08);
 }
 .dark .vz-ai-avatar-think {
   background: rgba(255, 255, 255, 0.08);
@@ -401,7 +523,7 @@ html.dark body {
 .vz-ai-think-ring {
   position: absolute;
   inset: -3px;
-  border-radius: 999px;
+  border-radius: 16px;
   border: 2px solid rgba(26, 43, 60, 0.28);
   animation: vz-ai-pulse 2s ease-out infinite;
   pointer-events: none;
@@ -440,13 +562,14 @@ html.dark body {
   gap: 8px;
   border-radius: 10px;
   padding: 6px 8px;
-  transition: background 0.25s ease, opacity 0.25s ease;
+  transition: background 0.25s ease, opacity 0.25s ease, transform 0.25s ease;
 }
 .vz-ai-think-step-done {
   opacity: 0.55;
 }
 .vz-ai-think-step-active {
   background: rgba(26, 43, 60, 0.06);
+  transform: translateX(2px);
 }
 .dark .vz-ai-think-step-active {
   background: rgba(255, 255, 255, 0.06);
@@ -474,24 +597,66 @@ html.dark body {
   background: rgba(16, 185, 129, 0.15);
   color: #059669;
 }
+.vz-ai-skeleton-card {
+  border-radius: 14px;
+  border: 1px solid rgba(44, 62, 80, 0.06);
+  background: rgba(255, 255, 255, 0.55);
+}
+.dark .vz-ai-skeleton-card {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.06);
+}
 .vz-ai-shimmer {
   background: linear-gradient(
     90deg,
-    rgba(26, 43, 60, 0.06) 0%,
+    rgba(26, 43, 60, 0.05) 0%,
     rgba(26, 43, 60, 0.14) 45%,
-    rgba(26, 43, 60, 0.06) 100%
+    rgba(26, 43, 60, 0.05) 100%
   );
   background-size: 200% 100%;
-  animation: vz-ai-shimmer 1.35s ease-in-out infinite;
+  animation: vz-ai-shimmer 1.25s ease-in-out infinite;
 }
 .dark .vz-ai-shimmer {
   background: linear-gradient(
     90deg,
     rgba(255, 255, 255, 0.04) 0%,
-    rgba(255, 255, 255, 0.12) 45%,
+    rgba(255, 255, 255, 0.13) 45%,
     rgba(255, 255, 255, 0.04) 100%
   );
   background-size: 200% 100%;
+}
+.vz-ai-composer {
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(12px);
+}
+.dark .vz-ai-composer {
+  background: rgba(0, 0, 0, 0.28);
+}
+.vz-ai-input {
+  border: 1px solid rgba(44, 62, 80, 0.12);
+  background: rgba(255, 255, 255, 0.95);
+  color: #2c3e50;
+  outline: none;
+  box-shadow: 0 1px 2px rgba(26, 43, 60, 0.04);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.vz-ai-input:focus {
+  border-color: rgba(26, 43, 60, 0.35);
+  box-shadow: 0 0 0 3px rgba(26, 43, 60, 0.1);
+}
+.dark .vz-ai-input {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #e8eef6;
+}
+.vz-ai-send {
+  background: linear-gradient(145deg, #1a2b3c, #2a4056);
+  box-shadow: 0 6px 14px rgba(26, 43, 60, 0.25);
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+.vz-ai-send:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.08);
 }
 .vz-ai-caret {
   width: 2px;
@@ -561,5 +726,13 @@ html.dark body {
   }
   100% {
     background-position: -100% 0;
+  }
+}
+@keyframes vz-ai-sheen {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -40% 0;
   }
 }

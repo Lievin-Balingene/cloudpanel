@@ -219,40 +219,56 @@ function ThinkingCard({ pageLabel }: { pageLabel: string }) {
   const [step, setStep] = useState(0);
   useEffect(() => {
     const id = window.setInterval(() => {
-      setStep((s) => (s + 1) % THINKING_STEPS.length);
-    }, 1600);
+      setStep((s) => Math.min(s + 1, THINKING_STEPS.length - 1));
+    }, 1400);
     return () => window.clearInterval(id);
   }, []);
 
+  const progress = Math.round(((step + 1) / THINKING_STEPS.length) * 100);
+
   return (
-    <div className="vz-ai-msg flex gap-2.5">
-      <div className="vz-ai-avatar-think relative mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full">
+    <div className="vz-ai-msg flex gap-2.5" aria-live="polite" aria-busy="true">
+      <div className="vz-ai-avatar-think relative mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl">
         <span className="vz-ai-think-ring" aria-hidden />
         <span className="vz-ai-think-ring vz-ai-think-ring-delay" aria-hidden />
-        <Sparkles className="relative h-3.5 w-3.5 text-cp-navy dark:text-white" />
+        <Sparkles className="relative h-4 w-4 text-cp-navy dark:text-white" />
       </div>
-      <div className="vz-ai-thinking max-w-[92%] flex-1">
-        <div className="flex items-center gap-2">
-          <p className="text-[13px] font-semibold text-cp-navy dark:text-white">V-zone AI réfléchit</p>
-          <span className="vz-ai-think-dots" aria-hidden>
-            <i />
-            <i />
-            <i />
-          </span>
+      <div className="vz-ai-thinking max-w-[94%] flex-1">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <p className="text-[13px] font-semibold tracking-tight text-cp-navy dark:text-white">
+                V-zone AI réfléchit
+              </p>
+              <span className="vz-ai-think-dots" aria-hidden>
+                <i />
+                <i />
+                <i />
+              </span>
+            </div>
+            <p className="mt-0.5 text-[11px] text-cp-muted">
+              Contexte · <span className="font-medium text-cp-text dark:text-white/85">{pageLabel}</span>
+            </p>
+          </div>
+          <span className="vz-ai-think-pct tabular-nums">{progress}%</span>
         </div>
-        <p className="mt-0.5 text-[11px] text-cp-muted">
-          Sur <span className="font-medium text-cp-text dark:text-white/80">{pageLabel}</span>
-        </p>
-        <ol className="mt-3 space-y-1.5">
+
+        <div className="vz-ai-think-track mt-3" aria-hidden>
+          <div className="vz-ai-think-track-fill" style={{ width: `${progress}%` }} />
+        </div>
+
+        <ol className="mt-3 space-y-1">
           {THINKING_STEPS.map((s, i) => {
             const state = i < step ? "done" : i === step ? "active" : "todo";
             return (
               <li key={s.label} className={`vz-ai-think-step vz-ai-think-step-${state}`}>
                 <span className="vz-ai-think-step-mark">
-                  {state === "done" ? <Check className="h-3 w-3" /> : state === "active" ? (
+                  {state === "done" ? (
+                    <Check className="h-3 w-3" />
+                  ) : state === "active" ? (
                     <Loader2 className="h-3 w-3 animate-spin" />
                   ) : (
-                    <span className="h-1.5 w-1.5 rounded-full bg-current opacity-40" />
+                    <span className="h-1.5 w-1.5 rounded-full bg-current opacity-35" />
                   )}
                 </span>
                 <span className="min-w-0">
@@ -265,11 +281,63 @@ function ThinkingCard({ pageLabel }: { pageLabel: string }) {
             );
           })}
         </ol>
-        <div className="mt-3 space-y-1.5" aria-hidden>
-          <div className="vz-ai-shimmer h-2 w-[92%] rounded-full" />
-          <div className="vz-ai-shimmer h-2 w-[70%] rounded-full" />
-          <div className="vz-ai-shimmer h-2 w-[48%] rounded-full" />
+
+        <div className="vz-ai-skeleton mt-3.5 space-y-2.5" aria-hidden>
+          <div className="flex items-center gap-2">
+            <div className="vz-ai-shimmer h-6 w-6 rounded-lg" />
+            <div className="vz-ai-shimmer h-2.5 w-24 rounded-full" />
+          </div>
+          <div className="vz-ai-skeleton-card space-y-2 p-3">
+            <div className="vz-ai-shimmer h-2.5 w-[94%] rounded-full" />
+            <div className="vz-ai-shimmer h-2.5 w-[78%] rounded-full" />
+            <div className="vz-ai-shimmer h-2.5 w-[62%] rounded-full" />
+            <div className="mt-2 flex gap-2">
+              <div className="vz-ai-shimmer h-5 w-16 rounded-full" />
+              <div className="vz-ai-shimmer h-5 w-20 rounded-full" />
+            </div>
+          </div>
+          <div className="vz-ai-skeleton-card space-y-2 p-3">
+            <div className="vz-ai-shimmer h-2.5 w-[88%] rounded-full" />
+            <div className="vz-ai-shimmer h-2.5 w-[55%] rounded-full" />
+          </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function HistorySkeleton() {
+  return (
+    <div className="space-y-2 px-1.5" aria-hidden>
+      {[0, 1, 2, 3].map((i) => (
+        <div key={i} className="rounded-xl px-2.5 py-2">
+          <div className="vz-ai-shimmer h-3 w-[85%] rounded-full" style={{ animationDelay: `${i * 0.12}s` }} />
+          <div className="vz-ai-shimmer mt-2 h-2 w-12 rounded-full" style={{ animationDelay: `${i * 0.12 + 0.05}s` }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function BootSkeleton() {
+  return (
+    <div className="flex flex-1 flex-col gap-3 px-3 py-4" aria-busy="true">
+      <div className="vz-ai-msg flex gap-2.5">
+        <div className="vz-ai-shimmer h-8 w-8 shrink-0 rounded-full" />
+        <div className="vz-ai-skeleton-card flex-1 space-y-2 p-3.5">
+          <div className="vz-ai-shimmer h-2.5 w-20 rounded-full" />
+          <div className="vz-ai-shimmer h-2.5 w-[92%] rounded-full" />
+          <div className="vz-ai-shimmer h-2.5 w-[70%] rounded-full" />
+          <div className="vz-ai-shimmer h-2.5 w-[48%] rounded-full" />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-2 pt-2">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="vz-ai-skeleton-card space-y-2 p-3">
+            <div className="vz-ai-shimmer h-2.5 w-16 rounded-full" />
+            <div className="vz-ai-shimmer h-2 w-full rounded-full" />
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -651,7 +719,8 @@ export function AiDeploymentAssistant() {
         >
           <span className="relative flex h-9 w-9 items-center justify-center rounded-full bg-white/15">
             <span className="vz-ai-fab-ring" aria-hidden />
-            <Sparkles className="relative h-4 w-4" />
+            <span className="vz-ai-fab-glow" aria-hidden />
+            <Sparkles className="relative h-4 w-4 transition group-hover:scale-110" />
             {pending.length > 0 && (
               <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-cp-orange px-1 text-[9px] font-bold">
                 {pending.length}
@@ -660,7 +729,7 @@ export function AiDeploymentAssistant() {
           </span>
           <span className="hidden flex-col items-start leading-tight sm:flex">
             <span>V-zone AI</span>
-            <span className="text-[10px] font-normal text-white/70">Assistant déploiement</span>
+            <span className="text-[10px] font-normal text-white/70">Assistant intelligent</span>
           </span>
         </button>
       )}
@@ -682,10 +751,10 @@ export function AiDeploymentAssistant() {
             role="dialog"
             aria-label="V-zone AI"
           >
-            <header className="flex items-center justify-between gap-2 bg-cp-header px-3 py-2.5 text-white">
+            <header className="vz-ai-header flex items-center justify-between gap-2 px-3 py-3 text-white">
               <div className="flex min-w-0 items-center gap-2.5">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-white/25 to-white/5 ring-1 ring-white/20">
-                  <Bot className="h-4.5 w-4.5 h-[18px] w-[18px]" />
+                <div className="vz-ai-header-avatar relative flex h-10 w-10 items-center justify-center rounded-2xl">
+                  <Bot className="relative z-[1] h-[18px] w-[18px]" />
                 </div>
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold tracking-wide">V-zone AI</p>
@@ -753,8 +822,9 @@ export function AiDeploymentAssistant() {
                         )}
                       </button>
                     ))}
-                    {historyQuery.isLoading && (
-                      <p className="px-2 text-[11px] text-cp-muted">Chargement…</p>
+                    {historyQuery.isLoading && <HistorySkeleton />}
+                    {!historyQuery.isLoading && (historyQuery.data || []).length === 0 && (
+                      <p className="px-2 text-[11px] text-cp-muted">Aucune conversation.</p>
                     )}
                   </div>
                 </aside>
@@ -884,6 +954,9 @@ export function AiDeploymentAssistant() {
                   )}
 
                   <div className="vz-ai-thread flex-1 space-y-3.5 overflow-y-auto px-3 py-3 text-sm">
+                    {!conversationId && localMessages.length === 0 ? (
+                      <BootSkeleton />
+                    ) : null}
                     {localMessages.map((m, idx) => {
                       const isUser = m.role === "user";
                       const key = String(m.id ?? `m-${idx}`);
@@ -947,13 +1020,14 @@ export function AiDeploymentAssistant() {
 
                     {showEmptyStarters && (
                       <div className="vz-ai-starters grid grid-cols-1 gap-2 pt-1 sm:grid-cols-2">
-                        {STARTERS.map((s) => (
+                        {STARTERS.map((s, i) => (
                           <button
                             key={s.label}
                             type="button"
                             disabled={isBusy}
                             onClick={() => void onSend(s.prompt)}
-                            className="rounded-xl border border-cp-border/90 bg-white px-3 py-2.5 text-left shadow-sm transition hover:border-cp-navy/35 hover:shadow-md dark:bg-black/25"
+                            className="vz-ai-starter"
+                            style={{ animationDelay: `${0.05 + i * 0.04}s` }}
                           >
                             <span className="block text-[12px] font-semibold text-cp-navy dark:text-white">
                               {s.label}
@@ -1036,7 +1110,7 @@ export function AiDeploymentAssistant() {
                     <div ref={bottomRef} />
                   </div>
 
-                  <div className="border-t border-cp-border bg-white/90 p-2.5 backdrop-blur-sm dark:bg-black/30">
+                  <div className="vz-ai-composer border-t border-cp-border/80 p-2.5">
                     <form
                       className="flex items-end gap-2"
                       onSubmit={(e) => {
@@ -1048,7 +1122,7 @@ export function AiDeploymentAssistant() {
                         <textarea
                           ref={inputRef}
                           rows={1}
-                          className="vz-input max-h-[120px] min-h-[44px] w-full resize-none !rounded-xl !py-3 !pr-3 text-sm leading-snug"
+                          className="vz-ai-input max-h-[120px] min-h-[46px] w-full resize-none rounded-2xl px-3.5 py-3 text-sm leading-snug"
                           placeholder="Écrire un message… (Entrée pour envoyer)"
                           value={input}
                           onChange={(e) => {
@@ -1066,7 +1140,7 @@ export function AiDeploymentAssistant() {
                       </div>
                       <button
                         type="submit"
-                        className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-cp-navy text-white shadow-sm transition hover:bg-cp-navy-soft disabled:cursor-not-allowed disabled:opacity-40"
+                        className="vz-ai-send inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white disabled:cursor-not-allowed disabled:opacity-40"
                         disabled={!input.trim() || isBusy}
                         aria-label="Envoyer"
                       >
