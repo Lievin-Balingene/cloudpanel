@@ -374,7 +374,23 @@ def write_file(user: User, relative: str, content: str) -> FileEntry:
     data = content.encode("utf-8")
     if len(data) > MAX_EDITOR_BYTES:
         raise VZoneAPIException(detail="Contenu trop volumineux.", code="file_too_large", status_code=400)
-    path.write_bytes(data)
+    try:
+        path.write_bytes(data)
+    except PermissionError:
+        # Fichiers jail (chown) : tenter un chmod puis réécrire.
+        try:
+            if path.exists():
+                os.chmod(path, 0o644)
+            path.write_bytes(data)
+        except OSError as exc:
+            raise VZoneAPIException(
+                detail=(
+                    f"Permission refusée pour écrire « {path.name} ». "
+                    "Vérifiez le propriétaire/permissions (chmod) du fichier."
+                ),
+                code="permission_denied",
+                status_code=403,
+            ) from exc
     return entry_from_path(user, path)
 
 

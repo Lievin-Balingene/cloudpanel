@@ -29,6 +29,7 @@ import {
   resolvePanelBase,
   UPLOAD_MSG,
 } from "@/lib/fileUpload";
+import { openEditTab } from "@/lib/fileEditor";
 
 interface FileEntry {
   name: string;
@@ -110,9 +111,6 @@ export function FileManager({ title }: { title: string }) {
     paths: [],
   });
   const [query, setQuery] = useState("");
-  const [editor, setEditor] = useState<{ path: string; content: string; original: string } | null>(
-    null,
-  );
   const [chmodPath, setChmodPath] = useState<string | null>(null);
   const [chmodMode, setChmodMode] = useState("644");
   const [error, setError] = useState<string | null>(null);
@@ -262,55 +260,23 @@ export function FileManager({ title }: { title: string }) {
     });
   };
 
-  async function openEditor(entry: FileEntry) {
+  function launchEditor(entry: FileEntry) {
+    if (entry.is_dir) return;
     if (
       !entry.is_text &&
       !entry.name.match(
-        /\.(txt|html?|css|js|json|md|py|php|env|conf|ini|yml|yaml|xml|sh|sql|log|csv)$/i,
+        /\.(txt|html?|css|js|json|md|py|php|env|conf|ini|yml|yaml|xml|sh|sql|log|csv|ts|tsx|jsx|vue|rb|go|rs|toml|cfg|htaccess)$/i,
       )
     ) {
-      setError("Prévisualisation texte non disponible pour ce type.");
+      setError("Édition texte non disponible pour ce type de fichier.");
       return;
     }
-    const data = await apiRequest<{ path: string; content: string }>(
-      `/files/read/?path=${encodeURIComponent(entry.path)}`,
-    );
-    setEditor({ path: data.path, content: data.content, original: data.content });
-  }
-
-  function requestCloseEditor() {
-    if (!editor) return;
-    if (editor.content === editor.original) {
-      setEditor(null);
-      return;
+    const win = openEditTab(panelBase, entry.path);
+    if (!win) {
+      setError(
+        "Impossible d'ouvrir l'onglet d'édition. Autorisez les pop-ups pour ce site, puis réessayez.",
+      );
     }
-    askConfirm({
-      title: "Modifications non enregistrées",
-      message: `Le fichier « ${editor.path} » a été modifié. Fermer sans enregistrer ?`,
-      confirmLabel: "Fermer sans enregistrer",
-      danger: true,
-      onConfirm: () => {
-        setEditor(null);
-      },
-    });
-  }
-
-  function requestSaveEditor() {
-    if (!editor) return;
-    askConfirm({
-      title: "Enregistrer le fichier",
-      message: `Confirmer l'enregistrement de « ${editor.path} » ?`,
-      confirmLabel: "Enregistrer",
-      onConfirm: async () => {
-        await run(async () => {
-          await apiRequest("/files/write/", {
-            method: "PUT",
-            body: JSON.stringify({ path: editor.path, content: editor.content }),
-          });
-          setEditor(null);
-        });
-      },
-    });
   }
 
   function requestDelete() {
@@ -769,7 +735,7 @@ export function FileManager({ title }: { title: string }) {
                         setCwd(entry.path);
                         setSelected([]);
                       } else {
-                        void openEditor(entry);
+                        launchEditor(entry);
                       }
                     }}
                     onDragStart={(e) => {
@@ -901,7 +867,7 @@ export function FileManager({ title }: { title: string }) {
                 className="vz-btn-ghost vz-btn-sm w-full"
                 onClick={() => {
                   const entry = data?.entries.find((e) => e.path === selected[0]);
-                  if (entry && !entry.is_dir) void openEditor(entry);
+                  if (entry && !entry.is_dir) launchEditor(entry);
                 }}
               >
                 <Pencil className="h-3 w-3" />
@@ -970,40 +936,6 @@ export function FileManager({ title }: { title: string }) {
               </li>
             ))}
           </ul>
-        </div>
-      )}
-
-      {editor && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="flex h-[80vh] w-full max-w-4xl flex-col rounded border border-cp-border bg-white shadow-xl dark:border-ink-700 dark:bg-ink-950">
-            <div className="flex items-center justify-between border-b border-cp-border px-4 py-3 dark:border-ink-800">
-              <p className="font-semibold">
-                {editor.path}
-                {editor.content !== editor.original ? (
-                  <span className="ml-2 text-xs font-normal text-cp-muted">(modifié)</span>
-                ) : null}
-              </p>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  className="vz-btn-primary"
-                  disabled={editor.content === editor.original}
-                  onClick={requestSaveEditor}
-                >
-                  Enregistrer
-                </button>
-                <button type="button" className="vz-btn-ghost" onClick={requestCloseEditor}>
-                  Fermer
-                </button>
-              </div>
-            </div>
-            <textarea
-              className="min-h-0 flex-1 resize-none bg-cp-canvas p-4 font-mono text-sm outline-none dark:bg-ink-900"
-              value={editor.content}
-              onChange={(e) => setEditor({ ...editor, content: e.target.value })}
-              spellCheck={false}
-            />
-          </div>
         </div>
       )}
 

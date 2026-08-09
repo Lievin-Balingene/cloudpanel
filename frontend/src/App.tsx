@@ -14,6 +14,7 @@ import { WhmAccountCreatedPage } from "./pages/whm/WhmAccountCreatedPage";
 import { WhmDomainsPage } from "./pages/whm/WhmDomainsPage";
 import { WhmFilesPage } from "./pages/whm/WhmFilesPage";
 import { WhmFilesUploadPage } from "./pages/whm/WhmFilesUploadPage";
+import { WhmFilesEditPage } from "./pages/whm/WhmFilesEditPage";
 import { WhmFtpPage } from "./pages/whm/WhmFtpPage";
 import { WhmCronPage } from "./pages/whm/WhmCronPage";
 import { WhmEmailPage } from "./pages/whm/WhmEmailPage";
@@ -41,6 +42,7 @@ import { ClientPackagePage } from "./pages/client/ClientPackagePage";
 import { ClientDomainsPage } from "./pages/client/ClientDomainsPage";
 import { ClientFilesPage } from "./pages/client/ClientFilesPage";
 import { ClientFilesUploadPage } from "./pages/client/ClientFilesUploadPage";
+import { ClientFilesEditPage } from "./pages/client/ClientFilesEditPage";
 import { ClientFtpPage } from "./pages/client/ClientFtpPage";
 import { ClientCronPage } from "./pages/client/ClientCronPage";
 import { ClientEmailPage } from "./pages/client/ClientEmailPage";
@@ -141,6 +143,7 @@ export default function App() {
         <Route path="domains" element={<WhmDomainsPage />} />
         <Route path="files" element={<WhmFilesPage />} />
         <Route path="files/upload" element={<WhmFilesUploadPage />} />
+        <Route path="files/edit" element={<WhmFilesEditPage />} />
         <Route path="ftp" element={<WhmFtpPage />} />
         <Route path="cron" element={<WhmCronPage />} />
         <Route path="email" element={<WhmEmailPage />} />
@@ -175,6 +178,7 @@ export default function App() {
         <Route path="domains" element={<ClientDomainsPage />} />
         <Route path="files" element={<ClientFilesPage />} />
         <Route path="files/upload" element={<ClientFilesUploadPage />} />
+        <Route path="files/edit" element={<ClientFilesEditPage />} />
         <Route path="ftp" element={<ClientFtpPage />} />
         <Route path="cron" element={<ClientCronPage />} />
         <Route path="email" element={<ClientEmailPage />} />
