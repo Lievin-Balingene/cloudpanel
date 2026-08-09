@@ -63,6 +63,16 @@ class MockProvider:
             )
             if follow is not None:
                 return follow
+            follow = _deps_pipeline_after_tools(
+                messages, tool_names, last_user_l, user_turns=user_turns
+            )
+            if follow is not None:
+                return follow
+            follow = _install_deps_after_tools(
+                messages, tool_names, last_user_l, user_turns=user_turns
+            )
+            if follow is not None:
+                return follow
             return ChatResult(
                 content=_synthesize_tools(messages),
                 provider=self.name,
@@ -817,6 +827,239 @@ def _mail_after_tools(
     )
 
 
+def _wants_install_deps(text: str) -> bool:
+    t = _norm_text(text)
+    return any(
+        k in t
+        for k in (
+            "installe les dep",
+            "installer les dep",
+            "install dep",
+            "install requirements",
+            "pip install",
+            "npm install",
+            "dependances",
+            "dependencies",
+            "requirements.txt",
+        )
+    )
+
+
+def _wants_inspect_project(text: str) -> bool:
+    t = _norm_text(text)
+    inspectish = any(
+        k in t
+        for k in (
+            "analyse",
+            "analyzer",
+            "inspecte",
+            "inspecter",
+            "c'est quoi",
+            "cest quoi",
+            "quel type",
+            "est-ce un",
+            "est ce un",
+            "detecte",
+            "detecter",
+            "contenu du dossier",
+            "contenu de ce dossier",
+            "regarde le dossier",
+            "regarde ce dossier",
+            "framework",
+        )
+    )
+    folderish = any(
+        k in t
+        for k in ("dossier", "folder", "projet", "app", "repertoire", "django", "node")
+    ) or bool(_extract_project_folder(text))
+    return inspectish and folderish
+
+
+def _inspect_payload_from_messages(messages: list[ChatMessage]) -> dict[str, Any] | None:
+    for m in reversed(messages):
+        if m.role != "tool":
+            if m.role == "user":
+                break
+            continue
+        if (m.name or "") != "inspect_project_folder":
+            continue
+        try:
+            data = json.loads(m.content or "{}")
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(data, dict):
+            return None
+        payload = data.get("data") if isinstance(data.get("data"), dict) else data
+        if isinstance(payload.get("result"), dict):
+            payload = payload["result"]
+        return payload if isinstance(payload, dict) else None
+    return None
+
+
+def _install_deps_after_tools(
+    messages: list[ChatMessage],
+    tool_names: set[str],
+    last_user_l: str,
+    *,
+    user_turns: list[str] | None = None,
+) -> ChatResult | None:
+    """Après check_application_status si l'utilisateur veut installer les deps."""
+    del user_turns
+    if not _wants_install_deps(last_user_l):
+        return None
+    if "install_dependencies" not in tool_names:
+        return None
+
+    recent: list[ChatMessage] = []
+    for m in reversed(messages):
+        if m.role != "tool":
+            break
+        recent.append(m)
+    recent.reverse()
+    if not recent:
+        return None
+    if "install_dependencies" in {(m.name or "") for m in recent}:
+        return None
+
+    py_apps: list[dict] = []
+    node_apps: list[dict] = []
+    for m in recent:
+        if (m.name or "") != "check_application_status":
+            continue
+        try:
+            data = json.loads(m.content or "{}")
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            py_apps, node_apps = _apps_from_tool_payload(data)
+            break
+    if not py_apps and not node_apps:
+        return None
+
+    app_id = _extract_app_id(last_user_l)
+    runtime = _guess_runtime(last_user_l)
+    pool = py_apps if runtime != "node" else node_apps
+    if not pool:
+        pool = py_apps or node_apps
+        runtime = "python" if py_apps else "node"
+
+    chosen = None
+    if app_id:
+        chosen = next((a for a in pool if int(a.get("id") or 0) == app_id), None)
+    if chosen is None and len(pool) == 1:
+        chosen = pool[0]
+    if chosen is None:
+        lines = [_format_apps({"data": {"python_apps": py_apps, "node_apps": node_apps}})]
+        lines.append("")
+        lines.append("Dis *installe les deps de l'app #ID*.")
+        return ChatResult(content="\n".join(lines), provider="mock", model="mock-coach")
+
+    aid = int(chosen.get("id") or 0)
+    if chosen in node_apps:
+        runtime = "node"
+    else:
+        runtime = "python"
+    return ChatResult(
+        content=(
+            f"Je prépare **install_dependencies** pour **#{aid}** "
+            f"`{chosen.get('name')}` — clique **Exécuter**."
+        ),
+        tool_calls=[
+            ToolCallRequest(
+                id=str(uuid4()),
+                name="install_dependencies",
+                arguments={"runtime": runtime, "app_id": aid},
+            )
+        ],
+        provider="mock",
+        model="mock-coach",
+    )
+
+
+def _deps_pipeline_after_tools(
+    messages: list[ChatMessage],
+    tool_names: set[str],
+    last_user_l: str,
+    *,
+    user_turns: list[str] | None = None,
+) -> ChatResult | None:
+    """Après install_dependencies OK → propose start_application."""
+    del user_turns
+    recent: list[ChatMessage] = []
+    for m in reversed(messages):
+        if m.role != "tool":
+            break
+        recent.append(m)
+    recent.reverse()
+    if not recent:
+        return None
+    last = recent[-1]
+    if (last.name or "") != "install_dependencies":
+        return None
+    try:
+        data = json.loads(last.content or "{}")
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict) or data.get("pending_confirmation"):
+        return None
+    if not data.get("ok", True):
+        return None
+    if "start_application" not in tool_names:
+        return None
+
+    # app_id depuis l'historique user / system last_app / tool args context
+    app_id = _extract_app_id(last_user_l)
+    runtime = _guess_runtime(last_user_l)
+    for m in messages:
+        if m.role != "system":
+            continue
+        found = re.search(
+            r'"last_app"\s*:\s*\{[^}]*"id"\s*:\s*(\d+)[^}]*"runtime"\s*:\s*"([^"]+)"',
+            m.content or "",
+        )
+        if found:
+            app_id = app_id or int(found.group(1))
+            runtime = found.group(2) or runtime
+            break
+        found2 = re.search(r'"pipeline_app_id"\s*:\s*(\d+)', m.content or "")
+        if found2:
+            app_id = app_id or int(found2.group(1))
+    if not app_id:
+        # Cherche dans les messages assistant récents « app #N »
+        for m in reversed(messages):
+            if m.role != "assistant" or not m.content:
+                continue
+            m_id = re.search(r"app\s*#(\d+)", m.content, re.I)
+            if m_id:
+                app_id = int(m_id.group(1))
+                break
+    if not app_id:
+        return ChatResult(
+            content=(
+                "Dépendances installées. Indique l'**id** de l'app à démarrer "
+                "(ex. *démarre l'app #4*)."
+            ),
+            provider="mock",
+            model="mock-coach",
+        )
+    rt = runtime if runtime in {"python", "node"} else "python"
+    return ChatResult(
+        content=(
+            f"Dépendances OK. Je prépare le **démarrage** de l'app **#{app_id}** — "
+            "clique **Exécuter**."
+        ),
+        tool_calls=[
+            ToolCallRequest(
+                id=str(uuid4()),
+                name="start_application",
+                arguments={"runtime": rt, "app_id": int(app_id)},
+            )
+        ],
+        provider="mock",
+        model="mock-coach",
+    )
+
+
 def _wants_django_deploy(text: str) -> bool:
     t = _norm_text(text)
     deployish = any(
@@ -988,19 +1231,21 @@ def _django_after_tools(
     if not recent:
         return None
     names = {(m.name or "") for m in recent}
-    if "create_python_app" in names:
+    if "create_python_app" in names or "install_dependencies" in names:
         return None
     if not names & {
         "list_domains",
         "list_files",
         "check_application_status",
         "get_deployment_context",
+        "inspect_project_folder",
     }:
         return None
 
     domains: list[dict] = []
     py_apps: list[dict] = []
     file_dirs: list[str] = []
+    inspect: dict[str, Any] | None = None
     for m in recent:
         try:
             data = json.loads(m.content or "{}")
@@ -1013,6 +1258,12 @@ def _django_after_tools(
             domains = _domains_from_tool_payload(data)
         elif name == "check_application_status":
             py_apps, _node = _apps_from_tool_payload(data)
+        elif name == "inspect_project_folder":
+            payload = data.get("data") if isinstance(data.get("data"), dict) else data
+            if isinstance(payload.get("result"), dict):
+                payload = payload["result"]
+            if isinstance(payload, dict) and payload.get("framework"):
+                inspect = payload
         elif name == "list_files":
             payload = data.get("data") if isinstance(data.get("data"), dict) else data
             if isinstance(payload.get("result"), dict):
@@ -1027,6 +1278,26 @@ def _django_after_tools(
     root = _resolve_deploy_root(last_user_l, messages, turns)
     domain = _resolve_deploy_domain(last_user_l, messages, turns)
 
+    # Si on a un root mais pas encore inspecté → demander l'inspection
+    if (
+        root
+        and inspect is None
+        and "inspect_project_folder" in tool_names
+        and "inspect_project_folder" not in names
+    ):
+        return ChatResult(
+            content=f"Je regarde le contenu de **`{root}`** pour détecter le framework…",
+            tool_calls=[
+                ToolCallRequest(
+                    id=str(uuid4()),
+                    name="inspect_project_folder",
+                    arguments={"path": root},
+                )
+            ],
+            provider="mock",
+            model="mock-coach",
+        )
+
     # App déjà présente sur ce root ?
     if root:
         existing = next(
@@ -1040,24 +1311,72 @@ def _django_after_tools(
         )
         if existing:
             aid = int(existing.get("id") or 0)
+            status = str(existing.get("status") or "")
+            fw = (inspect or {}).get("framework") or "django"
+            if "install_dependencies" in tool_names and aid:
+                return ChatResult(
+                    content=(
+                        f"Le projet **`{root}`** est déjà l'app **#{aid}** "
+                        f"`{existing.get('name')}` ({status}"
+                        f"{f', détecté: {fw}' if fw else ''}).\n"
+                        "Je prépare **install_dependencies** puis on démarrera — "
+                        "clique **Exécuter**."
+                    ),
+                    tool_calls=[
+                        ToolCallRequest(
+                            id=str(uuid4()),
+                            name="install_dependencies",
+                            arguments={"runtime": "python", "app_id": aid},
+                        )
+                    ],
+                    provider="mock",
+                    model="mock-coach",
+                )
             return ChatResult(
                 content=(
                     f"Le projet **`{root}`** est déjà enregistré comme app "
-                    f"**#{aid}** `{existing.get('name')}` ({existing.get('status')}).\n\n"
-                    "Je peux **installer les dépendances** puis **démarrer**. "
+                    f"**#{aid}** `{existing.get('name')}` ({status}).\n\n"
                     "Dis *installe les deps* ou *démarre l'app*."
                 ),
                 provider="mock",
                 model="mock-coach",
             )
 
+    framework = "django"
+    mode = "wsgi"
+    entrypoint = "passenger_wsgi.py"
+    if inspect:
+        fw = str(inspect.get("framework") or "unknown").lower()
+        if fw == "node":
+            return ChatResult(
+                content=(
+                    f"**`{root}`** ressemble à un projet **Node** "
+                    f"({inspect.get('summary')}), pas Django.\n"
+                    "Dis *déploie mon app Node* ou crée une app Node depuis ce dossier."
+                ),
+                provider="mock",
+                model="mock-coach",
+            )
+        if fw in {"django", "flask", "fastapi", "generic"}:
+            framework = "django" if fw == "generic" else fw
+        mode = str(inspect.get("mode") or mode)
+        entrypoint = str(inspect.get("entrypoint_suggested") or entrypoint)
+        if framework == "fastapi":
+            mode = "asgi"
+            entrypoint = entrypoint or "asgi:application"
+
     if root and domain and "create_python_app" in tool_names:
         app_name = re.sub(r"[^a-z0-9_-]", "-", root.lower())[:40] or "django-app"
+        summary = ""
+        if inspect:
+            summary = f"\nDétecté : **{inspect.get('summary')}** (confiance {inspect.get('confidence', '?')})."
+            if inspect.get("signals"):
+                summary += " Signaux : " + ", ".join(f"`{s}`" for s in inspect.get("signals")[:6])
         return ChatResult(
             content=(
-                f"Parfait — projet **`{root}`**, domaine **`{domain}`**.\n"
-                "Je prépare **create_python_app** (Django / WSGI) — "
-                "clique **Exécuter** pour confirmer."
+                f"Parfait — projet **`{root}`**, domaine **`{domain}`**.{summary}\n"
+                f"Je prépare **create_python_app** ({framework} / {mode}) — "
+                "puis deps + démarrage après confirmation."
             ),
             tool_calls=[
                 ToolCallRequest(
@@ -1067,11 +1386,11 @@ def _django_after_tools(
                         "name": app_name,
                         "label": app_name,
                         "relative_root": root,
-                        "framework": "django",
-                        "mode": "wsgi",
+                        "framework": framework,
+                        "mode": mode,
                         "python_version": "3.12",
                         "domain_name": domain,
-                        "entrypoint": "passenger_wsgi.py",
+                        "entrypoint": entrypoint,
                     },
                 )
             ],
@@ -1081,9 +1400,12 @@ def _django_after_tools(
 
     if root and not domain:
         sample = ", ".join(f"`{d.get('name')}`" for d in domains[:8]) if domains else "(aucun)"
+        detected = ""
+        if inspect:
+            detected = f"\nType détecté : **{inspect.get('summary')}**."
         return ChatResult(
             content=(
-                f"Projet détecté : **`{root}`**.\n"
+                f"Projet détecté : **`{root}`**.{detected}\n"
                 f"Domaines dispo : {sample}\n\n"
                 "Indique le **domaine** (ex. *vzone.7une.info*) et j'enchaîne la création de l'app."
             ),
@@ -1099,7 +1421,7 @@ def _django_after_tools(
                 "Pour déployer Django, j'ai besoin du **dossier projet** (Application root).\n"
                 f"Dossiers visibles : {hint}\n\n"
                 "Exemple : *le dossier vzone contient le projet* "
-                "puis le domaine (*vzone.7une.info*)."
+                "— je l'analyserai (manage.py, requirements…) puis on déploie."
             ),
             provider="mock",
             model="mock-coach",
@@ -2111,13 +2433,55 @@ def _detect_intent(
             say += f" depuis **`{root}`**"
         if domain:
             say += f" → **{domain}**"
-        say += ". Je vérifie apps, domaines et fichiers…"
+        say += ". J'analyse le dossier, apps et domaines…"
+        tools: list[tuple[str, dict]] = [
+            ("check_application_status", {}),
+            ("list_domains", {}),
+        ]
+        if root:
+            tools.append(("inspect_project_folder", {"path": root}))
+            tools.append(("list_files", {"path": root}))
+        else:
+            tools.append(("list_files", {"path": ""}))
+        return {"say": say, "tools": tools}
+
+    if _wants_inspect_project(last_user_l) and "inspect_project_folder" in tool_names:
+        folder = _extract_project_folder(last_user_l) or _resolve_deploy_root(
+            last_user_l, messages, turns
+        )
+        if folder:
+            return {
+                "say": f"Compris — j'analyse le dossier **`{folder}`**…",
+                "tools": [
+                    ("inspect_project_folder", {"path": folder}),
+                    ("list_files", {"path": folder}),
+                ],
+            }
         return {
-            "say": say,
+            "say": "Indique le dossier à analyser (ex. *analyse le dossier vzone*).",
+            "tools": [],
+        }
+
+    if _wants_install_deps(last_user_l) and "install_dependencies" in tool_names:
+        app_id = _extract_app_id(last_user_l) or _infer_app_id_from_history(
+            messages, last_user_l
+        )
+        runtime = _guess_runtime(last_user_l + " " + page_runtime)
+        if not app_id:
+            return {
+                "say": "Compris — install deps : je liste tes apps pour cibler l'id…",
+                "tools": [("check_application_status", {})],
+            }
+        return {
+            "say": f"Compris — installation des dépendances app **#{app_id}** (confirmation)…",
             "tools": [
-                ("check_application_status", {}),
-                ("list_domains", {}),
-                ("list_files", {"path": ""}),
+                (
+                    "install_dependencies",
+                    {
+                        "runtime": runtime if runtime in {"python", "node"} else "python",
+                        "app_id": int(app_id),
+                    },
+                )
             ],
         }
 
@@ -2535,6 +2899,42 @@ def _synthesize_tools(messages: list[ChatMessage]) -> str:
                         f"- `{c.get('id')}` — {c.get('label') or c.get('description') or ''}"
                     )
             parts.append("\n".join(lines) if len(lines) > 2 else "Aucune commande jail.")
+        elif name == "inspect_project_folder":
+            payload = _payload(data)
+            if data.get("ok") is False or payload.get("ok") is False:
+                parts.append(
+                    f"**Inspection** : {data.get('error') or payload.get('error') or 'échec'}"
+                )
+            else:
+                fw = payload.get("framework") or "unknown"
+                lines = [
+                    f"**Projet** `{payload.get('path') or '/'}` — **{payload.get('summary') or fw}**",
+                    "",
+                    f"- Runtime : `{payload.get('runtime')}` / mode `{payload.get('mode')}`",
+                    f"- Confiance : {payload.get('confidence', '—')}",
+                ]
+                if payload.get("signals"):
+                    lines.append(
+                        "- Signaux : "
+                        + ", ".join(f"`{s}`" for s in (payload.get("signals") or [])[:8])
+                    )
+                if payload.get("entrypoint_suggested"):
+                    lines.append(f"- Entrypoint suggéré : `{payload.get('entrypoint_suggested')}`")
+                markers = payload.get("markers") if isinstance(payload.get("markers"), dict) else {}
+                hit = [k for k, v in markers.items() if v]
+                if hit:
+                    lines.append("- Marqueurs : " + ", ".join(f"`{k}`" for k in hit[:12]))
+                if payload.get("top_files"):
+                    lines.append(
+                        "- Fichiers : "
+                        + ", ".join(f"`{f}`" for f in (payload.get("top_files") or [])[:12])
+                    )
+                lines.append("")
+                lines.append(
+                    "Tu peux *déployer Django depuis ce dossier sur domaine.tld* "
+                    "si c'est le bon projet."
+                )
+                parts.append("\n".join(lines))
         else:
             ok = data.get("ok", True)
             err = data.get("error")

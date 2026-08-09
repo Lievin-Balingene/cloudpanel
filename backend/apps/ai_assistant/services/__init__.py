@@ -32,6 +32,11 @@ _EPHEMERAL_CONTEXT_KEYS = (
     "pending_deploy_framework",
     "pending_ssl",
     "pending_ssl_host",
+    "deploy_pipeline_after",
+    "deploy_pipeline_runtime",
+    "start_after_install",
+    "pipeline_app_id",
+    "pipeline_runtime",
 )
 
 

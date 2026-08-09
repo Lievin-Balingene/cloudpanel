@@ -377,3 +377,156 @@ def decompress_archive(user: User, params: dict[str, Any]) -> dict[str, Any]:
         return decompress(user, archive_path, destination)
 
     return run_service(_run)
+
+
+@register_tool(
+    name="inspect_project_folder",
+    description=(
+        "Analyse un dossier du home pour détecter le type de projet "
+        "(Django, Flask, FastAPI, Node, etc.) via fichiers marqueurs."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Chemin relatif au home (ex. vzone). Vide = racine.",
+            }
+        },
+        "additionalProperties": False,
+    },
+)
+def inspect_project_folder(user: User, params: dict[str, Any]) -> dict[str, Any]:
+    from apps.files.services import resolve_path
+    from apps.python_apps.services import detect_django_project_package
+
+    rel = require_str(params, "path", max_len=500)
+
+    def _run():
+        root = resolve_path(user, rel or None)
+        if not root.exists():
+            return {
+                "ok": False,
+                "error": f"Dossier introuvable : `{rel or '/'}`",
+                "code": "not_found",
+            }
+        if not root.is_dir():
+            return {
+                "ok": False,
+                "error": f"`{rel}` n'est pas un dossier",
+                "code": "not_a_directory",
+            }
+
+        names: set[str] = set()
+        dirs: list[str] = []
+        files: list[str] = []
+        try:
+            for child in sorted(root.iterdir(), key=lambda p: p.name.lower()):
+                if child.name.startswith("."):
+                    continue
+                names.add(child.name.lower())
+                if child.is_dir():
+                    dirs.append(child.name)
+                elif child.is_file():
+                    files.append(child.name)
+        except OSError as exc:
+            return {"ok": False, "error": str(exc), "code": "fs_error"}
+
+        markers = {
+            "manage.py": "manage.py" in names,
+            "passenger_wsgi.py": "passenger_wsgi.py" in names,
+            "wsgi.py": "wsgi.py" in names or any(
+                (root / d / "wsgi.py").is_file() for d in dirs[:20]
+            ),
+            "asgi.py": "asgi.py" in names or any(
+                (root / d / "asgi.py").is_file() for d in dirs[:20]
+            ),
+            "requirements.txt": "requirements.txt" in names,
+            "pyproject.toml": "pyproject.toml" in names,
+            "package.json": "package.json" in names,
+            "app.py": "app.py" in names,
+            "main.py": "main.py" in names,
+            "dockerfile": "dockerfile" in names,
+        }
+
+        req_hint = ""
+        req_path = root / "requirements.txt"
+        if req_path.is_file():
+            try:
+                req_hint = req_path.read_text(encoding="utf-8", errors="ignore")[:2000].lower()
+            except OSError:
+                req_hint = ""
+
+        framework = "unknown"
+        mode = "wsgi"
+        runtime = "python"
+        confidence = 0.35
+        signals: list[str] = []
+
+        if markers["manage.py"] or "django" in req_hint:
+            framework = "django"
+            mode = "wsgi"
+            confidence = 0.95 if markers["manage.py"] else 0.75
+            signals.append("manage.py" if markers["manage.py"] else "django in requirements")
+        elif "fastapi" in req_hint or (
+            markers["asgi.py"] and ("fastapi" in req_hint or "uvicorn" in req_hint)
+        ):
+            framework = "fastapi"
+            mode = "asgi"
+            confidence = 0.85
+            signals.append("fastapi/asgi")
+        elif "flask" in req_hint or (markers["app.py"] and "flask" in req_hint):
+            framework = "flask"
+            mode = "wsgi"
+            confidence = 0.8
+            signals.append("flask")
+        elif markers["package.json"]:
+            framework = "node"
+            mode = "node"
+            runtime = "node"
+            confidence = 0.9
+            signals.append("package.json")
+        elif markers["requirements.txt"] or markers["pyproject.toml"] or markers["main.py"]:
+            framework = "generic"
+            mode = "asgi" if markers["asgi.py"] else "wsgi"
+            confidence = 0.55
+            signals.append("python project files")
+
+        django_package = ""
+        if framework == "django":
+            try:
+                django_package = detect_django_project_package(root)
+            except Exception:  # noqa: BLE001
+                django_package = ""
+
+        entrypoint = "passenger_wsgi.py"
+        if framework == "fastapi" or mode == "asgi":
+            entrypoint = "asgi:application"
+        elif framework == "flask":
+            entrypoint = "passenger_wsgi.py"
+        elif runtime == "node":
+            entrypoint = "server.js"
+
+        return {
+            "path": rel or "",
+            "exists": True,
+            "framework": framework,
+            "runtime": runtime,
+            "mode": mode,
+            "confidence": confidence,
+            "signals": signals,
+            "markers": markers,
+            "django_package": django_package,
+            "entrypoint_suggested": entrypoint,
+            "has_requirements": markers["requirements.txt"],
+            "has_package_json": markers["package.json"],
+            "top_dirs": dirs[:30],
+            "top_files": files[:40],
+            "summary": (
+                f"{framework} ({runtime}/{mode})"
+                if framework != "unknown"
+                else "type de projet non déterminé"
+            ),
+        }
+
+    return run_service(_run)

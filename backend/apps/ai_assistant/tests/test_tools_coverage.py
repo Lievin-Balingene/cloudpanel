@@ -23,6 +23,7 @@ REQUIRED_TOOLS = [
     "install_wordpress",
     "list_files",
     "read_file_content",
+    "inspect_project_folder",
     "write_file",
     "list_ftp_accounts",
     "create_ftp_account",
@@ -428,7 +429,10 @@ def test_mock_django_deploy_from_folder_flow():
             "check_application_status",
             "list_domains",
             "list_files",
+            "inspect_project_folder",
             "create_python_app",
+            "install_dependencies",
+            "start_application",
             "list_mailboxes",
         )
     ]
@@ -472,9 +476,10 @@ def test_mock_django_deploy_from_folder_flow():
         ],
         tools=tools,
     )
-    assert not r2.tool_calls
-    assert "vzone" in (r2.content or "").lower()
-    assert "domaine" in (r2.content or "").lower()
+    # Root connu → inspecte le dossier avant de demander le domaine
+    assert r2.tool_calls
+    assert r2.tool_calls[0].name == "inspect_project_folder"
+    assert r2.tool_calls[0].arguments.get("path") == "vzone"
 
     r3 = p.chat(
         [
@@ -497,8 +502,17 @@ def test_mock_django_deploy_from_folder_flow():
             ),
             ChatMessage(
                 role="tool",
+                name="inspect_project_folder",
+                content=(
+                    '{"ok":true,"path":"vzone","framework":"django","runtime":"python",'
+                    '"mode":"wsgi","confidence":0.95,"signals":["manage.py"],'
+                    '"entrypoint_suggested":"passenger_wsgi.py","summary":"django (python/wsgi)"}'
+                ),
+            ),
+            ChatMessage(
+                role="tool",
                 name="list_files",
-                content='{"ok":true,"entries":[{"name":"vzone","is_dir":true}]}',
+                content='{"ok":true,"entries":[{"name":"manage.py","is_dir":false}]}',
             ),
         ],
         tools=tools,
@@ -508,6 +522,25 @@ def test_mock_django_deploy_from_folder_flow():
     assert r3.tool_calls[0].arguments.get("relative_root") == "vzone"
     assert r3.tool_calls[0].arguments.get("framework") == "django"
     assert r3.tool_calls[0].arguments.get("domain_name") == "vzone.7une.info"
+
+
+def test_mock_inspect_project_folder_intent():
+    from apps.ai_assistant.providers import ChatMessage, ToolSpec
+    from apps.ai_assistant.providers.mock import MockProvider
+
+    p = MockProvider()
+    tools = [
+        ToolSpec(name=n, description=n, parameters={"type": "object", "properties": {}})
+        for n in ("inspect_project_folder", "list_files", "list_domains")
+    ]
+    r = p.chat(
+        [ChatMessage(role="user", content="analyse le dossier vzone, c'est un projet django ?")],
+        tools=tools,
+    )
+    assert r.tool_calls
+    assert r.tool_calls[0].name == "inspect_project_folder"
+    assert r.tool_calls[0].arguments.get("path") == "vzone"
+
 
 
 def test_mock_message_beats_page_for_domains_and_apps():

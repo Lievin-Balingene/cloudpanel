@@ -156,6 +156,13 @@ def run_assistant_turn(
             or "",
             "pending_ssl": bool((conversation.context or {}).get("pending_ssl")),
             "pending_ssl_host": (conversation.context or {}).get("pending_ssl_host") or "",
+            "deploy_pipeline_after": bool(
+                (conversation.context or {}).get("deploy_pipeline_after")
+            ),
+            "pipeline_app_id": (conversation.context or {}).get("pipeline_app_id") or "",
+            "start_after_install": bool(
+                (conversation.context or {}).get("start_after_install")
+            ),
         }
     )
     messages: list[ChatMessage] = [
@@ -303,16 +310,32 @@ def run_assistant_turn(
                     conversation.save(update_fields=["context", "updated_at"])
                 if tool.spec.name == "create_python_app":
                     ctx2 = dict(conversation.context or {})
+                    was_deploy = bool(
+                        ctx2.get("pending_deploy")
+                        or ctx2.get("pending_deploy_framework")
+                        or ctx2.get("deploy_pipeline_after")
+                    )
                     ctx2.pop("pending_deploy", None)
                     ctx2.pop("pending_deploy_root", None)
                     ctx2.pop("pending_deploy_domain", None)
                     ctx2.pop("pending_deploy_framework", None)
+                    if was_deploy:
+                        ctx2["deploy_pipeline_after"] = True
+                        ctx2["deploy_pipeline_runtime"] = "python"
                     conversation.context = ctx2
                     conversation.save(update_fields=["context", "updated_at"])
                 if tool.spec.name == "issue_ssl_certificate":
                     ctx2 = dict(conversation.context or {})
                     ctx2.pop("pending_ssl", None)
                     ctx2.pop("pending_ssl_host", None)
+                    conversation.context = ctx2
+                    conversation.save(update_fields=["context", "updated_at"])
+                if tool.spec.name == "install_dependencies":
+                    ctx2 = dict(conversation.context or {})
+                    ctx2["start_after_install"] = True
+                    if args.get("app_id"):
+                        ctx2["pipeline_app_id"] = int(args["app_id"])
+                        ctx2["pipeline_runtime"] = str(args.get("runtime") or "python")
                     conversation.context = ctx2
                     conversation.save(update_fields=["context", "updated_at"])
                 pending_actions.append(
@@ -557,13 +580,53 @@ def confirm_pending_action(
                 create_result=result,
                 ip_address=ip_address,
             )
+        if (
+            follow_up_pending is None
+            and action.tool_name == "create_python_app"
+            and result.get("ok")
+            and action.conversation
+        ):
+            follow_up_pending = _maybe_queue_install_deps_after_create(
+                user=user,
+                conversation=action.conversation,
+                create_result=result,
+                ip_address=ip_address,
+            )
+        if (
+            follow_up_pending is None
+            and action.tool_name == "install_dependencies"
+            and result.get("ok")
+            and action.conversation
+        ):
+            follow_up_pending = _maybe_queue_start_after_install(
+                user=user,
+                conversation=action.conversation,
+                install_params=action.params or {},
+                ip_address=ip_address,
+            )
 
         extra_note = ""
         if follow_up_pending:
-            extra_note = (
-                "\n\nProchaine étape : **Installer WordPress** — "
-                "confirme avec le bouton **Exécuter** ci-dessous."
-            )
+            if follow_up_pending.tool_name == "install_wordpress":
+                extra_note = (
+                    "\n\nProchaine étape : **Installer WordPress** — "
+                    "confirme avec le bouton **Exécuter** ci-dessous."
+                )
+            elif follow_up_pending.tool_name == "install_dependencies":
+                extra_note = (
+                    "\n\nProchaine étape : **Installer les dépendances** — "
+                    "confirme avec **Exécuter**, puis on démarrera l'app."
+                )
+            elif follow_up_pending.tool_name == "start_application":
+                extra_note = (
+                    "\n\nProchaine étape : **Démarrer l'application** — "
+                    "confirme avec **Exécuter**."
+                )
+            else:
+                extra_note = (
+                    f"\n\nProchaine étape : **{follow_up_pending.tool_name}** — "
+                    "confirme avec **Exécuter**."
+                )
         Message.objects.create(
             conversation=action.conversation,
             role=Message.Role.ASSISTANT,
@@ -637,6 +700,89 @@ def _maybe_queue_wp_install_after_domain(
         conversation,
         "install_wordpress",
         {"domain_id": domain_id, "title": title[:80], "admin_user": "admin"},
+        ip_address,
+    )
+
+
+def _payload_app_id(result: dict[str, Any]) -> int | None:
+    payload = result.get("result") if isinstance(result.get("result"), dict) else None
+    if payload is None and isinstance(result.get("data"), dict):
+        payload = result["data"]
+    if payload is None:
+        payload = result
+    if not isinstance(payload, dict):
+        return None
+    for key in ("id", "app_id"):
+        if payload.get(key) is not None:
+            try:
+                return int(payload[key])
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def _maybe_queue_install_deps_after_create(
+    *,
+    user: User,
+    conversation: Conversation,
+    create_result: dict[str, Any],
+    ip_address: str | None,
+) -> PendingAction | None:
+    """Après create_python_app (flux deploy) → install_dependencies."""
+    ctx = dict(conversation.context or {})
+    if not ctx.pop("deploy_pipeline_after", False):
+        return None
+    app_id = _payload_app_id(create_result)
+    runtime = str(ctx.get("deploy_pipeline_runtime") or "python")
+    if not app_id:
+        conversation.context = ctx
+        conversation.save(update_fields=["context", "updated_at"])
+        return None
+    ctx["start_after_install"] = True
+    ctx["pipeline_app_id"] = app_id
+    ctx["pipeline_runtime"] = runtime
+    ctx.pop("deploy_pipeline_runtime", None)
+    conversation.context = ctx
+    conversation.save(update_fields=["context", "updated_at"])
+    return _create_pending(
+        user,
+        conversation,
+        "install_dependencies",
+        {"runtime": runtime if runtime in {"python", "node"} else "python", "app_id": app_id},
+        ip_address,
+    )
+
+
+def _maybe_queue_start_after_install(
+    *,
+    user: User,
+    conversation: Conversation,
+    install_params: dict[str, Any],
+    ip_address: str | None,
+) -> PendingAction | None:
+    """Après install_dependencies (flux deploy) → start_application."""
+    ctx = dict(conversation.context or {})
+    if not ctx.pop("start_after_install", False):
+        return None
+    app_id = ctx.pop("pipeline_app_id", None) or install_params.get("app_id")
+    runtime = str(
+        ctx.pop("pipeline_runtime", None)
+        or install_params.get("runtime")
+        or "python"
+    )
+    conversation.context = ctx
+    conversation.save(update_fields=["context", "updated_at"])
+    try:
+        app_id = int(app_id)
+    except (TypeError, ValueError):
+        return None
+    if not app_id:
+        return None
+    return _create_pending(
+        user,
+        conversation,
+        "start_application",
+        {"runtime": runtime if runtime in {"python", "node"} else "python", "app_id": app_id},
         ip_address,
     )
 
