@@ -58,6 +58,11 @@ class MockProvider:
             )
             if follow is not None:
                 return follow
+            follow = _ssl_after_tools(
+                messages, tool_names, last_user_l, user_turns=user_turns
+            )
+            if follow is not None:
+                return follow
             return ChatResult(
                 content=_synthesize_tools(messages),
                 provider=self.name,
@@ -1118,6 +1123,231 @@ def _domains_from_tool_payload(data: dict[str, Any]) -> list[dict]:
     return [d for d in items if isinstance(d, dict)]
 
 
+def _wants_ssl_issue(text: str) -> bool:
+    """True si l'utilisateur veut émettre / activer un certificat SSL."""
+    t = _norm_text(text)
+    sslish = any(
+        k in t
+        for k in (
+            "ssl",
+            "lets encrypt",
+            "letsencrypt",
+            "certificat",
+            "certificate",
+            "https",
+        )
+    )
+    if not sslish:
+        return False
+    installish = any(
+        k in t
+        for k in (
+            "installe",
+            "installer",
+            "install",
+            "emet",
+            "emettre",
+            "emit",
+            "issue",
+            "active",
+            "activer",
+            "ajoute",
+            "ajouter",
+            "cree",
+            "creer",
+            "demande",
+            "genere",
+            "generer",
+            "configure",
+            "configurer",
+            "mets en place",
+            "mettre en place",
+        )
+    )
+    if installish:
+        return True
+    # « ssl sur 7une.info » / « certificat 7une.info »
+    if _extract_hostname(t):
+        return True
+    return False
+
+
+def _pending_ssl_flow(messages: list[ChatMessage], user_turns: list[str]) -> bool:
+    for m in messages:
+        if m.role == "system" and re.search(r'"pending_ssl"\s*:\s*true', m.content or "", re.I):
+            return True
+    for turn in reversed(user_turns[:-1] if len(user_turns) > 1 else []):
+        if _wants_ssl_issue(turn) or _norm_text(turn) in {"ssl", "https", "certificat"}:
+            return True
+        if len(turn) > 40 and not _extract_hostname(turn.lower()):
+            break
+    for m in reversed(messages):
+        if m.role != "assistant" or not m.content:
+            continue
+        if m.content.startswith("(outil"):
+            continue
+        low = m.content.lower()
+        if any(
+            k in low
+            for k in (
+                "certificat ssl",
+                "let's encrypt",
+                "lets encrypt",
+                "issue_ssl",
+                "pour le ssl",
+                "domaine pour le certificat",
+                "domaine pour ssl",
+            )
+        ):
+            return True
+        break
+    return False
+
+
+def _ssl_flow_active(
+    last_user_l: str,
+    messages: list[ChatMessage],
+    user_turns: list[str],
+) -> bool:
+    tn = _norm_text(last_user_l)
+    if _wants_ssl_issue(last_user_l):
+        return True
+    if tn in {"ssl", "https", "certificat", "letsencrypt", "lets encrypt"}:
+        return True
+    pending = _pending_ssl_flow(messages, user_turns)
+    if not pending:
+        return False
+    if _extract_hostname(last_user_l) or _wants_go_ahead(last_user_l):
+        return True
+    return False
+
+
+def _resolve_ssl_host(
+    last_user_l: str,
+    messages: list[ChatMessage],
+    user_turns: list[str],
+) -> str | None:
+    host = _extract_hostname(last_user_l)
+    if host:
+        return host
+    for m in messages:
+        if m.role != "system":
+            continue
+        found = re.search(r'"pending_ssl_host"\s*:\s*"([^"]+)"', m.content or "")
+        if found:
+            return found.group(1).strip().lower()
+    for turn in reversed(user_turns[:-1] if len(user_turns) > 1 else []):
+        h = _extract_hostname(turn.lower())
+        if h and (_wants_ssl_issue(turn) or "ssl" in _norm_text(turn) or "certificat" in _norm_text(turn)):
+            return h
+    # Hostname dans un tour SSL précédent même sans mot ssl sur ce tour-là
+    for turn in reversed(user_turns[:-1] if len(user_turns) > 1 else []):
+        if _wants_ssl_issue(turn):
+            h = _extract_hostname(turn.lower())
+            if h:
+                return h
+    return None
+
+
+def _ssl_after_tools(
+    messages: list[ChatMessage],
+    tool_names: set[str],
+    last_user_l: str,
+    *,
+    user_turns: list[str] | None = None,
+) -> ChatResult | None:
+    """Après list_domains : propose issue_ssl_certificate si le flux SSL est actif."""
+    turns = user_turns or []
+    if not _ssl_flow_active(last_user_l, messages, turns):
+        return None
+
+    recent: list[ChatMessage] = []
+    for m in reversed(messages):
+        if m.role != "tool":
+            break
+        recent.append(m)
+    recent.reverse()
+    if not recent:
+        return None
+
+    names = {(m.name or "") for m in recent}
+    if "issue_ssl_certificate" in names:
+        return None
+    if "list_domains" not in names and "get_ssl_status" not in names:
+        return None
+
+    domains: list[dict] = []
+    for m in recent:
+        if (m.name or "") != "list_domains":
+            continue
+        try:
+            data = json.loads(m.content or "{}")
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            domains = _domains_from_tool_payload(data)
+
+    host = _resolve_ssl_host(last_user_l, messages, turns)
+    if not host:
+        sample = ", ".join(f"`{d.get('name')}`" for d in domains[:8]) if domains else "(aucun)"
+        return ChatResult(
+            content=(
+                "Pour émettre un certificat **Let's Encrypt**, indique le **domaine**.\n"
+                f"Domaines : {sample}\n\n"
+                "Exemple : *installe le certificat SSL sur 7une.info*"
+            ),
+            provider="mock",
+            model="mock-coach",
+        )
+
+    match = next(
+        (d for d in domains if str(d.get("name") or "").lower() == host),
+        None,
+    )
+    if not match:
+        sample = ", ".join(f"`{d.get('name')}`" for d in domains[:8]) if domains else "(aucun)"
+        return ChatResult(
+            content=(
+                f"Je ne trouve pas **`{host}`** dans tes domaines.\n"
+                f"Dispos : {sample}\n\n"
+                "Vérifie le nom ou crée d'abord le domaine."
+            ),
+            provider="mock",
+            model="mock-coach",
+        )
+
+    did = int(match.get("id") or 0)
+    if not did or "issue_ssl_certificate" not in tool_names:
+        return None
+
+    already = match.get("ssl")
+    if already is True:
+        return ChatResult(
+            content=(
+                f"**`{host}`** a déjà un certificat SSL actif (domaine id {did}).\n\n"
+                "Autre chose ? (renouveler / autre domaine / liste)"
+            ),
+            provider="mock",
+            model="mock-coach",
+        )
+
+    return ChatResult(
+        content=(
+            f"Parfait — certificat **Let's Encrypt** pour **`{host}`** (id {did}).\n"
+            "Je prépare **issue_ssl_certificate** — clique **Exécuter** pour confirmer."
+        ),
+        tool_calls=[
+            ToolCallRequest(
+                id=str(uuid4()),
+                name="issue_ssl_certificate",
+                arguments={"domain_id": did},
+            )
+        ],
+        provider="mock",
+        model="mock-coach",
+    )
+
+
 def _wp_sites_from_tool_payload(data: dict[str, Any]) -> list[dict]:
     payload = data.get("data") if isinstance(data.get("data"), dict) else data
     if not isinstance(payload, dict):
@@ -1486,22 +1716,44 @@ def _intent_from_scores(
         text_n, {"ssl": 8, "lets encrypt": 9, "letsencrypt": 9, "certificat": 7, "https": 4}
     )
     if dom_score >= 4 and (wants_list or createish or dom_score >= 6):
-        add(
-            "list_domains",
-            dom_score + (3 if wants_list else 0),
-            "domains",
-            {"say": "Compris — je liste tes **domaines**…", "tools": [("list_domains", {})]},
-        )
-    if ssl_score >= 5:
-        add(
-            "ssl",
-            ssl_score,
-            "domains",
-            {
-                "say": "Compris — je regarde tes domaines pour le **SSL**…",
-                "tools": [("list_domains", {})],
-            },
-        )
+        # Ne pas voler une demande SSL explicite
+        if not _wants_ssl_issue(text) and ssl_score < 5:
+            add(
+                "list_domains",
+                dom_score + (3 if wants_list else 0),
+                "domains",
+                {"say": "Compris — je liste tes **domaines**…", "tools": [("list_domains", {})]},
+            )
+        elif wants_list and "ssl" not in text_n and "certificat" not in text_n:
+            add(
+                "list_domains",
+                dom_score + (3 if wants_list else 0),
+                "domains",
+                {"say": "Compris — je liste tes **domaines**…", "tools": [("list_domains", {})]},
+            )
+    if ssl_score >= 5 or _wants_ssl_issue(text):
+        host = _extract_hostname(text)
+        if _wants_ssl_issue(text) or createish:
+            say = "Compris — certificat **SSL / Let's Encrypt**"
+            if host:
+                say += f" pour **{host}**"
+            say += " — je vérifie tes domaines…"
+            add(
+                "issue_ssl",
+                max(ssl_score, 8) + 12,
+                "domains",
+                {"say": say, "tools": [("list_domains", {})]},
+            )
+        else:
+            add(
+                "ssl_status",
+                ssl_score + 2,
+                "domains",
+                {
+                    "say": "Compris — je regarde tes domaines pour le **SSL**…",
+                    "tools": [("list_domains", {})],
+                },
+            )
 
     wp_score = _score_keywords(
         text_n, {"wordpress": 10, "wordpresse": 10, "sites wp": 9, " wp": 4, "wp ": 4}
@@ -1836,6 +2088,18 @@ def _detect_intent(
         return {
             "say": say,
             "tools": [("list_domains", {}), ("list_wordpress_sites", {})],
+        }
+
+    # SSL Let's Encrypt (multi-tours : domaine puis confirmation)
+    if _ssl_flow_active(last_user_l, messages, turns):
+        host = _resolve_ssl_host(last_user_l, messages, turns)
+        say = "Compris — certificat **SSL / Let's Encrypt**"
+        if host:
+            say += f" pour **{host}**"
+        say += " — je vérifie tes domaines…"
+        return {
+            "say": say,
+            "tools": [("list_domains", {})],
         }
 
     # Déploiement Django / Python (dossier local multi-tours)

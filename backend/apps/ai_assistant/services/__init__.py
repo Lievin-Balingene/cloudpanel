@@ -30,6 +30,8 @@ _EPHEMERAL_CONTEXT_KEYS = (
     "pending_deploy_root",
     "pending_deploy_domain",
     "pending_deploy_framework",
+    "pending_ssl",
+    "pending_ssl_host",
 )
 
 

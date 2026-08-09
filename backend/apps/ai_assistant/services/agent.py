@@ -85,7 +85,9 @@ def run_assistant_turn(
     from apps.ai_assistant.providers.mock import (
         _extract_hostname,
         _extract_project_folder,
+        _norm_text,
         _wants_django_deploy,
+        _wants_ssl_issue,
         _wants_wordpress_install,
     )
 
@@ -124,6 +126,18 @@ def run_assistant_turn(
             conversation.context = ctx_now
             conversation.save(update_fields=["context", "updated_at"])
 
+    user_n = _norm_text(safe_user)
+    if _wants_ssl_issue(safe_user) or user_n in {"ssl", "https", "certificat"}:
+        ctx_now["pending_ssl"] = True
+        if host_now:
+            ctx_now["pending_ssl_host"] = host_now
+        conversation.context = ctx_now
+        conversation.save(update_fields=["context", "updated_at"])
+    elif ctx_now.get("pending_ssl") and host_now:
+        ctx_now["pending_ssl_host"] = host_now
+        conversation.context = ctx_now
+        conversation.save(update_fields=["context", "updated_at"])
+
     context_blob = redact_obj(
         {
             "username": (conversation.context or {}).get("username"),
@@ -140,6 +154,8 @@ def run_assistant_turn(
             "pending_deploy_root": (conversation.context or {}).get("pending_deploy_root") or "",
             "pending_deploy_domain": (conversation.context or {}).get("pending_deploy_domain")
             or "",
+            "pending_ssl": bool((conversation.context or {}).get("pending_ssl")),
+            "pending_ssl_host": (conversation.context or {}).get("pending_ssl_host") or "",
         }
     )
     messages: list[ChatMessage] = [
@@ -291,6 +307,12 @@ def run_assistant_turn(
                     ctx2.pop("pending_deploy_root", None)
                     ctx2.pop("pending_deploy_domain", None)
                     ctx2.pop("pending_deploy_framework", None)
+                    conversation.context = ctx2
+                    conversation.save(update_fields=["context", "updated_at"])
+                if tool.spec.name == "issue_ssl_certificate":
+                    ctx2 = dict(conversation.context or {})
+                    ctx2.pop("pending_ssl", None)
+                    ctx2.pop("pending_ssl_host", None)
                     conversation.context = ctx2
                     conversation.save(update_fields=["context", "updated_at"])
                 pending_actions.append(

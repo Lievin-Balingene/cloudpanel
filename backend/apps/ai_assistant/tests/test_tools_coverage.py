@@ -598,6 +598,50 @@ def test_mock_apps_running_not_account_dump():
     assert "get_deployment_context" not in body
 
 
+def test_mock_issue_ssl_on_domain_flow():
+    from apps.ai_assistant.providers import ChatMessage, ToolSpec
+    from apps.ai_assistant.providers.mock import MockProvider, _wants_ssl_issue
+
+    assert _wants_ssl_issue("installe le certificat ssl sur 7une.info")
+
+    p = MockProvider()
+    tools = [
+        ToolSpec(name=n, description=n, parameters={"type": "object", "properties": {}})
+        for n in ("list_domains", "issue_ssl_certificate", "list_files", "check_application_status")
+    ]
+    r1 = p.chat(
+        [ChatMessage(role="user", content="installe le certificat ssl sur 7une.info")],
+        tools=tools,
+    )
+    assert r1.tool_calls
+    assert r1.tool_calls[0].name == "list_domains"
+    assert "ssl" in (r1.content or "").lower() or "certificat" in (r1.content or "").lower()
+
+    r2 = p.chat(
+        [
+            ChatMessage(role="user", content="installe le certificat ssl sur 7une.info"),
+            ChatMessage(
+                role="assistant",
+                content="Compris — certificat SSL / Let's Encrypt pour 7une.info…",
+            ),
+            ChatMessage(
+                role="tool",
+                name="list_domains",
+                content=(
+                    '{"ok":true,"domains":['
+                    '{"id":4,"name":"7une.info","ssl":false},'
+                    '{"id":7,"name":"vzone.7une.info","ssl":true}'
+                    "]}"
+                ),
+            ),
+        ],
+        tools=tools,
+    )
+    assert r2.tool_calls
+    assert r2.tool_calls[0].name == "issue_ssl_certificate"
+    assert r2.tool_calls[0].arguments.get("domain_id") == 4
+
+
 def test_mock_lance_commande_ls_is_jail_not_start_app():
     from apps.ai_assistant.providers import ChatMessage, ToolSpec
     from apps.ai_assistant.providers.mock import MockProvider, _resolve_jail_command_id
