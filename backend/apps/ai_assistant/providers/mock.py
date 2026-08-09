@@ -43,7 +43,14 @@ class MockProvider:
             follow = _lifecycle_after_tools(messages, tool_names, last_user_l)
             if follow is not None:
                 return follow
-            follow = _wordpress_after_tools(messages, tool_names, last_user_l)
+            follow = _wordpress_after_tools(
+                messages, tool_names, last_user_l, user_turns=user_turns
+            )
+            if follow is not None:
+                return follow
+            follow = _mail_after_tools(
+                messages, tool_names, last_user_l, user_turns=user_turns
+            )
             if follow is not None:
                 return follow
             return ChatResult(
@@ -53,7 +60,7 @@ class MockProvider:
             )
 
         # Intentions d'action — AVANT le bavardage multi-tours
-        intent = _detect_intent(last_user_l, messages, tool_names)
+        intent = _detect_intent(last_user_l, messages, tool_names, user_turns=user_turns)
         if intent:
             calls = _pack_calls(tool_names, intent["tools"])
             if calls:
@@ -63,9 +70,15 @@ class MockProvider:
                     provider=self.name,
                     model="mock-coach",
                 )
+            if intent.get("say") and not intent.get("tools"):
+                return ChatResult(
+                    content=intent["say"],
+                    provider=self.name,
+                    model="mock-coach",
+                )
 
         return ChatResult(
-            content=_converse(last_user, prev_assistant, user_turns),
+            content=_converse(last_user, prev_assistant, user_turns, messages=messages),
             provider=self.name,
             model="mock-coach",
         )
@@ -162,7 +175,8 @@ def _extract_hostname(text: str) -> str | None:
     """Extrait un FQDN (ex. wp.7une.info) depuis le message utilisateur."""
     raw = (text or "").lower()
     m = re.search(
-        r"(?:sous[-\s]?domaine|domaine|hostname|host|url|sur|pour|avec)\s+"
+        r"(?:sous[-\s]?domaine|domaine|hostname|host|url|sur|pour|avec|"
+        r"c['\u2019]?est|cest)\s+"
         r"(?:le\s+|la\s+|l['\u2019]\s*)?(?:https?://)?([a-z0-9][a-z0-9.-]*\.[a-z]{2,})",
         raw,
     )
@@ -188,7 +202,13 @@ def _extract_hostname(text: str) -> str | None:
 
 def _wants_wordpress_install(text: str) -> bool:
     t = (text or "").lower()
-    has_wp = "wordpress" in t or "word press" in t or bool(re.search(r"\bwp\b", t))
+    # Accepte typos fréquents : wordpresse, wp, site/app wordpress
+    has_wp = (
+        "wordpress" in t
+        or "wordpresse" in t
+        or "word press" in t
+        or bool(re.search(r"\bwp\b", t))
+    )
     if not has_wp:
         return False
     return any(
@@ -205,7 +225,488 @@ def _wants_wordpress_install(text: str) -> bool:
             "ajouter un site",
             "setup wordpress",
             "deploy wordpress",
+            "une app",
+            "une application",
+            "un site",
         )
+    )
+
+
+def _wants_go_ahead(text: str) -> bool:
+    t = (text or "").lower().strip()
+    return bool(
+        re.search(
+            r"\b("
+            r"vas[-\s]?y|allez[-\s]?y|agis|agissez|fais[-\s]?le|fais[-\s]?ça|fais[-\s]?ca|"
+            r"go\b|lance|lance[-\s]?toi|ok\s+lance|oui\s+vas|oui\s+go|go\s+ahead|"
+            r"exécute|execute|continue|c'?est\s+bon|go\s+go"
+            r")\b",
+            t,
+        )
+    )
+
+
+def _assistant_asked_wp_domain(messages: list[ChatMessage]) -> bool:
+    seen = 0
+    for m in reversed(messages):
+        if m.role != "assistant" or not m.content:
+            continue
+        if m.content.startswith("(outil"):
+            continue
+        low = m.content.lower()
+        if any(
+            k in low
+            for k in (
+                "domaine ou sous-domaine",
+                "indique le **domaine",
+                "indique le domaine",
+                "sous-domaine cible",
+                "prépare l'installation wordpress",
+                "installation wordpress",
+            )
+        ):
+            return True
+        seen += 1
+        if seen >= 4:
+            break
+    return False
+
+
+def _pending_wordpress_flow(
+    messages: list[ChatMessage],
+    user_turns: list[str],
+) -> bool:
+    """True si on est au milieu d'une création WP (domaine demandé / intent récent)."""
+    if _assistant_asked_wp_domain(messages):
+        return True
+    for turn in reversed(user_turns[:-1] if len(user_turns) > 1 else []):
+        if _wants_wordpress_install(turn.lower()):
+            return True
+        # Stop si autre sujet clair entre-temps
+        if len(turn) > 12 and not _extract_hostname(turn.lower()):
+            break
+    for m in messages:
+        if m.role == "system" and '"pending_wp"' in (m.content or ""):
+            if re.search(r'"pending_wp"\s*:\s*true', m.content or "", re.I):
+                return True
+    return False
+
+
+def _resolve_wp_host(
+    last_user_l: str,
+    messages: list[ChatMessage],
+    user_turns: list[str],
+) -> str | None:
+    host = _extract_hostname(last_user_l)
+    if host:
+        return host
+    for m in messages:
+        if m.role != "system":
+            continue
+        found = re.search(r'"pending_wp_host"\s*:\s*"([^"]+)"', m.content or "")
+        if found:
+            return found.group(1).strip().lower()
+    for turn in reversed(user_turns[:-1] if len(user_turns) > 1 else []):
+        h = _extract_hostname(turn.lower())
+        if h:
+            return h
+    return None
+
+
+def _wordpress_flow_active(
+    last_user_l: str,
+    messages: list[ChatMessage],
+    user_turns: list[str],
+) -> bool:
+    if _wants_wordpress_install(last_user_l):
+        return True
+    pending = _pending_wordpress_flow(messages, user_turns)
+    if not pending:
+        return False
+    if _extract_hostname(last_user_l):
+        return True
+    if _wants_go_ahead(last_user_l):
+        return True
+    # Message court du type « le sous domaine c'est … » déjà couvert par hostname
+    return False
+
+
+def _create_verb(text: str) -> bool:
+    t = (text or "").lower()
+    return any(
+        k in t
+        for k in (
+            "crée",
+            "cree",
+            "créer",
+            "creer",
+            "ajouter",
+            "nouveau fichier",
+            "nouvelle fichier",
+            "touch ",
+            "écris",
+            "ecris",
+            "écrire",
+            "ecrire",
+            "write ",
+            "create ",
+        )
+    )
+
+
+def _wants_write_file(text: str) -> bool:
+    t = (text or "").lower()
+    if not _create_verb(t):
+        return False
+    if any(k in t for k in ("dossier", "répertoire", "repertoire", "folder", "mkdir")):
+        return False
+    if any(k in t for k in ("fichier", "file")):
+        return True
+    # « crée lievin.txt » / « crée notes.md »
+    return bool(re.search(r"\b[\w./-]+\.[a-z0-9]{1,12}\b", t))
+
+
+def _wants_mkdir(text: str) -> bool:
+    t = (text or "").lower()
+    if not _create_verb(t) and "mkdir" not in t:
+        return False
+    return any(k in t for k in ("dossier", "répertoire", "repertoire", "folder", "mkdir", "directory"))
+
+
+def _wants_delete_path(text: str) -> bool:
+    t = (text or "").lower()
+    if not any(k in t for k in ("supprime", "supprimer", "efface", "effacer", "delete", "rm ")):
+        return False
+    return any(k in t for k in ("fichier", "file", "dossier", "répertoire", "repertoire", "folder")) or bool(
+        re.search(r"\b[\w./-]+\.[a-z0-9]{1,12}\b", t)
+    )
+
+
+def _extract_path_name(text: str, *, kind: str = "any") -> str | None:
+    """Nom/chemin relatif (ex. lievin.txt, logs, apps/notes.md)."""
+    raw = (text or "").strip()
+    # du nom X / nommé X / appelé X
+    m = re.search(
+        r"(?:du\s+nom|nomm[ée]e?|nomme|appel[ée]e?|called|named)\s+"
+        r"[«\"'`]?([^\s«»\"'`]+)",
+        raw,
+        re.I,
+    )
+    if m:
+        return m.group(1).strip("/\\")
+    # fichier|dossier X
+    m = re.search(
+        r"(?:fichier|file|dossier|r[ée]pertoire|folder|dir|directory)\s+"
+        r"(?:du\s+nom\s+|nomm[ée]e?\s+|appel[ée]e?\s+)?"
+        r"[«\"'`]?([a-zA-Z0-9._/-]+)",
+        raw,
+        re.I,
+    )
+    if m:
+        name = m.group(1).strip("/\\")
+        if name.lower() in {"du", "un", "une", "le", "la", "de", "des", "nom", "nouveau", "nouvelle"}:
+            pass
+        else:
+            return name
+    # extension classique
+    m = re.search(r"\b([a-zA-Z0-9._/-]+\.[a-zA-Z0-9]{1,12})\b", raw)
+    if m and kind in {"file", "any"}:
+        hostish = m.group(1).lower()
+        if hostish.count(".") >= 2 and not any(
+            hostish.endswith(ext)
+            for ext in (
+                ".txt",
+                ".md",
+                ".py",
+                ".js",
+                ".ts",
+                ".json",
+                ".html",
+                ".css",
+                ".log",
+                ".env",
+                ".yml",
+                ".yaml",
+                ".ini",
+                ".conf",
+                ".cfg",
+                ".sh",
+                ".php",
+                ".sql",
+                ".xml",
+                ".csv",
+            )
+        ):
+            # évite de prendre un domaine pour un fichier
+            pass
+        else:
+            return m.group(1).strip("/\\")
+    if kind in {"dir", "any"}:
+        m = re.search(
+            r"(?:mkdir|dossier|folder|r[ée]pertoire)\s+[«\"'`]?([a-zA-Z0-9._/-]+)",
+            raw,
+            re.I,
+        )
+        if m:
+            return m.group(1).strip("/\\")
+    return None
+
+
+def _extract_file_content(text: str) -> str:
+    raw = text or ""
+    m = re.search(
+        r"(?:contenu|content|texte|avec)\s*[:=]?\s*[«\"'](.+?)[»\"']\s*$",
+        raw,
+        re.I | re.S,
+    )
+    if m:
+        return m.group(1)[:8000]
+    m = re.search(r"(?:contenu|content)\s*[:=]\s*(.+)$", raw, re.I | re.S)
+    if m:
+        return m.group(1).strip()[:8000]
+    return ""
+
+
+def _page_meta(messages: list[ChatMessage]) -> dict[str, str]:
+    """Label / runtime / path UI — sans le JSON session (évite faux positifs `python_apps`)."""
+    label, runtime, path, need = "", "", "", ""
+    for m in messages:
+        if m.role != "system" or "page actuelle" not in (m.content or "").lower():
+            continue
+        content = m.content or ""
+        cut = content.split("\n{", 1)[0]
+        low = cut.lower()
+        ml = re.search(r"page actuelle:\s*([^\n(]+)", low)
+        if ml:
+            label = ml.group(1).strip()
+        mp = re.search(r"page actuelle:[^\n]*\(([^)]+)\)", low)
+        if mp:
+            path = mp.group(1).strip()
+        mr = re.search(r"runtime page:\s*(\S+)", low)
+        if mr and mr.group(1) not in {"n/a", "na", "-"}:
+            runtime = mr.group(1).strip()
+        mn = re.search(r"besoin immédiat:\s*([^\n]+)", low)
+        if mn:
+            need = mn.group(1).strip()
+    return {"label": label, "runtime": runtime, "path": path, "need": need}
+
+
+def _page_section(meta: dict[str, str]) -> str:
+    label = (meta.get("label") or "").lower()
+    path = (meta.get("path") or "").lower()
+    blob = f"{label} {path}"
+    mapping = (
+        ("wordpress", "wordpress"),
+        ("file manager", "files"),
+        ("fichier", "files"),
+        ("/files", "files"),
+        ("email", "email"),
+        ("mail", "email"),
+        ("ftp", "ftp"),
+        ("cron", "cron"),
+        ("backup", "backups"),
+        ("docker", "docker"),
+        ("kubernetes", "k8s"),
+        ("domaine", "domains"),
+        ("dns", "dns"),
+        ("database", "databases"),
+        ("bases", "databases"),
+        ("python", "python"),
+        ("node", "node"),
+        ("git", "git"),
+        ("php", "php"),
+        ("sécurité", "security"),
+        ("securite", "security"),
+        ("package", "package"),
+        ("terminal", "terminal"),
+    )
+    for needle, sec in mapping:
+        if needle in blob:
+            return sec
+    return ""
+
+
+def _wants_create_mailbox(text: str) -> bool:
+    t = (text or "").lower()
+    if not _create_verb(t):
+        return False
+    return any(
+        k in t
+        for k in (
+            "messagerie",
+            "mailbox",
+            "boîte mail",
+            "boite mail",
+            "compte mail",
+            "compte email",
+            "compte de messagerie",
+            "adresse mail",
+            "adresse email",
+            "courriel",
+            "e-mail",
+            "email",
+        )
+    ) or (
+        "mail" in t
+        and any(k in t for k in ("compte", "boîte", "boite", "adresse", "nouveau", "nouveua"))
+    )
+
+
+def _extract_email_address(text: str) -> tuple[str, str] | None:
+    m = re.search(
+        r"\b([a-z0-9](?:[a-z0-9._+-]{0,62}[a-z0-9])?)@([a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,})\b",
+        (text or "").lower(),
+    )
+    if not m:
+        return None
+    return m.group(1), m.group(2)
+
+
+def _extract_mailbox_password(text: str) -> str:
+    raw = text or ""
+    m = re.search(
+        r"(?:mot\s*de\s*passe|password|mdp|pass)\s*[:=]?\s*[«\"']?([^\s«»\"']{8,128})",
+        raw,
+        re.I,
+    )
+    return (m.group(1) if m else "").strip()
+
+
+def _mailboxes_from_tool_payload(data: dict[str, Any]) -> tuple[list[dict], list[dict]]:
+    payload = data.get("data") if isinstance(data.get("data"), dict) else data
+    if not isinstance(payload, dict):
+        return [], []
+    domains = [d for d in (payload.get("domains") or []) if isinstance(d, dict)]
+    boxes = [b for b in (payload.get("mailboxes") or []) if isinstance(b, dict)]
+    return domains, boxes
+
+
+def _mail_after_tools(
+    messages: list[ChatMessage],
+    tool_names: set[str],
+    last_user_l: str,
+    *,
+    user_turns: list[str] | None = None,
+) -> ChatResult | None:
+    turns = user_turns or []
+    if not _wants_create_mailbox(last_user_l):
+        # Intent sur un tour précédent + détails maintenant
+        pending = any(_wants_create_mailbox(t.lower()) for t in turns[:-1]) if len(turns) > 1 else False
+        if not pending and not _extract_email_address(last_user_l):
+            return None
+
+    recent: list[ChatMessage] = []
+    for m in reversed(messages):
+        if m.role != "tool":
+            break
+        recent.append(m)
+    recent.reverse()
+    if not recent:
+        return None
+    if not any((m.name or "") == "list_mailboxes" for m in recent):
+        return None
+    if any((m.name or "") == "create_mailbox" for m in recent):
+        return None
+
+    domains: list[dict] = []
+    boxes: list[dict] = []
+    for m in recent:
+        if (m.name or "") != "list_mailboxes":
+            continue
+        try:
+            data = json.loads(m.content or "{}")
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            domains, boxes = _mailboxes_from_tool_payload(data)
+
+    addr = _extract_email_address(last_user_l)
+    if not addr:
+        for t in reversed(turns):
+            addr = _extract_email_address(t.lower())
+            if addr:
+                break
+    if not addr:
+        sample = ", ".join(f"`{d.get('name')}`" for d in domains[:6]) if domains else "(aucun domaine mail)"
+        return ChatResult(
+            content=(
+                "Pour créer une boîte, indique **adresse + mot de passe** (≥8).\n"
+                f"Domaines mail dispo : {sample}\n"
+                "Exemple : *crée contact@exemple.com mot de passe MonMotDePasse9*"
+            ),
+            provider="mock",
+            model="mock-coach",
+        )
+
+    local_part, domain_name = addr
+    match = next(
+        (d for d in domains if str(d.get("name") or "").lower() == domain_name),
+        None,
+    )
+    if not match:
+        return ChatResult(
+            content=(
+                f"Le domaine mail **{domain_name}** n'est pas sur ce compte. "
+                "Crée d’abord le domaine mail (page Email), ou choisis un domaine listé."
+            ),
+            provider="mock",
+            model="mock-coach",
+        )
+
+    already = next(
+        (
+            b
+            for b in boxes
+            if str(b.get("local_part") or "").lower() == local_part
+            and str(b.get("domain") or "").lower() == domain_name
+        ),
+        None,
+    )
+    if already:
+        return ChatResult(
+            content=f"La boîte **{local_part}@{domain_name}** existe déjà (id {already.get('id')}).",
+            provider="mock",
+            model="mock-coach",
+        )
+
+    password = ""
+    for t in reversed(turns or [last_user_l]):
+        password = _extract_mailbox_password(t)
+        if password:
+            break
+    if not password or len(password) < 8:
+        return ChatResult(
+            content=(
+                f"Domaine OK pour **{local_part}@{domain_name}**. "
+                "Il me faut un **mot de passe ≥ 8 caractères** "
+                "(ex. *mot de passe MonSecret123*). "
+                "Je ne l’afficherai pas après confirmation."
+            ),
+            provider="mock",
+            model="mock-coach",
+        )
+
+    if "create_mailbox" not in tool_names:
+        return None
+    return ChatResult(
+        content=(
+            f"Je prépare la création de **{local_part}@{domain_name}** — "
+            "clique **Exécuter** pour confirmer (mot de passe masqué)."
+        ),
+        tool_calls=[
+            ToolCallRequest(
+                id=str(uuid4()),
+                name="create_mailbox",
+                arguments={
+                    "mail_domain_id": int(match["id"]),
+                    "local_part": local_part,
+                    "password": password,
+                    "quota_mb": 1024,
+                },
+            )
+        ],
+        provider="mock",
+        model="mock-coach",
     )
 
 
@@ -236,9 +737,12 @@ def _wordpress_after_tools(
     messages: list[ChatMessage],
     tool_names: set[str],
     last_user_l: str,
+    *,
+    user_turns: list[str] | None = None,
 ) -> ChatResult | None:
     """Après list_domains / list_wordpress : propose create_domain ou install_wordpress."""
-    if not _wants_wordpress_install(last_user_l):
+    turns = user_turns or []
+    if not _wordpress_flow_active(last_user_l, messages, turns):
         return None
 
     recent: list[ChatMessage] = []
@@ -313,7 +817,7 @@ def _wordpress_after_tools(
         elif (m.name or "") == "list_wordpress_sites":
             wp_sites = _wp_sites_from_tool_payload(data)
 
-    host = _extract_hostname(last_user_l)
+    host = _resolve_wp_host(last_user_l, messages, turns)
     if not host:
         return ChatResult(
             content=(
@@ -432,16 +936,18 @@ def _detect_intent(
     last_user_l: str,
     messages: list[ChatMessage],
     tool_names: set[str],
+    *,
+    user_turns: list[str] | None = None,
 ) -> dict | None:
-    page_blob = " ".join(
-        (m.content or "").lower()
-        for m in messages
-        if m.role == "system" and "page actuelle" in (m.content or "").lower()
-    )
+    turns = user_turns or []
+    page = _page_meta(messages)
+    page_sec = _page_section(page)
+    page_runtime = (page.get("runtime") or "").lower()
+    page_blob = f"{page.get('label', '')} {page.get('path', '')} {page.get('need', '')} {page_runtime}".lower()
 
     lifecycle = _lifecycle_verb(last_user_l)
     if lifecycle:
-        runtime = _guess_runtime(last_user_l + " " + page_blob)
+        runtime = _guess_runtime(last_user_l + " " + page_runtime)
         app_id = _extract_app_id(last_user_l) or _infer_app_id_from_history(
             messages, last_user_l
         )
@@ -507,9 +1013,9 @@ def _detect_intent(
     if wants_list and any(k in last_user_l for k in ("cron", "tâche planif", "tache planif", "crontab")):
         return {"say": "Je liste tes tâches cron…", "tools": [("list_cron_jobs", {})]}
 
-    # WordPress : créer / installer AVANT le simple listage
-    if _wants_wordpress_install(last_user_l):
-        host = _extract_hostname(last_user_l)
+    # WordPress : créer / installer (+ suite « le sous-domaine c'est X » / « vas-y »)
+    if _wordpress_flow_active(last_user_l, messages, turns):
+        host = _resolve_wp_host(last_user_l, messages, turns)
         say = "Je prépare l'installation WordPress"
         if host:
             say += f" sur **{host}**"
@@ -518,7 +1024,7 @@ def _detect_intent(
             "say": say,
             "tools": [("list_domains", {}), ("list_wordpress_sites", {})],
         }
-    if any(k in last_user_l for k in ("wordpress", "wp ")) or (wants_list and "wp" in last_user_l):
+    if any(k in last_user_l for k in ("wordpress", "wordpresse", "wp ")) or (wants_list and "wp" in last_user_l):
         return {"say": "Je liste tes sites WordPress…", "tools": [("list_wordpress_sites", {})]}
     if "wordpress" in page_blob and any(
         k in last_user_l for k in ("aide", "help", "je suis sur", "sites wp")
@@ -530,6 +1036,95 @@ def _detect_intent(
             ),
             "tools": [("list_wordpress_sites", {})],
         }
+
+    # Aide contextuelle page (avant les faux positifs apps / « compte »)
+    page_help = any(
+        k in last_user_l
+        for k in ("aide", "help", "je suis sur", "aide-moi", "aide moi", "que faire")
+    )
+    if page_help or any(
+        k in last_user_l for k in ("comptes mail", "boîtes mail", "boites mail", "messagerie")
+    ):
+        if page_sec == "email" or any(
+            k in last_user_l for k in ("email", "mail", "messagerie", "boîte", "boite")
+        ):
+            if _wants_create_mailbox(last_user_l):
+                pass  # handled below
+            elif page_sec == "email" or page_help:
+                return {
+                    "say": (
+                        "Tu es sur Email. Je liste tes domaines mail et boîtes. "
+                        "Pour créer : *crée contact@domaine.tld mot de passe Secret1234*."
+                    ),
+                    "tools": [("list_mailboxes", {})],
+                }
+        if page_sec == "ftp":
+            return {"say": "Tu es sur FTP. Je liste tes comptes…", "tools": [("list_ftp_accounts", {})]}
+        if page_sec == "cron":
+            return {"say": "Tu es sur Cron. Je liste tes tâches…", "tools": [("list_cron_jobs", {})]}
+        if page_sec == "backups":
+            return {"say": "Tu es sur Backups. Je liste tes sauvegardes…", "tools": [("list_backups", {})]}
+        if page_sec == "files":
+            return {"say": "Tu es sur File Manager. Je liste le home…", "tools": [("list_files", {"path": ""})]}
+        if page_sec == "domains":
+            return {"say": "Tu es sur Domaines. Je liste tes domaines…", "tools": [("list_domains", {})]}
+        if page_sec == "databases":
+            return {"say": "Tu es sur Databases. Je liste tes bases…", "tools": [("list_databases", {})]}
+        if page_sec == "dns":
+            return {"say": "Tu es sur DNS. Je liste tes zones…", "tools": [("list_dns_zones", {})]}
+
+    if _wants_create_mailbox(last_user_l):
+        addr = _extract_email_address(last_user_l)
+        say = "Je prépare la création d'une boîte mail"
+        if addr:
+            say += f" **{addr[0]}@{addr[1]}**"
+        say += " — je vérifie d'abord tes domaines mail…"
+        return {"say": say, "tools": [("list_mailboxes", {})]}
+
+    # Fichiers : créer / écrire AVANT le simple listage
+    if _wants_mkdir(last_user_l):
+        name = _extract_path_name(last_user_l, kind="dir")
+        if name and "mkdir_path" in tool_names:
+            return {
+                "say": (
+                    f"Je prépare la création du dossier **{name}** — "
+                    "clique **Exécuter** pour confirmer."
+                ),
+                "tools": [("mkdir_path", {"path": name})],
+            }
+        return {
+            "say": (
+                "Pour créer un dossier, indique le nom.\n"
+                "Exemple : *crée un dossier logs*"
+            ),
+        }
+    if _wants_write_file(last_user_l):
+        path = _extract_path_name(last_user_l, kind="file")
+        if path and "write_file" in tool_names:
+            content = _extract_file_content(last_user_l)
+            return {
+                "say": (
+                    f"Je prépare la création du fichier **{path}** — "
+                    "clique **Exécuter** pour confirmer."
+                ),
+                "tools": [("write_file", {"path": path, "content": content})],
+            }
+        return {
+            "say": (
+                "Pour créer un fichier, indique le nom (ex. `notes.txt`).\n"
+                "Exemple : *crée un fichier du nom lievin.txt*"
+            ),
+        }
+    if _wants_delete_path(last_user_l):
+        path = _extract_path_name(last_user_l, kind="any")
+        if path and "delete_paths" in tool_names:
+            return {
+                "say": (
+                    f"Je prépare la suppression de **{path}** — "
+                    "clique **Exécuter** pour confirmer."
+                ),
+                "tools": [("delete_paths", {"paths": [path]})],
+            }
 
     if any(k in last_user_l for k in ("fichier", "dossier", "répertoire", "repertoire", "file manager")):
         path = ""
@@ -557,7 +1152,7 @@ def _detect_intent(
             "tools": [("create_backup", {"backup_type": "full"})],
         }
 
-    if wants_list and any(k in last_user_l for k in ("mail", "email", "boîte", "boite", "mailbox")):
+    if wants_list and any(k in last_user_l for k in ("mail", "email", "boîte", "boite", "mailbox", "messagerie")):
         return {"say": "Je liste tes boîtes mail…", "tools": [("list_mailboxes", {})]}
     if wants_list and any(k in last_user_l for k in ("dns", "zone dns", "enregistrement")):
         return {"say": "Je liste tes zones DNS…", "tools": [("list_dns_zones", {})]}
@@ -573,7 +1168,7 @@ def _detect_intent(
     if any(k in last_user_l for k in ("kubernetes", "k8s", "kubectl")):
         return {"say": "Vue Kubernetes…", "tools": [("get_k8s_overview", {})]}
 
-    if wants_list and (mentions_python or mentions_node or mentions_apps or "python" in page_blob):
+    if wants_list and (mentions_python or mentions_node or mentions_apps):
         return {
             "say": "Je liste tes applications sur le compte…",
             "tools": [("check_application_status", {})],
@@ -586,8 +1181,10 @@ def _detect_intent(
         }
 
     page_auto = any(k in last_user_l for k in ("je suis sur", "page setup", "vérifie le statut"))
-    if ("python" in page_blob or mentions_python) and (
-        "log" in last_user_l or "statut" in last_user_l or page_auto
+    on_python_page = page_sec == "python" or page_runtime == "python"
+    on_node_page = page_sec == "node" or page_runtime == "node"
+    if (on_python_page or mentions_python) and (
+        "log" in last_user_l or "statut" in last_user_l or (page_auto and on_python_page)
     ):
         return {
             "say": "Ok, je regarde le statut et les logs Python…",
@@ -598,8 +1195,8 @@ def _detect_intent(
             ],
         }
 
-    if ("node" in page_blob or mentions_node) and (
-        "log" in last_user_l or "statut" in last_user_l or page_auto
+    if (on_node_page or mentions_node) and (
+        "log" in last_user_l or "statut" in last_user_l or (page_auto and on_node_page)
     ):
         return {
             "say": "Ok, je regarde tes apps Node et les logs…",
@@ -610,7 +1207,7 @@ def _detect_intent(
         }
 
     if any(k in last_user_l for k in ("log", "erreur", "error", "failed", "échou", "traceback")):
-        rt = _guess_runtime(last_user_l)
+        rt = _guess_runtime(last_user_l + " " + page_runtime)
         return {
             "say": "Je récupère les logs pour comprendre l'erreur…",
             "tools": [
@@ -627,7 +1224,17 @@ def _detect_intent(
             "tools": [("list_jail_commands", {})],
         }
 
-    if any(k in last_user_l for k in ("contexte", "compte", "ce que j'ai", "ce que j ai")):
+    if any(
+        k in last_user_l
+        for k in (
+            "contexte",
+            "ce que j'ai",
+            "ce que j ai",
+            "mon compte",
+            "vue d'ensemble",
+            "sur mon compte",
+        )
+    ) and "messagerie" not in last_user_l and "mail" not in last_user_l:
         return {
             "say": "Je regarde ce qui existe déjà sur ton compte…",
             "tools": [
@@ -849,14 +1456,32 @@ def _synthesize_tools(messages: list[ChatMessage]) -> str:
             parts.append(_format_context(name, data))
         elif "log" in name or "analyze" in name:
             parts.append(_format_logs(name, data))
+        elif name == "list_files":
+            parts.append(_format_files(data))
+        elif name == "list_mailboxes":
+            parts.append(_format_mailboxes(data))
+        elif name == "list_domains":
+            parts.append(_format_domains_list(data))
+        elif name == "list_databases":
+            parts.append(_format_databases(data))
+        elif name == "list_wordpress_sites":
+            parts.append(_format_wordpress_sites(data))
+        elif name == "list_ftp_accounts":
+            parts.append(_format_simple_list(data, "FTP", "accounts", "username"))
+        elif name == "list_backups":
+            parts.append(_format_simple_list(data, "Sauvegardes", "backups", "name"))
+        elif name == "list_cron_jobs":
+            parts.append(_format_simple_list(data, "Cron", "jobs", "command"))
+        elif name == "get_account_overview":
+            parts.append(_format_overview(data))
         else:
             ok = data.get("ok", True)
             err = data.get("error")
             if err:
                 parts.append(f"**{name}** : erreur — {err}")
             else:
-                snippet = json.dumps(data.get("data", data), ensure_ascii=False)[:900]
-                parts.append(f"**{name}** (ok={ok}) :\n```json\n{snippet}\n```")
+                snippet = json.dumps(data.get("data", data), ensure_ascii=False)[:600]
+                parts.append(f"**{name}** — OK.\n```json\n{snippet}\n```")
 
     body = "\n\n".join(p for p in parts if p) or "Aucune donnée retournée par les outils."
     names_used = {(m.name or "") for m in tool_msgs}
@@ -864,9 +1489,154 @@ def _synthesize_tools(messages: list[ChatMessage]) -> str:
         footer = "\n\nAutre chose ? (installer WP / SSL / liste domaines)"
     elif names_used & {"list_domains", "issue_ssl_certificate", "get_ssl_status"}:
         footer = "\n\nAutre chose ? (SSL / WordPress / liste)"
+    elif names_used & {"list_mailboxes", "create_mailbox"}:
+        footer = "\n\nAutre chose ? (créer une boîte / DKIM / liste)"
+    elif names_used & {"list_files", "write_file", "mkdir_path"}:
+        footer = "\n\nAutre chose ? (créer fichier / dossier / chercher)"
     else:
-        footer = "\n\nAutre chose ? (stop / start / logs / liste)"
+        footer = "\n\nDis-moi la suite quand tu veux."
     return body + footer
+
+
+def _payload(data: dict) -> dict:
+    if isinstance(data.get("data"), dict):
+        return data["data"]
+    if isinstance(data.get("result"), dict):
+        return data["result"]
+    return data
+
+
+def _format_files(data: dict) -> str:
+    payload = _payload(data)
+    entries = payload.get("entries") or []
+    cwd = payload.get("cwd") or "/"
+    lines = [f"**Fichiers** — `{cwd or 'home'}` ({len(entries)} éléments)", ""]
+    dirs = [e for e in entries if isinstance(e, dict) and e.get("is_dir")]
+    files = [e for e in entries if isinstance(e, dict) and not e.get("is_dir")]
+    if dirs:
+        lines.append("**Dossiers**")
+        for e in dirs[:24]:
+            lines.append(f"- 📁 `{e.get('name')}`")
+        if len(dirs) > 24:
+            lines.append(f"- … +{len(dirs) - 24} dossiers")
+        lines.append("")
+    if files:
+        lines.append("**Fichiers**")
+        for e in files[:24]:
+            size = e.get("size")
+            sz = f" · {size} o" if isinstance(size, int) and size else ""
+            lines.append(f"- 📄 `{e.get('name')}`{sz}")
+        if len(files) > 24:
+            lines.append(f"- … +{len(files) - 24} fichiers")
+    if not dirs and not files:
+        lines.append("_Dossier vide._")
+    return "\n".join(lines)
+
+
+def _format_mailboxes(data: dict) -> str:
+    payload = _payload(data)
+    domains = [d for d in (payload.get("domains") or []) if isinstance(d, dict)]
+    boxes = [b for b in (payload.get("mailboxes") or []) if isinstance(b, dict)]
+    lines = ["**Messagerie**", ""]
+    lines.append(f"**Domaines mail** ({len(domains)})")
+    if not domains:
+        lines.append("- Aucun domaine mail.")
+    else:
+        for d in domains[:12]:
+            lines.append(f"- `{d.get('name')}`")
+    lines.append("")
+    lines.append(f"**Boîtes** ({len(boxes)})")
+    if not boxes:
+        lines.append("- Aucune boîte pour l’instant.")
+    else:
+        for b in boxes[:20]:
+            addr = b.get("address") or f"{b.get('local_part')}@{b.get('domain')}"
+            st = "active" if b.get("is_active") and not b.get("is_suspended") else "inactive"
+            lines.append(f"- **{addr}** — {st}")
+    return "\n".join(lines)
+
+
+def _format_domains_list(data: dict) -> str:
+    payload = _payload(data)
+    domains = [d for d in (payload.get("domains") or []) if isinstance(d, dict)]
+    lines = [f"**Domaines** ({len(domains)})", ""]
+    if not domains:
+        lines.append("- Aucun domaine.")
+    else:
+        for d in domains[:25]:
+            lines.append(f"- **id {d.get('id')}** `{d.get('name')}`")
+    return "\n".join(lines)
+
+
+def _format_databases(data: dict) -> str:
+    payload = _payload(data)
+    items = [d for d in (payload.get("databases") or payload.get("items") or []) if isinstance(d, dict)]
+    lines = [f"**Bases de données** ({len(items)})", ""]
+    if not items:
+        lines.append("- Aucune base.")
+    else:
+        for d in items[:25]:
+            engine = d.get("engine") or d.get("type") or ""
+            lines.append(f"- **{d.get('name')}** {f'({engine})' if engine else ''}".rstrip())
+    return "\n".join(lines)
+
+
+def _format_wordpress_sites(data: dict) -> str:
+    payload = _payload(data)
+    sites = [s for s in (payload.get("sites") or []) if isinstance(s, dict)]
+    overview = payload.get("overview") if isinstance(payload.get("overview"), dict) else {}
+    lines = [f"**Sites WordPress** ({len(sites)})", ""]
+    if overview:
+        lines.append(
+            f"_Résumé_ : {overview.get('sites', len(sites))} site(s), "
+            f"{overview.get('active', '—')} actif(s)."
+        )
+        lines.append("")
+    if not sites:
+        lines.append("- Aucun site WP.")
+    else:
+        for s in sites[:20]:
+            lines.append(
+                f"- **#{s.get('id')}** {s.get('title') or 'Site'} — "
+                f"`{s.get('site_url') or '—'}` — **{s.get('status') or '—'}**"
+            )
+    return "\n".join(lines)
+
+
+def _format_simple_list(data: dict, title: str, key: str, label_key: str) -> str:
+    payload = _payload(data)
+    items = [x for x in (payload.get(key) or []) if isinstance(x, dict)]
+    lines = [f"**{title}** ({len(items)})", ""]
+    if not items:
+        lines.append("- Aucun élément.")
+    else:
+        for x in items[:20]:
+            label = x.get(label_key) or x.get("name") or x.get("id") or "?"
+            lines.append(f"- `{label}`")
+    return "\n".join(lines)
+
+
+def _format_overview(data: dict) -> str:
+    payload = _payload(data)
+    pkg = payload.get("my_package") or "—"
+    disk = payload.get("disk") if isinstance(payload.get("disk"), dict) else {}
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    account = payload.get("account") if isinstance(payload.get("account"), dict) else {}
+    lines = [
+        "**Vue d’ensemble**",
+        "",
+        f"- Compte : **{account.get('username') or '—'}**",
+        f"- Package : **{pkg}**",
+    ]
+    if disk:
+        lines.append(
+            f"- Disque : **{disk.get('used_mb', '?')} Mo** / "
+            f"{disk.get('quota_mb', '?')} Mo ({disk.get('percent', '?')} %)"
+        )
+    if usage:
+        bits = ", ".join(f"{k}={v}" for k, v in list(usage.items())[:8])
+        lines.append(f"- Usage : {bits}")
+    return "\n".join(lines)
 
 
 def _format_apps(data: dict) -> str:
@@ -937,7 +1707,13 @@ def _guess_runtime(text: str) -> str:
     return "python"
 
 
-def _converse(last_user: str, prev_assistant: str, user_turns: list[str]) -> str:
+def _converse(
+    last_user: str,
+    prev_assistant: str,
+    user_turns: list[str],
+    *,
+    messages: list[ChatMessage] | None = None,
+) -> str:
     text = (last_user or "").strip()
     low = text.lower().strip()
 
@@ -951,6 +1727,29 @@ def _converse(last_user: str, prev_assistant: str, user_turns: list[str]) -> str
             "Ça va très bien, merci 😊 Et toi ?\n\n"
             "Quand tu veux, on peut enchaîner sur ton panel "
             "(apps, domaines, mails, fichiers…) — ou juste discuter."
+        )
+
+    if re.search(
+        r"\b(tu\s+connais\s+mon\s+nom|quel\s+est\s+mon\s+nom|mon\s+pseudo|"
+        r"comment\s+je\s+m['\u2019]appelle|who\s+am\s+i)\b",
+        low,
+    ):
+        username = ""
+        for m in messages or []:
+            if m.role != "system" or not m.content:
+                continue
+            found = re.search(r'"username"\s*:\s*"([^"]+)"', m.content)
+            if found:
+                username = found.group(1).strip()
+                break
+        if username:
+            return (
+                f"Oui — ton identifiant panel est **{username}**.\n\n"
+                "Tu veux que je fasse quelque chose sur ton compte ?"
+            )
+        return (
+            "Je n'ai pas ton nom d'utilisateur dans ce tour — "
+            "rafraîchis la conversation ou dis-moi ton identifiant panel."
         )
 
     if re.search(r"\b(bonjour|salut|hello|hey|coucou|bonsoir)\b", low) and len(low) < 48:

@@ -20,8 +20,22 @@ def create_conversation(user: User, *, title: str = "") -> Conversation:
     )
 
 
+_EPHEMERAL_CONTEXT_KEYS = (
+    "ui",
+    "last_app",
+    "pending_wp",
+    "pending_wp_host",
+    "wp_install_after",
+)
+
+
 def refresh_context(conversation: Conversation) -> Conversation:
-    conversation.context = build_user_context(conversation.owner)
+    prev = dict(conversation.context or {})
+    ctx = build_user_context(conversation.owner)
+    for key in _EPHEMERAL_CONTEXT_KEYS:
+        if key in prev:
+            ctx[key] = prev[key]
+    conversation.context = ctx
     conversation.save(update_fields=["context", "updated_at"])
     return conversation
 

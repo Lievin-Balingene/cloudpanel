@@ -80,6 +80,25 @@ def run_assistant_turn(
     )
 
     history = list(conversation.messages.order_by("created_at")[:80])
+    # Intent WP multi-tours : hostname fourni en retard, ou « vas-y »
+    from apps.ai_assistant.providers.mock import (
+        _extract_hostname,
+        _wants_wordpress_install,
+    )
+
+    ctx_now = dict(conversation.context or {})
+    host_now = _extract_hostname(safe_user.lower())
+    if _wants_wordpress_install(safe_user.lower()):
+        ctx_now["pending_wp"] = True
+        if host_now:
+            ctx_now["pending_wp_host"] = host_now
+        conversation.context = ctx_now
+        conversation.save(update_fields=["context", "updated_at"])
+    elif ctx_now.get("pending_wp") and host_now:
+        ctx_now["pending_wp_host"] = host_now
+        conversation.context = ctx_now
+        conversation.save(update_fields=["context", "updated_at"])
+
     context_blob = redact_obj(
         {
             "username": (conversation.context or {}).get("username"),
@@ -90,6 +109,8 @@ def run_assistant_turn(
             "git_repos": (conversation.context or {}).get("git_repos", [])[:8],
             "domains": (conversation.context or {}).get("domains", [])[:8],
             "last_app": (conversation.context or {}).get("last_app"),
+            "pending_wp": bool((conversation.context or {}).get("pending_wp")),
+            "pending_wp_host": (conversation.context or {}).get("pending_wp_host") or "",
         }
     )
     messages: list[ChatMessage] = [
@@ -210,13 +231,31 @@ def run_assistant_turn(
                         if m.role == "user" and m.content:
                             last_u = m.content
                             break
-                    from apps.ai_assistant.providers.mock import _wants_wordpress_install
+                    from apps.ai_assistant.providers.mock import (
+                        _pending_wordpress_flow,
+                        _wants_wordpress_install,
+                    )
 
-                    if _wants_wordpress_install(last_u.lower()):
+                    user_turns = [
+                        m.content
+                        for m in messages
+                        if m.role == "user" and m.content
+                    ]
+                    if _wants_wordpress_install(last_u.lower()) or _pending_wordpress_flow(
+                        messages, user_turns
+                    ):
                         ctx2 = dict(conversation.context or {})
                         ctx2["wp_install_after"] = str(args["name"]).strip().lower()
+                        ctx2["pending_wp"] = True
+                        ctx2["pending_wp_host"] = str(args["name"]).strip().lower()
                         conversation.context = ctx2
                         conversation.save(update_fields=["context", "updated_at"])
+                if tool.spec.name == "install_wordpress":
+                    ctx2 = dict(conversation.context or {})
+                    ctx2.pop("pending_wp", None)
+                    ctx2.pop("pending_wp_host", None)
+                    conversation.context = ctx2
+                    conversation.save(update_fields=["context", "updated_at"])
                 pending_actions.append(
                     {
                         "token": action.token,
@@ -277,13 +316,6 @@ def run_assistant_turn(
             "Je n'ai pas pu générer de réponse. Vérifiez la configuration IA "
             "(Ollama / provider) ou reformulez votre demande."
         )
-
-    # Pied de page mock discret (une seule fois, sans jargon technique)
-    if (provider_name or "").lower() == "mock" and "mode local" not in final_content.lower():
-        # Ne pas polluer le small talk
-        low = final_content.lower()
-        if not any(k in low for k in ("ça va", "salut", "content de te parler", "à bientôt")):
-            final_content = final_content.rstrip() + "\n\n_(Mode local.)_"
 
     suggestions = _suggest_followups(safe_user, final_content, ui)
     assistant_msg = Message.objects.create(

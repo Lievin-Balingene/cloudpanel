@@ -107,37 +107,40 @@ PAGE_CATALOG: dict[str, dict[str, Any]] = {
     "email": {
         "label": "Email",
         "need": "Comptes mail.",
-        "suggested_tools": ["get_server_info"],
-        "auto_prompt": "Je suis sur Email. Donne les points de contrôle utiles.",
+        "suggested_tools": ["list_mailboxes", "create_mailbox"],
+        "auto_prompt": (
+            "Je suis sur la page Email. Comptes mail. Aide-moi. "
+            "Liste mes boîtes ; pour créer indique adresse + mot de passe."
+        ),
     },
     "ftp": {
         "label": "FTP",
         "need": "Comptes FTP.",
-        "suggested_tools": ["get_server_info"],
-        "auto_prompt": "Je suis sur FTP. Conseils de sécurité et vérifications.",
+        "suggested_tools": ["list_ftp_accounts", "create_ftp_account"],
+        "auto_prompt": "Je suis sur FTP. Liste mes comptes FTP.",
     },
     "cron": {
         "label": "Cron Jobs",
         "need": "Tâches planifiées.",
-        "suggested_tools": ["get_server_info"],
-        "auto_prompt": "Je suis sur Cron Jobs. Aide-moi à vérifier mes tâches.",
+        "suggested_tools": ["list_cron_jobs", "create_cron_job"],
+        "auto_prompt": "Je suis sur Cron Jobs. Liste mes tâches planifiées.",
     },
     "php": {
         "label": "PHP Version",
         "need": "Sélecteur PHP.",
-        "suggested_tools": ["check_web_server"],
+        "suggested_tools": ["list_php_versions", "list_php_selectors"],
         "auto_prompt": "Je suis sur Select PHP Version. Conseils de version pour mes sites.",
     },
     "security": {
         "label": "Sécurité / 2FA",
         "need": "Sécurité compte.",
-        "suggested_tools": ["get_server_info"],
+        "suggested_tools": ["get_security_status"],
         "auto_prompt": "Je suis sur Sécurité. Rappels 2FA et bonnes pratiques.",
     },
     "package": {
         "label": "Package / quotas",
         "need": "Ressources du package.",
-        "suggested_tools": ["get_deployment_context"],
+        "suggested_tools": ["get_my_package", "get_account_overview"],
         "auto_prompt": "Je suis sur Mon package. Résume ce que mon package autorise pour déployer.",
     },
 }
@@ -180,12 +183,18 @@ def normalize_ui_context(raw: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def describe_ui_context(ui: dict[str, Any]) -> str:
-    return (
-        f"Page actuelle: {ui.get('label')} ({ui.get('path')})\n"
-        f"Portail: {ui.get('portal')}\n"
-        f"Besoin immédiat: {ui.get('need')}\n"
-        f"Tools suggérées: {', '.join(ui.get('suggested_tools') or [])}\n"
-        f"Runtime page: {ui.get('runtime') or 'n/a'}\n"
-        "Adapte ta première réponse à cette page. "
-        "Si des logs sont pertinents, appelle get_deployment_logs / analyze_deployment_error immédiatement."
-    )
+    runtime = ui.get("runtime") or ""
+    lines = [
+        f"Page actuelle: {ui.get('label')} ({ui.get('path')})",
+        f"Portail: {ui.get('portal')}",
+        f"Besoin immédiat: {ui.get('need')}",
+        f"Tools suggérées: {', '.join(ui.get('suggested_tools') or [])}",
+        f"Runtime page: {runtime or 'n/a'}",
+        "Adapte ta première réponse à cette page.",
+    ]
+    if runtime in {"python", "node"}:
+        lines.append(
+            "Si des logs sont pertinents, appelle get_deployment_logs / "
+            "analyze_deployment_error immédiatement."
+        )
+    return "\n".join(lines)

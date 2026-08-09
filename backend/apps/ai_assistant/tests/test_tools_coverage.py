@@ -168,3 +168,262 @@ def test_mock_wordpress_create_chains_subdomain_when_missing():
     assert r.tool_calls[0].arguments.get("name") == "wp.7une.info"
     assert r.tool_calls[0].arguments.get("parent_id") == 11
     assert r.tool_calls[0].arguments.get("domain_type") == "subdomain"
+
+
+def test_mock_wordpress_multiturn_hostname_then_go():
+    """Hostname seul après demande WP, puis « vas-y » → enchaîne install."""
+    from apps.ai_assistant.providers import ChatMessage, ToolSpec
+    from apps.ai_assistant.providers.mock import MockProvider
+
+    p = MockProvider()
+    tools = [
+        ToolSpec(name=n, description=n, parameters={"type": "object", "properties": {}})
+        for n in ("list_domains", "list_wordpress_sites", "install_wordpress", "create_domain")
+    ]
+
+    # Tour 1 : intention sans hostname → liste
+    r1 = p.chat(
+        [ChatMessage(role="user", content="cree une app wordpress")],
+        tools=tools,
+    )
+    assert {c.name for c in r1.tool_calls} >= {"list_domains", "list_wordpress_sites"}
+
+    # Après list sans host → demande le domaine
+    r_ask = p.chat(
+        [
+            ChatMessage(role="user", content="cree une app wordpress"),
+            ChatMessage(
+                role="tool",
+                name="list_domains",
+                content='{"ok": true, "domains": [{"id": 11, "name": "7une.info"}]}',
+            ),
+            ChatMessage(
+                role="tool",
+                name="list_wordpress_sites",
+                content='{"ok": true, "sites": []}',
+            ),
+        ],
+        tools=tools,
+    )
+    assert not r_ask.tool_calls
+    assert "domaine" in (r_ask.content or "").lower()
+
+    # Tour 2 : hostname seul
+    r2 = p.chat(
+        [
+            ChatMessage(role="user", content="cree une app wordpress"),
+            ChatMessage(
+                role="assistant",
+                content=r_ask.content or "Pour installer WordPress, indique le domaine ou sous-domaine cible.",
+            ),
+            ChatMessage(role="user", content="le sous domaine c'est wp.7une.info"),
+        ],
+        tools=tools,
+    )
+    assert r2.tool_calls
+    assert {c.name for c in r2.tool_calls} >= {"list_domains", "list_wordpress_sites"}
+
+    # Après list avec host → create_domain
+    r3 = p.chat(
+        [
+            ChatMessage(role="user", content="cree une app wordpress"),
+            ChatMessage(
+                role="assistant",
+                content="Pour installer WordPress, indique le domaine ou sous-domaine cible.",
+            ),
+            ChatMessage(role="user", content="le sous domaine c'est wp.7une.info"),
+            ChatMessage(
+                role="tool",
+                name="list_domains",
+                content='{"ok": true, "domains": [{"id": 11, "name": "7une.info"}]}',
+            ),
+            ChatMessage(
+                role="tool",
+                name="list_wordpress_sites",
+                content='{"ok": true, "sites": []}',
+            ),
+        ],
+        tools=tools,
+    )
+    assert r3.tool_calls
+    assert r3.tool_calls[0].name == "create_domain"
+    assert r3.tool_calls[0].arguments.get("name") == "wp.7une.info"
+
+    # « vas y agis » si host déjà donné
+    r4 = p.chat(
+        [
+            ChatMessage(role="user", content="cree une app wordpress"),
+            ChatMessage(
+                role="assistant",
+                content="Pour installer WordPress, indique le domaine ou sous-domaine cible.",
+            ),
+            ChatMessage(role="user", content="le sous domaine c'est wp.7une.info"),
+            ChatMessage(role="user", content="vas y agis"),
+        ],
+        tools=tools,
+    )
+    assert r4.tool_calls
+    assert {c.name for c in r4.tool_calls} >= {"list_domains", "list_wordpress_sites"}
+
+
+def test_mock_wordpress_typo_wordpresse():
+    from apps.ai_assistant.providers import ChatMessage, ToolSpec
+    from apps.ai_assistant.providers.mock import MockProvider
+
+    p = MockProvider()
+    tools = [
+        ToolSpec(name=n, description=n, parameters={"type": "object", "properties": {}})
+        for n in ("list_domains", "list_wordpress_sites", "install_wordpress")
+    ]
+    r = p.chat(
+        [
+            ChatMessage(
+                role="user",
+                content="cree un site wordpresse maintenant sur le sous domaine wp.7une.info",
+            )
+        ],
+        tools=tools,
+    )
+    assert r.tool_calls
+    assert r.tool_calls[0].name == "list_domains"
+
+
+def test_mock_knows_username_from_context():
+    from apps.ai_assistant.providers import ChatMessage
+    from apps.ai_assistant.providers.mock import MockProvider
+
+    p = MockProvider()
+    r = p.chat(
+        [
+            ChatMessage(
+                role="system",
+                content='Contexte session\n{"username": "lievin", "role": "client"}',
+            ),
+            ChatMessage(role="user", content="tu connais mon nom??"),
+        ],
+        tools=[],
+    )
+    assert "lievin" in (r.content or "").lower()
+    assert not r.tool_calls
+
+
+def test_mock_create_file_write_file():
+    from apps.ai_assistant.providers import ChatMessage, ToolSpec
+    from apps.ai_assistant.providers.mock import MockProvider, _extract_path_name
+
+    assert _extract_path_name("cree un fichier du nom lievin.txt", kind="file") == "lievin.txt"
+
+    p = MockProvider()
+    tools = [
+        ToolSpec(name=n, description=n, parameters={"type": "object", "properties": {}})
+        for n in ("list_files", "write_file", "mkdir_path", "delete_paths")
+    ]
+    r = p.chat(
+        [ChatMessage(role="user", content="cree un fichier du nom lievin.txt")],
+        tools=tools,
+    )
+    assert r.tool_calls
+    assert r.tool_calls[0].name == "write_file"
+    assert r.tool_calls[0].arguments.get("path") == "lievin.txt"
+    assert r.tool_calls[0].arguments.get("content") == ""
+
+    r2 = p.chat(
+        [ChatMessage(role="user", content="crée un dossier logs")],
+        tools=tools,
+    )
+    assert r2.tool_calls
+    assert r2.tool_calls[0].name == "mkdir_path"
+    assert r2.tool_calls[0].arguments.get("path") == "logs"
+
+
+def test_mock_email_page_help_not_python_logs():
+    """Le JSON `python_apps` ne doit pas déclencher les logs Python sur la page Email."""
+    from apps.ai_assistant.providers import ChatMessage, ToolSpec
+    from apps.ai_assistant.providers.mock import MockProvider
+
+    p = MockProvider()
+    tools = [
+        ToolSpec(name=n, description=n, parameters={"type": "object", "properties": {}})
+        for n in (
+            "list_mailboxes",
+            "create_mailbox",
+            "check_application_status",
+            "get_page_logs",
+            "analyze_deployment_error",
+            "get_account_overview",
+            "get_deployment_context",
+        )
+    ]
+    sys_msg = (
+        "Page actuelle: Email (/panel/email)\n"
+        "Portail: client\n"
+        "Besoin immédiat: Comptes mail.\n"
+        "Tools suggérées: list_mailboxes\n"
+        "Runtime page: n/a\n"
+        "Adapte ta première réponse à cette page.\n"
+        '{"username":"lievin","python_apps":[{"id":4,"name":"vzone"}]}'
+    )
+    r = p.chat(
+        [
+            ChatMessage(role="system", content=sys_msg),
+            ChatMessage(
+                role="user",
+                content="Je suis sur la page Email. Comptes mail. Aide-moi.",
+            ),
+        ],
+        tools=tools,
+    )
+    assert r.tool_calls
+    assert r.tool_calls[0].name == "list_mailboxes"
+    assert {c.name for c in r.tool_calls} == {"list_mailboxes"}
+
+
+def test_mock_create_mailbox_flow():
+    from apps.ai_assistant.providers import ChatMessage, ToolSpec
+    from apps.ai_assistant.providers.mock import MockProvider
+
+    p = MockProvider()
+    tools = [
+        ToolSpec(name=n, description=n, parameters={"type": "object", "properties": {}})
+        for n in ("list_mailboxes", "create_mailbox", "get_account_overview", "get_deployment_context")
+    ]
+    r1 = p.chat(
+        [ChatMessage(role="user", content="cree un nouveua compte de messagerie")],
+        tools=tools,
+    )
+    assert r1.tool_calls
+    assert r1.tool_calls[0].name == "list_mailboxes"
+
+    r2 = p.chat(
+        [
+            ChatMessage(role="user", content="cree un nouveua compte de messagerie"),
+            ChatMessage(
+                role="tool",
+                name="list_mailboxes",
+                content='{"ok":true,"domains":[{"id":1,"name":"7une.info"}],"mailboxes":[]}',
+            ),
+        ],
+        tools=tools,
+    )
+    assert not r2.tool_calls
+    assert "mot de passe" in (r2.content or "").lower() or "adresse" in (r2.content or "").lower()
+
+    r3 = p.chat(
+        [
+            ChatMessage(
+                role="user",
+                content="crée contact@7une.info mot de passe Secret1234",
+            ),
+            ChatMessage(
+                role="tool",
+                name="list_mailboxes",
+                content='{"ok":true,"domains":[{"id":1,"name":"7une.info"}],"mailboxes":[]}',
+            ),
+        ],
+        tools=tools,
+    )
+    assert r3.tool_calls
+    assert r3.tool_calls[0].name == "create_mailbox"
+    assert r3.tool_calls[0].arguments.get("local_part") == "contact"
+    assert r3.tool_calls[0].arguments.get("mail_domain_id") == 1
+    assert r3.tool_calls[0].arguments.get("password") == "Secret1234"
