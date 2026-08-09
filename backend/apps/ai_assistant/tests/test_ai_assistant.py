@@ -136,6 +136,9 @@ def test_mock_start_verb_and_history_id():
     assert _lifecycle_verb("démarre l'application") == "start"
     assert _lifecycle_verb("stoppe mon application") == "stop"
     assert _lifecycle_verb("redémarre l'app") == "restart"
+    assert _lifecycle_verb("lance une commande ls") is None
+    assert _lifecycle_verb("lance ls") is None
+    assert _lifecycle_verb("lance mon application") == "start"
 
     p = MockProvider()
     tools = [

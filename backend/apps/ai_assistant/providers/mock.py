@@ -89,6 +89,92 @@ class MockProvider:
         )
 
 
+def _looks_like_shell_or_jail(text: str) -> bool:
+    """True si le message vise une commande shell/jail, pas un start/stop d'app."""
+    t = _norm_text(text)
+    if any(
+        k in t
+        for k in (
+            "commande",
+            "command",
+            "jail",
+            "run_jail",
+            "dans le terminal",
+            "dans le shell",
+        )
+    ):
+        return True
+    # Jetons shell courants (évite « lance une commande ls » → start_application)
+    if re.search(r"(?:^|[\s«\"'`])(ls|pwd|df|whoami|uname|pip|npm)(?:\s|$|-\w)", t):
+        return True
+    return False
+
+
+def _resolve_jail_command_id(text: str) -> str | None:
+    """Mappe un message utilisateur vers un id catalogue jail (whitelist)."""
+    t = _norm_text(text)
+    if not t:
+        return None
+    # Catalogue explicite
+    for cid in (
+        "ls_home",
+        "ls_app",
+        "pwd",
+        "df_home",
+        "python_version",
+        "node_version",
+        "npm_version",
+        "du_app",
+        "tail_error_log",
+        "tail_access_log",
+        "pip_freeze_venv",
+    ):
+        if cid.replace("_", " ") in t or cid in t:
+            return cid
+
+    wants_app_scope = any(
+        k in t for k in ("app", "application", "projet", "relative_root", "venv")
+    )
+
+    if re.search(r"(?:^|[\s«\"'`])ls(?:\s|$|-\w)", t) or "lister le home" in t:
+        return "ls_app" if wants_app_scope else "ls_home"
+    if re.search(r"(?:^|[\s«\"'`])pwd(?:\s|$)", t) or "repertoire courant" in t:
+        return "pwd"
+    if re.search(r"(?:^|[\s«\"'`])df(?:\s|$|-\w)", t) or "espace disque" in t:
+        return "df_home"
+    if "python" in t and ("version" in t or "--version" in t):
+        return "python_version"
+    if re.search(r"\bnode\b", t) and ("version" in t or "-v" in t):
+        return "node_version"
+    if re.search(r"\bnpm\b", t) and ("version" in t or "-v" in t):
+        return "npm_version"
+    if "pip freeze" in t or ("pip" in t and "freeze" in t):
+        return "pip_freeze_venv"
+    if "error.log" in t or ("tail" in t and "error" in t):
+        return "tail_error_log"
+    if "access.log" in t or ("tail" in t and "access" in t):
+        return "tail_access_log"
+    if "du " in t or "taille du dossier" in t:
+        return "du_app" if wants_app_scope else None
+
+    # « lance une commande » / « exécute » sans id clair → proposer ls_home si listage
+    if any(k in t for k in ("commande", "command", "execute", "executer", "run ")) and any(
+        k in t for k in ("ls", "list", "liste", "home", "dossier")
+    ):
+        return "ls_home"
+    return None
+
+
+def _jail_needs_app(command_id: str) -> bool:
+    return command_id in {
+        "ls_app",
+        "du_app",
+        "tail_error_log",
+        "tail_access_log",
+        "pip_freeze_venv",
+    }
+
+
 def _lifecycle_verb(text: str) -> str | None:
     """Retourne stop|start|restart selon l'intention utilisateur (mots entiers)."""
     import unicodedata
@@ -98,6 +184,17 @@ def _lifecycle_verb(text: str) -> str | None:
     t = "".join(
         c for c in unicodedata.normalize("NFD", raw) if unicodedata.category(c) != "Mn"
     )
+
+    # « lance une commande ls » ≠ démarrer une application
+    if _looks_like_shell_or_jail(t):
+        explicit_app_lifecycle = bool(
+            re.search(
+                r"\b(demarr\w*|start\w*|stop\w*|arret\w*|redemarr\w*|reboot\w*)\b",
+                t,
+            )
+        ) and any(k in t for k in ("app", "application", "python", "node", "service"))
+        if not explicit_app_lifecycle:
+            return None
 
     # Ordre critique : restart / start AVANT stop (sinon "arret" peut polluer)
     if re.search(r"\b(re\s*-?\s*start|redemarr\w*|relance\w*|reboot\w*)\b", t):
@@ -1669,6 +1766,36 @@ def _detect_intent(
     text_n = _norm_text(last_user_l)
     page_help = _page_help_only(text_n)
 
+    # Commande jail whitelistée AVANT lifecycle (« lance ls » ≠ start app)
+    jail_id = _resolve_jail_command_id(last_user_l)
+    if jail_id and "run_jail_command" in tool_names:
+        args: dict[str, Any] = {"command_id": jail_id}
+        if _jail_needs_app(jail_id):
+            app_id = _extract_app_id(last_user_l) or _infer_app_id_from_history(
+                messages, last_user_l
+            )
+            if not app_id:
+                return {
+                    "say": (
+                        f"Compris — commande **{jail_id}** : "
+                        "j'ai besoin de l'**id** de l'app. Je liste tes applications…"
+                    ),
+                    "tools": [("check_application_status", {})],
+                }
+            args["app_id"] = int(app_id)
+            args["runtime"] = (
+                _guess_runtime(last_user_l + " " + page_runtime)
+                if _guess_runtime(last_user_l + " " + page_runtime) in {"python", "node"}
+                else "python"
+            )
+        return {
+            "say": (
+                f"Compris — exécution jail **`{jail_id}`** "
+                "(confirmation **Exécuter**)…"
+            ),
+            "tools": [("run_jail_command", args)],
+        }
+
     lifecycle = _lifecycle_verb(last_user_l)
     if lifecycle:
         runtime = _guess_runtime(last_user_l + " " + page_runtime)
@@ -1821,9 +1948,13 @@ def _detect_intent(
             ],
         }
 
-    if "jail" in text_n or (
-        "commande" in text_n and any(k in text_n for k in ("liste", "dispo", "autoris"))
-    ):
+    if (
+        "jail" in text_n
+        or (
+            "commande" in text_n
+            and any(k in text_n for k in ("liste", "dispo", "autoris", "catalogue", "whitelist"))
+        )
+    ) and not _resolve_jail_command_id(last_user_l):
         return {
             "say": "Compris — catalogue des commandes jail…",
             "tools": [("list_jail_commands", {})],
@@ -2114,6 +2245,32 @@ def _synthesize_tools(messages: list[ChatMessage]) -> str:
             # Avec une liste d'apps, n'affiche pas le dump quota/usage
             if "check_application_status" not in {(x.name or "") for x in tool_msgs}:
                 parts.append(_format_overview(data))
+        elif name == "run_jail_command":
+            payload = _payload(data)
+            out = str(payload.get("stdout") or payload.get("output") or "").strip()
+            err = str(payload.get("stderr") or "").strip()
+            cid = payload.get("command_id") or "commande"
+            if data.get("pending_confirmation"):
+                parts.append(
+                    f"Commande jail **`{cid}`** en attente de confirmation "
+                    "(bouton **Exécuter**)."
+                )
+            elif data.get("ok"):
+                body = out or "(sortie vide)"
+                extra = f"\nstderr:\n{err}" if err else ""
+                parts.append(f"**`{cid}`** :\n```\n{body[:2000]}{extra}\n```")
+            else:
+                parts.append(f"**`{cid}`** échoué : {data.get('error') or err or 'erreur'}")
+        elif name == "list_jail_commands":
+            payload = _payload(data)
+            cmds = payload.get("commands") or []
+            lines = ["**Commandes jail autorisées**", ""]
+            for c in cmds[:30]:
+                if isinstance(c, dict):
+                    lines.append(
+                        f"- `{c.get('id')}` — {c.get('label') or c.get('description') or ''}"
+                    )
+            parts.append("\n".join(lines) if len(lines) > 2 else "Aucune commande jail.")
         else:
             ok = data.get("ok", True)
             err = data.get("error")

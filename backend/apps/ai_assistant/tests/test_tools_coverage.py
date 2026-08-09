@@ -598,6 +598,32 @@ def test_mock_apps_running_not_account_dump():
     assert "get_deployment_context" not in body
 
 
+def test_mock_lance_commande_ls_is_jail_not_start_app():
+    from apps.ai_assistant.providers import ChatMessage, ToolSpec
+    from apps.ai_assistant.providers.mock import MockProvider, _resolve_jail_command_id
+
+    assert _resolve_jail_command_id("lance une commande ls") == "ls_home"
+
+    p = MockProvider()
+    tools = [
+        ToolSpec(name=n, description=n, parameters={"type": "object", "properties": {}})
+        for n in (
+            "run_jail_command",
+            "list_jail_commands",
+            "start_application",
+            "check_application_status",
+        )
+    ]
+    r = p.chat(
+        [ChatMessage(role="user", content="lance une commande ls")],
+        tools=tools,
+    )
+    assert r.tool_calls
+    assert len(r.tool_calls) == 1
+    assert r.tool_calls[0].name == "run_jail_command"
+    assert r.tool_calls[0].arguments.get("command_id") == "ls_home"
+
+
 def test_mock_create_mailbox_flow():
     from apps.ai_assistant.providers import ChatMessage, ToolSpec
     from apps.ai_assistant.providers.mock import MockProvider
