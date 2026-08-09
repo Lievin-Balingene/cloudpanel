@@ -213,16 +213,128 @@ def allocate_port(owner: User) -> int:
     raise VZoneAPIException(detail="Aucun port disponible.", code="no_port", status_code=503)
 
 
+def _parse_python_version_output(text: str) -> str | None:
+    """'Python 3.10.12' → '3.10'."""
+    m = re.search(r"Python\s+(\d+)\.(\d+)", text or "", re.I)
+    if not m:
+        return None
+    return f"{m.group(1)}.{m.group(2)}"
+
+
+def _binary_reports_version(binary: str, version: str) -> bool:
+    """True si `binary --version` correspond à major.minor demandé."""
+    want = (version or "").strip()
+    if not want or not binary:
+        return False
+    try:
+        proc = subprocess.run(
+            [binary, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    got = _parse_python_version_output((proc.stdout or "") + (proc.stderr or ""))
+    return bool(got and got == want)
+
+
+def discover_system_python_versions() -> list[tuple[str, str]]:
+    """
+    Versions Python utilisables sur le serveur : [( '3.12', '/usr/bin/python3.12' ), …]
+    Ordre : plus récent d'abord.
+    """
+    found: dict[str, str] = {}
+    candidates = [
+        "python3.14",
+        "python3.13",
+        "python3.12",
+        "python3.11",
+        "python3.10",
+        "python3.9",
+        "python3",
+        "python",
+    ]
+    if sys.executable:
+        candidates.append(sys.executable)
+    for name in candidates:
+        path = name if (name.startswith("/") or "\\" in name) else shutil.which(name)
+        if not path:
+            continue
+        try:
+            proc = subprocess.run(
+                [path, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        ver = _parse_python_version_output((proc.stdout or "") + (proc.stderr or ""))
+        if ver and ver not in found:
+            found[ver] = path
+    # Tri décroissant 3.12 > 3.11 > 3.10
+    def _key(item: tuple[str, str]) -> tuple[int, int]:
+        maj, min_ = item[0].split(".", 1)
+        return (int(maj), int(min_))
+
+    return sorted(found.items(), key=_key, reverse=True)
+
+
+def resolve_python_version(preferred: str) -> tuple[str, str]:
+    """
+    Retourne (version, binary) pour preferred si dispo, sinon meilleure version système.
+    """
+    want = (preferred or "3.12").strip() or "3.12"
+    available = discover_system_python_versions()
+    if not available:
+        # Dernier recours : sys.executable même si version inconnue
+        return want, sys.executable or "python3"
+    for ver, path in available:
+        if ver == want:
+            return ver, path
+    # Preférée absente → bascule sur la plus récente installée
+    return available[0]
+
+
 def python_binary(version: str) -> str:
+    """
+    Binaire Python pour une version major.minor.
+    Ne renvoie JAMAIS python3 générique s'il ne matche pas la version
+    (sinon venv « 3.12 » créé avec 3.10).
+    """
     configured = getattr(settings, "VZONE_PYTHON_BIN", "") or ""
     if configured:
-        return configured
-    # Prefer exact version if present
-    for candidate in (f"python{version}", f"python{version.split('.')[0]}", "python3", sys.executable):
-        path = shutil.which(candidate) if candidate != sys.executable else candidate
-        if path:
+        if not version or _binary_reports_version(configured, version):
+            return configured
+    want = (version or "").strip()
+    if want:
+        exact = shutil.which(f"python{want}")
+        if exact and _binary_reports_version(exact, want):
+            return exact
+        # Fallbacks seulement s'ils matchent vraiment
+        for candidate in (f"python{want.split('.')[0]}", "python3", "python", sys.executable):
+            path = candidate if candidate == sys.executable else shutil.which(candidate or "")
+            if path and _binary_reports_version(path, want):
+                return path
+        # Pas de binaire exact → resolve (peut différer) ; create_venv doit gérer
+        _ver, path = resolve_python_version(want)
+        if _ver == want:
             return path
-    return sys.executable
+        raise VZoneAPIException(
+            detail=(
+                f"Python {want} n'est pas installé sur ce serveur. "
+                f"Versions dispo : {', '.join(v for v, _ in discover_system_python_versions()) or 'aucune'}. "
+                f"Installez python{want}-venv ou choisissez une autre version d'app."
+            ),
+            code="python_version_missing",
+            status_code=400,
+            extra={"requested": want, "available": [v for v, _ in discover_system_python_versions()]},
+        )
+    path = shutil.which("python3") or sys.executable
+    return path or "python3"
 
 
 def _run(cmd: list[str], *, cwd: Path | None = None, env: dict | None = None) -> subprocess.CompletedProcess:
@@ -463,6 +575,9 @@ def create_python_app(
 
     rel, app_root = resolve_app_root(owner, rel)
     _scaffold(app_root, mode, framework)
+    # Ne jamais créer un venv « 3.12 » avec python3=3.10
+    if provision_mode() != "mock" and should_execute():
+        python_version, _bin = resolve_python_version(python_version)
     venv_dir = create_venv(cpanel_venv_path(owner, slug, python_version), python_version)
     # Propriétaire = compte jail dès la création (évite SQLite/logs readonly plus tard)
     fix_client_paths(owner, app_root, venv_dir, venv_dir.parent)
@@ -724,77 +839,90 @@ def _venv_version_mismatch_hint(venv_dir: Path, labeled_version: str) -> str:
 
 
 def _ensure_venv_matches_labeled_version(
+    app: PythonApp,
     owner: User,
     venv_dir: Path,
     labeled_version: str,
-) -> Path:
+) -> tuple[Path, Path]:
     """
-    Si le venv (ex. …/3.12/) contient lib/python3.10, on le recrée.
-    Sinon gunicorn tourne avec un mauvais interpréteur / deps.
-    """
-    hint = _venv_version_mismatch_hint(venv_dir, labeled_version)
-    if not hint:
-        return venv_python(venv_dir)
+    Garantit un venv cohérent avec une version Python réellement installée.
 
-    logger.warning("venv mismatch %s — tentative de recreation", hint.strip())
+    Retourne (venv_dir, python_binaire_venv).
+    Si 3.12 demandé mais seul 3.10 est dispo → bascule app + recree sous …/3.10/.
+    """
     version = (labeled_version or "3.12").strip() or "3.12"
+    hint = _venv_version_mismatch_hint(venv_dir, version)
+
+    if not hint and venv_python(venv_dir).exists():
+        return venv_dir, venv_python(venv_dir)
+
     if provision_mode() == "mock":
-        return venv_python(venv_dir)
+        return venv_dir, venv_python(venv_dir)
 
     if not should_execute():
         raise VZoneAPIException(
-            detail=hint.strip(),
+            detail=(hint or "Venv manquant.").strip(),
             code="venv_version_mismatch",
             status_code=400,
             extra={"venv": str(venv_dir), "expected": version},
         )
 
-    # pythonX.Y doit exister sur le serveur
-    py_bin = python_binary(version)
+    # Version réellement utilisable sur le serveur
     try:
-        probe = subprocess.run(
-            [py_bin, "--version"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False,
-        )
-        ver_out = (probe.stdout or probe.stderr or "").strip()
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise VZoneAPIException(
-            detail=(
-                f"Python {version} introuvable sur le serveur ({exc}). "
-                f"Installez python{version} ou changez la version de l'app."
-            ),
-            code="python_version_missing",
-            status_code=400,
-            extra={"python_version": version, "binary": py_bin},
-        ) from exc
-    if probe.returncode != 0 or (version not in ver_out and f"Python {version}" not in ver_out):
-        # Tolère « Python 3.12.x »
-        if version not in ver_out:
-            raise VZoneAPIException(
-                detail=(
-                    f"Le binaire `{py_bin}` ne fournit pas Python {version} ({ver_out or 'échec'}). "
-                    f"Installez python{version}-venv ou sélectionnez une autre version d'app."
-                ),
-                code="python_version_missing",
-                status_code=400,
-                extra={"python_version": version, "binary": py_bin, "version_out": ver_out},
-            )
+        resolved_ver, _resolved_bin = resolve_python_version(version)
+        # Valide que python_binary accepte (exact match)
+        py_bin = python_binary(resolved_ver)
+    except VZoneAPIException:
+        available = discover_system_python_versions()
+        if not available:
+            raise
+        resolved_ver, py_bin = available[0]
 
-    shutil.rmtree(venv_dir, ignore_errors=True)
-    create_venv(venv_dir, version)
-    fix_client_paths(owner, venv_dir, venv_dir.parent)
-    still = _venv_version_mismatch_hint(venv_dir, version)
+    target_dir = venv_dir
+    if resolved_ver != version:
+        logger.warning(
+            "Python %s absent — bascule app %s vers %s (%s)",
+            version,
+            app.name,
+            resolved_ver,
+            py_bin,
+        )
+        target_dir = cpanel_venv_path(owner, app.name, resolved_ver)
+        app.python_version = resolved_ver
+        app.venv_path = str(target_dir)
+        app.save(update_fields=["python_version", "venv_path", "updated_at"])
+        # Nettoie l'ancien dossier incohérent (ex. …/3.12/ avec python3.10)
+        if venv_dir != target_dir and venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+    # Recrée si absent ou toujours incohérent
+    need_recreate = (
+        not (target_dir / "pyvenv.cfg").exists()
+        or bool(_venv_version_mismatch_hint(target_dir, resolved_ver))
+    )
+    if need_recreate:
+        if target_dir.exists():
+            shutil.rmtree(target_dir, ignore_errors=True)
+        create_venv(target_dir, resolved_ver)
+        fix_client_paths(owner, target_dir, target_dir.parent)
+
+    still = _venv_version_mismatch_hint(target_dir, resolved_ver)
     if still:
         raise VZoneAPIException(
             detail=still.strip(),
             code="venv_version_mismatch",
             status_code=400,
-            extra={"venv": str(venv_dir), "expected": version},
+            extra={"venv": str(target_dir), "expected": resolved_ver},
         )
-    return venv_python(venv_dir)
+
+    py = venv_python(target_dir)
+    if not py.exists():
+        raise VZoneAPIException(
+            detail=f"Virtualenv introuvable après recreation : {target_dir}",
+            code="venv_missing",
+            status_code=400,
+            extra={"venv": str(target_dir)},
+        )
+    return target_dir, py
 
 
 def _reclaim_app_logs_for_panel(owner: User, logs: Path, *files: Path) -> None:
@@ -1580,7 +1708,9 @@ def start_python_app(app: PythonApp) -> PythonApp:
         raise VZoneAPIException(detail="Application désactivée.", code="inactive", status_code=400)
     _, app_root = resolve_app_root(app.owner, app.relative_root)
     venv_dir = Path(app.venv_path) if app.venv_path else cpanel_venv_path(app.owner, app.name, app.python_version)
-    py = _ensure_venv_matches_labeled_version(app.owner, venv_dir, app.python_version)
+    venv_dir, py = _ensure_venv_matches_labeled_version(
+        app, app.owner, venv_dir, app.python_version
+    )
     access_log, error_log = _prepare_app_logs(app.owner, app_root)
     _ensure_app_data_writable(app.owner, app_root, venv_dir)
     pid_file = app_root / "logs" / "app.pid"

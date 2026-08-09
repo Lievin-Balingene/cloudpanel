@@ -281,6 +281,21 @@ def test_stop_python_app_survives_pid_unlink_permission(settings, py_root, monke
 
 
 @pytest.mark.unit
+def test_parse_and_resolve_python_version():
+    from apps.python_apps.services import (
+        _parse_python_version_output,
+        resolve_python_version,
+    )
+
+    assert _parse_python_version_output("Python 3.10.12") == "3.10"
+    assert _parse_python_version_output("Python 3.12.0") == "3.12"
+    ver, path = resolve_python_version("99.0")
+    # Bascule sur une version réellement installée (pas 99.0)
+    assert ver != "99.0"
+    assert path
+
+
+@pytest.mark.unit
 def test_venv_version_mismatch_hint(tmp_path):
     from apps.python_apps.services import _venv_version_mismatch_hint
 
