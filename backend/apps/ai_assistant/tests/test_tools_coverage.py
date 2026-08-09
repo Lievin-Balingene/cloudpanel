@@ -378,6 +378,34 @@ def test_mock_email_page_help_not_python_logs():
     assert {c.name for c in r.tool_calls} == {"list_mailboxes"}
 
 
+def test_mock_list_mailboxes_not_hijacked_by_file_manager_page():
+    from apps.ai_assistant.providers import ChatMessage, ToolSpec
+    from apps.ai_assistant.providers.mock import MockProvider
+
+    p = MockProvider()
+    tools = [
+        ToolSpec(name=n, description=n, parameters={"type": "object", "properties": {}})
+        for n in ("list_mailboxes", "list_files", "write_file")
+    ]
+    sys_msg = (
+        "Page actuelle: File Manager (/panel/files)\n"
+        "Portail: client\n"
+        "Besoin immédiat: Fichiers home.\n"
+        "Tools suggérées: list_files\n"
+        "Runtime page: n/a\n"
+    )
+    r = p.chat(
+        [
+            ChatMessage(role="system", content=sys_msg),
+            ChatMessage(role="user", content="Liste mes boîtes mail"),
+        ],
+        tools=tools,
+    )
+    assert r.tool_calls
+    assert r.tool_calls[0].name == "list_mailboxes"
+    assert r.tool_calls[0].name != "list_files"
+
+
 def test_mock_create_mailbox_flow():
     from apps.ai_assistant.providers import ChatMessage, ToolSpec
     from apps.ai_assistant.providers.mock import MockProvider

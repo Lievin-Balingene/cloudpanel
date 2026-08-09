@@ -1037,27 +1037,53 @@ def _detect_intent(
             "tools": [("list_wordpress_sites", {})],
         }
 
-    # Aide contextuelle page (avant les faux positifs apps / « compte »)
+    # —— Email : listage explicite AVANT le contexte page (évite File Manager → list_files)
+    mail_in_msg = any(
+        k in last_user_l
+        for k in (
+            "email",
+            "e-mail",
+            "messagerie",
+            "mailbox",
+            "boîte mail",
+            "boite mail",
+            "boîtes mail",
+            "boites mail",
+            "compte mail",
+            "comptes mail",
+            "courriel",
+        )
+    ) or (
+        "mail" in last_user_l
+        and any(k in last_user_l for k in ("boîte", "boite", "liste", "montre", "affiche", "mes "))
+    )
+    if _wants_create_mailbox(last_user_l):
+        addr = _extract_email_address(last_user_l)
+        say = "Je prépare la création d'une boîte mail"
+        if addr:
+            say += f" **{addr[0]}@{addr[1]}**"
+        say += " — je vérifie d'abord tes domaines mail…"
+        return {"say": say, "tools": [("list_mailboxes", {})]}
+    if mail_in_msg and (
+        wants_list
+        or any(k in last_user_l for k in ("boîte", "boite", "compte", "adresse", "messagerie"))
+    ):
+        return {"say": "Je liste tes domaines mail et boîtes…", "tools": [("list_mailboxes", {})]}
+
+    # Aide contextuelle page (uniquement « aide / je suis sur », pas les listes métier)
     page_help = any(
         k in last_user_l
         for k in ("aide", "help", "je suis sur", "aide-moi", "aide moi", "que faire")
     )
-    if page_help or any(
-        k in last_user_l for k in ("comptes mail", "boîtes mail", "boites mail", "messagerie")
-    ):
-        if page_sec == "email" or any(
-            k in last_user_l for k in ("email", "mail", "messagerie", "boîte", "boite")
-        ):
-            if _wants_create_mailbox(last_user_l):
-                pass  # handled below
-            elif page_sec == "email" or page_help:
-                return {
-                    "say": (
-                        "Tu es sur Email. Je liste tes domaines mail et boîtes. "
-                        "Pour créer : *crée contact@domaine.tld mot de passe Secret1234*."
-                    ),
-                    "tools": [("list_mailboxes", {})],
-                }
+    if page_help:
+        if page_sec == "email" or mail_in_msg:
+            return {
+                "say": (
+                    "Tu es sur Email. Je liste tes domaines mail et boîtes. "
+                    "Pour créer : *crée contact@domaine.tld mot de passe Secret1234*."
+                ),
+                "tools": [("list_mailboxes", {})],
+            }
         if page_sec == "ftp":
             return {"say": "Tu es sur FTP. Je liste tes comptes…", "tools": [("list_ftp_accounts", {})]}
         if page_sec == "cron":
@@ -1072,14 +1098,6 @@ def _detect_intent(
             return {"say": "Tu es sur Databases. Je liste tes bases…", "tools": [("list_databases", {})]}
         if page_sec == "dns":
             return {"say": "Tu es sur DNS. Je liste tes zones…", "tools": [("list_dns_zones", {})]}
-
-    if _wants_create_mailbox(last_user_l):
-        addr = _extract_email_address(last_user_l)
-        say = "Je prépare la création d'une boîte mail"
-        if addr:
-            say += f" **{addr[0]}@{addr[1]}**"
-        say += " — je vérifie d'abord tes domaines mail…"
-        return {"say": say, "tools": [("list_mailboxes", {})]}
 
     # Fichiers : créer / écrire AVANT le simple listage
     if _wants_mkdir(last_user_l):
