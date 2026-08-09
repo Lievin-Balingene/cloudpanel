@@ -542,6 +542,62 @@ def test_mock_message_beats_page_for_domains_and_apps():
     assert r2.tool_calls[0].name == "check_application_status"
 
 
+def test_mock_apps_running_not_account_dump():
+    """« Quelles apps tournent sur mon compte ? » → apps only, pas overview/context."""
+    from apps.ai_assistant.providers import ChatMessage, ToolSpec
+    from apps.ai_assistant.providers.mock import MockProvider, _synthesize_tools
+
+    p = MockProvider()
+    tools = [
+        ToolSpec(name=n, description=n, parameters={"type": "object", "properties": {}})
+        for n in (
+            "check_application_status",
+            "get_account_overview",
+            "get_deployment_context",
+            "list_mailboxes",
+        )
+    ]
+    r = p.chat(
+        [ChatMessage(role="user", content="Quelles apps tournent sur mon compte ?")],
+        tools=tools,
+    )
+    assert r.tool_calls
+    names = [c.name for c in r.tool_calls]
+    assert names == ["check_application_status"]
+
+    body = _synthesize_tools(
+        [
+            ChatMessage(role="user", content="Quelles apps tournent sur mon compte ?"),
+            ChatMessage(
+                role="tool",
+                name="get_account_overview",
+                content=(
+                    '{"ok":true,"account":{"username":"lievin"},"my_package":"basique",'
+                    '"disk":{"used_mb":1,"quota_mb":10,"percent":1},"usage":{"domains":1}}'
+                ),
+            ),
+            ChatMessage(
+                role="tool",
+                name="get_deployment_context",
+                content='{"ok":true,"context":{}}',
+            ),
+            ChatMessage(
+                role="tool",
+                name="check_application_status",
+                content=(
+                    '{"ok":true,"python_apps":[{"id":4,"name":"vzone","status":"running",'
+                    '"port":8100,"domain":"vzone.7une.info"}],"node_apps":[]}'
+                ),
+            ),
+        ]
+    )
+    assert "Voici tes applications" in body
+    assert "vzone" in body
+    assert "Vue d" not in body
+    assert "champs :" not in body
+    assert "get_deployment_context" not in body
+
+
 def test_mock_create_mailbox_flow():
     from apps.ai_assistant.providers import ChatMessage, ToolSpec
     from apps.ai_assistant.providers.mock import MockProvider

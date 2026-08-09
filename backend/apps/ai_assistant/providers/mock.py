@@ -1311,11 +1311,19 @@ def _intent_from_scores(
             "affiche",
             "quels sont",
             "quelles sont",
+            "quelles",
+            "quels",
+            "quelle",
+            "quel ",
             "vois mes",
             "voir mes",
             "donne-moi",
             "donne moi",
             "mes ",
+            "tourne",
+            "tournent",
+            "running",
+            "en cours",
         )
     )
     createish = any(
@@ -1577,8 +1585,13 @@ def _intent_from_scores(
             "django": 5,
             "flask": 4,
             "fastapi": 4,
+            "tourne": 3,
+            "tournent": 4,
+            "running": 4,
         },
     )
+    if "apps" in text_n or re.search(r"\bapps?\b", text_n):
+        apps_score = max(apps_score, 6.0)
     if apps_score >= 4 and wants_list:
         add(
             "list_apps",
@@ -1816,14 +1829,51 @@ def _detect_intent(
             "tools": [("list_jail_commands", {})],
         }
 
-    if any(
-        k in text_n for k in ("contexte", "ce que j'ai", "ce que j ai", "sur mon compte")
-    ) and "mail" not in text_n and "messagerie" not in text_n:
+    # Vue compte vague uniquement — jamais si le message cible déjà une ressource
+    topicish = any(
+        k in text_n
+        for k in (
+            "app",
+            "python",
+            "node",
+            "django",
+            "mail",
+            "messagerie",
+            "boite",
+            "email",
+            "domaine",
+            "ssl",
+            "fichier",
+            "dossier",
+            "base",
+            "bdd",
+            "ftp",
+            "cron",
+            "docker",
+            "git",
+            "wordpress",
+            "wp",
+            "sauvegarde",
+            "backup",
+        )
+    )
+    vague_account = any(
+        k in text_n
+        for k in (
+            "contexte",
+            "ce que j'ai",
+            "ce que j ai",
+            "resume de mon compte",
+            "resume mon compte",
+            "vue d'ensemble",
+            "vue densemble",
+        )
+    ) or ("sur mon compte" in text_n and not topicish and len(text_n) < 80)
+    if vague_account and not topicish:
         return {
-            "say": "Compris — je regarde ce qui existe sur ton compte…",
+            "say": "Compris — je charge la **vue d'ensemble** du compte…",
             "tools": [
                 ("get_account_overview", {}),
-                ("get_deployment_context", {}),
                 ("check_application_status", {}),
             ],
         }
@@ -2037,7 +2087,11 @@ def _synthesize_tools(messages: list[ChatMessage]) -> str:
             else:
                 parts.append(f"**Échec** `{name}` : {data.get('error') or 'erreur'}")
         elif name in {"get_deployment_context", "get_server_info"}:
-            parts.append(_format_context(name, data))
+            # Si on a déjà la liste d'apps, le contexte déploiement est redondant
+            if "check_application_status" not in {(x.name or "") for x in tool_msgs}:
+                formatted = _format_context(name, data)
+                if formatted:
+                    parts.append(formatted)
         elif "log" in name or "analyze" in name:
             parts.append(_format_logs(name, data))
         elif name == "list_files":
@@ -2057,7 +2111,9 @@ def _synthesize_tools(messages: list[ChatMessage]) -> str:
         elif name == "list_cron_jobs":
             parts.append(_format_simple_list(data, "Cron", "jobs", "command"))
         elif name == "get_account_overview":
-            parts.append(_format_overview(data))
+            # Avec une liste d'apps, n'affiche pas le dump quota/usage
+            if "check_application_status" not in {(x.name or "") for x in tool_msgs}:
+                parts.append(_format_overview(data))
         else:
             ok = data.get("ok", True)
             err = data.get("error")
@@ -2260,9 +2316,30 @@ def _format_apps(data: dict) -> str:
 
 
 def _format_context(name: str, data: dict) -> str:
+    """Résumé lisible — jamais la liste brute des clés JSON."""
+    del name
     payload = data.get("data") if isinstance(data.get("data"), dict) else data
-    keys = ", ".join(sorted(str(k) for k in list(payload.keys())[:12])) if isinstance(payload, dict) else ""
-    return f"**{name}** — champs : {keys or 'n/a'}."
+    if not isinstance(payload, dict):
+        return ""
+    ctx = payload.get("context") if isinstance(payload.get("context"), dict) else payload
+    if not isinstance(ctx, dict):
+        return ""
+    bits: list[str] = []
+    for key, label in (
+        ("python_apps", "apps Python"),
+        ("node_apps", "apps Node"),
+        ("domains", "domaines"),
+        ("databases", "bases"),
+        ("git_repos", "repos Git"),
+    ):
+        val = ctx.get(key)
+        if isinstance(val, list):
+            bits.append(f"{label}={len(val)}")
+        elif val is not None and not isinstance(val, dict):
+            bits.append(f"{label}={val}")
+    if bits:
+        return f"**Contexte déploiement** — {', '.join(bits)}."
+    return ""
 
 
 def _format_logs(name: str, data: dict) -> str:
