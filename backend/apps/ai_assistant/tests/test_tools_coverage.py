@@ -524,6 +524,36 @@ def test_mock_django_deploy_from_folder_flow():
     assert r3.tool_calls[0].arguments.get("domain_name") == "vzone.7une.info"
 
 
+def test_mock_howto_python_deploy_not_auto_deploy():
+    from apps.ai_assistant.providers import ChatMessage, ToolSpec
+    from apps.ai_assistant.providers.mock import (
+        MockProvider,
+        _is_howto_or_explain,
+        _wants_django_deploy,
+    )
+
+    q = "c'est un probleme cq explique moi comment mettre en ligne une app Python"
+    assert _is_howto_or_explain(q)
+    assert not _wants_django_deploy(q)
+
+    p = MockProvider()
+    tools = [
+        ToolSpec(name=n, description=n, parameters={"type": "object", "properties": {}})
+        for n in (
+            "check_application_status",
+            "list_domains",
+            "list_files",
+            "inspect_project_folder",
+            "create_python_app",
+        )
+    ]
+    r = p.chat([ChatMessage(role="user", content=q)], tools=tools)
+    assert not r.tool_calls
+    low = (r.content or "").lower()
+    assert "mettre en ligne" in low or "create_python_app" in low or "dépendances" in low
+    assert "dossiers visibles" not in low
+
+
 def test_mock_inspect_project_folder_intent():
     from apps.ai_assistant.providers import ChatMessage, ToolSpec
     from apps.ai_assistant.providers.mock import MockProvider

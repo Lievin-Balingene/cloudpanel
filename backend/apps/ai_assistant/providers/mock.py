@@ -1060,8 +1060,53 @@ def _deps_pipeline_after_tools(
     )
 
 
+def _is_howto_or_explain(text: str) -> bool:
+    """True si l'utilisateur demande une explication, pas une action immédiate."""
+    t = _norm_text(text)
+    if any(
+        k in t
+        for k in (
+            "explique",
+            "explication",
+            "c'est quoi",
+            "cest quoi",
+            "pourquoi",
+            "a quoi sert",
+            "différenc",
+            "differenc",
+        )
+    ):
+        return True
+    # « comment mettre / comment faire / comment déployer » = guide, pas go
+    if re.search(r"\bcomment\s+(mettre|faire|deploy|deploi|publier|installer|configurer|creer|cree)\b", t):
+        return True
+    if re.search(r"\b(how\s+to|how\s+do\s+i)\b", t):
+        return True
+    return False
+
+
+def _python_deploy_howto() -> str:
+    return (
+        "Voici **comment mettre en ligne une app Python** sur V-zone :\n\n"
+        "1. **Dossier projet** dans ton home (ex. `vzone`) avec le code "
+        "(`manage.py` pour Django, ou `app.py` / ASGI…).\n"
+        "2. **Domaine** déjà créé (ex. `vzone.7une.info`).\n"
+        "3. Créer l'app panel : *déploie Django depuis le dossier vzone sur vzone.7une.info*\n"
+        "   → je propose `create_python_app` (confirmation **Exécuter**).\n"
+        "4. **Dépendances** : *installe les deps* (pip dans le venv).\n"
+        "5. **Démarrer** : *démarre l'app #ID*.\n"
+        "6. (Optionnel) **SSL** : *installe le certificat SSL sur vzone.7une.info*.\n\n"
+        "Tu as déjà le dossier `vzone` visible. "
+        "Dis le **domaine** cible et je lance le déploiement, "
+        "ou *analyse le dossier vzone* pour vérifier que c'est bien du Django."
+    )
+
+
 def _wants_django_deploy(text: str) -> bool:
     t = _norm_text(text)
+    # « explique comment mettre en ligne… » ≠ lancer le déploiement
+    if _is_howto_or_explain(t):
+        return False
     deployish = any(
         k in t
         for k in (
@@ -2424,6 +2469,26 @@ def _detect_intent(
             "tools": [("list_domains", {})],
         }
 
+    # Guide « comment mettre en ligne » — pas un déploiement auto
+    if _is_howto_or_explain(last_user_l) and any(
+        k in text_n
+        for k in (
+            "python",
+            "django",
+            "flask",
+            "fastapi",
+            "deploy",
+            "deployer",
+            "deploie",
+            "mettre en ligne",
+            "en ligne",
+            "publier",
+            "application",
+            " app",
+        )
+    ):
+        return {"say": _python_deploy_howto(), "tools": []}
+
     # Déploiement Django / Python (dossier local multi-tours)
     if _django_deploy_active(last_user_l, messages, turns):
         root = _resolve_deploy_root(last_user_l, messages, turns)
@@ -3276,6 +3341,24 @@ def _converse(
             "- Sur V-zone : app → port local → domaine en reverse-proxy.\n\n"
             "Tu configures Django ou FastAPI ?"
         )
+
+    # Guide déploiement Python / « comment mettre en ligne »
+    tn_how = _norm_text(low)
+    if _is_howto_or_explain(low) and any(
+        k in tn_how
+        for k in (
+            "python",
+            "django",
+            "flask",
+            "fastapi",
+            "deploy",
+            "mettre en ligne",
+            "en ligne",
+            "publier",
+            "application",
+        )
+    ):
+        return _python_deploy_howto()
 
     if any(k in low for k in ("c'est quoi", "cest quoi", "explique", "comment marche", "différenc", "pourquoi")):
         return (
