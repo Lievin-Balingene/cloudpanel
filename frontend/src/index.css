@@ -453,69 +453,12 @@ html.dark body {
   background: rgba(255, 255, 255, 0.05);
   border-color: rgba(255, 255, 255, 0.1);
 }
-.vz-ai-thinking {
-  border-radius: 20px 20px 20px 8px;
-  border: 1px solid rgba(44, 62, 80, 0.08);
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(241, 245, 249, 0.9)),
-    radial-gradient(90% 80% at 0% 0%, rgba(56, 120, 180, 0.1), transparent 55%);
-  padding: 13px 14px;
-  box-shadow: 0 8px 24px rgba(26, 43, 60, 0.08);
-  position: relative;
-  overflow: hidden;
-}
-.vz-ai-thinking::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    110deg,
-    transparent 30%,
-    rgba(255, 255, 255, 0.35) 48%,
-    transparent 66%
-  );
-  background-size: 200% 100%;
-  animation: vz-ai-sheen 2.4s ease-in-out infinite;
-  pointer-events: none;
-}
-.dark .vz-ai-thinking {
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03)),
-    radial-gradient(90% 80% at 0% 0%, rgba(56, 120, 180, 0.16), transparent 55%);
-  border-color: rgba(255, 255, 255, 0.08);
-}
-.vz-ai-think-pct {
-  font-size: 11px;
-  font-weight: 700;
-  color: #1a2b3c;
-  background: rgba(26, 43, 60, 0.07);
-  border-radius: 999px;
-  padding: 2px 8px;
-}
-.dark .vz-ai-think-pct {
-  color: #e2e8f0;
-  background: rgba(255, 255, 255, 0.08);
-}
-.vz-ai-think-track {
-  height: 5px;
-  border-radius: 999px;
-  background: rgba(26, 43, 60, 0.08);
-  overflow: hidden;
-}
-.dark .vz-ai-think-track {
-  background: rgba(255, 255, 255, 0.08);
-}
-.vz-ai-think-track-fill {
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, #1a2b3c, #3b82f6, #f97316);
-  background-size: 200% 100%;
-  animation: vz-ai-shimmer 1.6s linear infinite;
-  transition: width 0.45s var(--vz-ease);
+.vz-ai-thinking-inline {
+  padding: 2px 0;
 }
 .vz-ai-avatar-think {
-  background: linear-gradient(145deg, rgba(26, 43, 60, 0.14), rgba(59, 130, 246, 0.12));
-  box-shadow: 0 0 0 1px rgba(26, 43, 60, 0.08);
+  background: linear-gradient(145deg, rgba(26, 43, 60, 0.1), rgba(59, 130, 246, 0.08));
+  box-shadow: 0 0 0 1px rgba(26, 43, 60, 0.06);
 }
 .dark .vz-ai-avatar-think {
   background: rgba(255, 255, 255, 0.08);
@@ -523,25 +466,23 @@ html.dark body {
 .vz-ai-think-ring {
   position: absolute;
   inset: -3px;
-  border-radius: 16px;
-  border: 2px solid rgba(26, 43, 60, 0.28);
+  border-radius: 999px;
+  border: 1.5px solid rgba(26, 43, 60, 0.22);
   animation: vz-ai-pulse 2s ease-out infinite;
   pointer-events: none;
 }
 .dark .vz-ai-think-ring {
-  border-color: rgba(255, 255, 255, 0.28);
-}
-.vz-ai-think-ring-delay {
-  animation-delay: 0.7s;
+  border-color: rgba(255, 255, 255, 0.22);
 }
 .vz-ai-think-dots {
   display: inline-flex;
   gap: 3px;
   align-items: center;
+  vertical-align: middle;
 }
 .vz-ai-think-dots i {
-  width: 4px;
-  height: 4px;
+  width: 3px;
+  height: 3px;
   border-radius: 999px;
   background: #1a2b3c;
   opacity: 0.35;
@@ -556,61 +497,11 @@ html.dark body {
 .vz-ai-think-dots i:nth-child(3) {
   animation-delay: 0.36s;
 }
-.vz-ai-think-step {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  border-radius: 10px;
-  padding: 6px 8px;
-  transition: background 0.25s ease, opacity 0.25s ease, transform 0.25s ease;
-}
-.vz-ai-think-step-done {
-  opacity: 0.55;
-}
-.vz-ai-think-step-active {
-  background: rgba(26, 43, 60, 0.06);
-  transform: translateX(2px);
-}
-.dark .vz-ai-think-step-active {
-  background: rgba(255, 255, 255, 0.06);
-}
-.vz-ai-think-step-todo {
-  opacity: 0.4;
-}
-.vz-ai-think-step-mark {
-  display: flex;
-  height: 18px;
-  width: 18px;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  margin-top: 1px;
-  background: rgba(26, 43, 60, 0.08);
-  color: #1a2b3c;
-}
-.dark .vz-ai-think-step-mark {
-  background: rgba(255, 255, 255, 0.1);
-  color: #e2e8f0;
-}
-.vz-ai-think-step-done .vz-ai-think-step-mark {
-  background: rgba(16, 185, 129, 0.15);
-  color: #059669;
-}
-.vz-ai-skeleton-card {
-  border-radius: 14px;
-  border: 1px solid rgba(44, 62, 80, 0.06);
-  background: rgba(255, 255, 255, 0.55);
-}
-.dark .vz-ai-skeleton-card {
-  background: rgba(255, 255, 255, 0.04);
-  border-color: rgba(255, 255, 255, 0.06);
-}
 .vz-ai-shimmer {
   background: linear-gradient(
     90deg,
     rgba(26, 43, 60, 0.05) 0%,
-    rgba(26, 43, 60, 0.14) 45%,
+    rgba(26, 43, 60, 0.12) 45%,
     rgba(26, 43, 60, 0.05) 100%
   );
   background-size: 200% 100%;
@@ -620,7 +511,7 @@ html.dark body {
   background: linear-gradient(
     90deg,
     rgba(255, 255, 255, 0.04) 0%,
-    rgba(255, 255, 255, 0.13) 45%,
+    rgba(255, 255, 255, 0.12) 45%,
     rgba(255, 255, 255, 0.04) 100%
   );
   background-size: 200% 100%;

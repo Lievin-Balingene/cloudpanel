@@ -87,11 +87,10 @@ const STARTERS = [
   { label: "Sauvegardes", prompt: "Liste mes sauvegardes" },
 ] as const;
 
-const THINKING_STEPS = [
-  { label: "Lecture de ta demande", hint: "Comprendre l’intention…" },
-  { label: "Contexte panneau", hint: "Page et compte en cours…" },
-  { label: "Consultation des outils", hint: "Lecture sécurisée des données…" },
-  { label: "Préparation de la réponse", hint: "Mise en forme claire…" },
+const THINKING_PHRASES = [
+  "Analyse de ta demande…",
+  "Consultation du panneau…",
+  "Préparation de la réponse…",
 ] as const;
 
 function JsonBlock({ raw, lang }: { raw: string; lang?: string }) {
@@ -216,91 +215,30 @@ function renderContent(text: string) {
 }
 
 function ThinkingCard({ pageLabel }: { pageLabel: string }) {
-  const [step, setStep] = useState(0);
+  const [i, setI] = useState(0);
   useEffect(() => {
     const id = window.setInterval(() => {
-      setStep((s) => Math.min(s + 1, THINKING_STEPS.length - 1));
-    }, 1400);
+      setI((n) => (n + 1) % THINKING_PHRASES.length);
+    }, 1800);
     return () => window.clearInterval(id);
   }, []);
 
-  const progress = Math.round(((step + 1) / THINKING_STEPS.length) * 100);
-
   return (
-    <div className="vz-ai-msg flex gap-2.5" aria-live="polite" aria-busy="true">
-      <div className="vz-ai-avatar-think relative mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl">
+    <div className="vz-ai-msg flex items-center gap-2.5" aria-live="polite" aria-busy="true">
+      <div className="vz-ai-avatar-think relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full">
         <span className="vz-ai-think-ring" aria-hidden />
-        <span className="vz-ai-think-ring vz-ai-think-ring-delay" aria-hidden />
-        <Sparkles className="relative h-4 w-4 text-cp-navy dark:text-white" />
+        <Loader2 className="relative h-3.5 w-3.5 animate-spin text-cp-navy dark:text-white" />
       </div>
-      <div className="vz-ai-thinking max-w-[94%] flex-1">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <p className="text-[13px] font-semibold tracking-tight text-cp-navy dark:text-white">
-                V-zone AI réfléchit
-              </p>
-              <span className="vz-ai-think-dots" aria-hidden>
-                <i />
-                <i />
-                <i />
-              </span>
-            </div>
-            <p className="mt-0.5 text-[11px] text-cp-muted">
-              Contexte · <span className="font-medium text-cp-text dark:text-white/85">{pageLabel}</span>
-            </p>
-          </div>
-          <span className="vz-ai-think-pct tabular-nums">{progress}%</span>
-        </div>
-
-        <div className="vz-ai-think-track mt-3" aria-hidden>
-          <div className="vz-ai-think-track-fill" style={{ width: `${progress}%` }} />
-        </div>
-
-        <ol className="mt-3 space-y-1">
-          {THINKING_STEPS.map((s, i) => {
-            const state = i < step ? "done" : i === step ? "active" : "todo";
-            return (
-              <li key={s.label} className={`vz-ai-think-step vz-ai-think-step-${state}`}>
-                <span className="vz-ai-think-step-mark">
-                  {state === "done" ? (
-                    <Check className="h-3 w-3" />
-                  ) : state === "active" ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <span className="h-1.5 w-1.5 rounded-full bg-current opacity-35" />
-                  )}
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-[12px] font-medium leading-tight">{s.label}</span>
-                  {state === "active" && (
-                    <span className="block text-[10px] text-cp-muted">{s.hint}</span>
-                  )}
-                </span>
-              </li>
-            );
-          })}
-        </ol>
-
-        <div className="vz-ai-skeleton mt-3.5 space-y-2.5" aria-hidden>
-          <div className="flex items-center gap-2">
-            <div className="vz-ai-shimmer h-6 w-6 rounded-lg" />
-            <div className="vz-ai-shimmer h-2.5 w-24 rounded-full" />
-          </div>
-          <div className="vz-ai-skeleton-card space-y-2 p-3">
-            <div className="vz-ai-shimmer h-2.5 w-[94%] rounded-full" />
-            <div className="vz-ai-shimmer h-2.5 w-[78%] rounded-full" />
-            <div className="vz-ai-shimmer h-2.5 w-[62%] rounded-full" />
-            <div className="mt-2 flex gap-2">
-              <div className="vz-ai-shimmer h-5 w-16 rounded-full" />
-              <div className="vz-ai-shimmer h-5 w-20 rounded-full" />
-            </div>
-          </div>
-          <div className="vz-ai-skeleton-card space-y-2 p-3">
-            <div className="vz-ai-shimmer h-2.5 w-[88%] rounded-full" />
-            <div className="vz-ai-shimmer h-2.5 w-[55%] rounded-full" />
-          </div>
-        </div>
+      <div className="vz-ai-thinking-inline min-w-0">
+        <p className="truncate text-[13px] text-cp-text dark:text-white/90">
+          <span className="font-medium">{THINKING_PHRASES[i]}</span>
+          <span className="vz-ai-think-dots ml-1.5 inline-flex" aria-hidden>
+            <i />
+            <i />
+            <i />
+          </span>
+        </p>
+        <p className="truncate text-[10px] text-cp-muted">{pageLabel}</p>
       </div>
     </div>
   );
@@ -309,10 +247,9 @@ function ThinkingCard({ pageLabel }: { pageLabel: string }) {
 function HistorySkeleton() {
   return (
     <div className="space-y-2 px-1.5" aria-hidden>
-      {[0, 1, 2, 3].map((i) => (
-        <div key={i} className="rounded-xl px-2.5 py-2">
-          <div className="vz-ai-shimmer h-3 w-[85%] rounded-full" style={{ animationDelay: `${i * 0.12}s` }} />
-          <div className="vz-ai-shimmer mt-2 h-2 w-12 rounded-full" style={{ animationDelay: `${i * 0.12 + 0.05}s` }} />
+      {[0, 1, 2].map((n) => (
+        <div key={n} className="rounded-xl px-2.5 py-2">
+          <div className="vz-ai-shimmer h-2.5 w-[80%] rounded-full" />
         </div>
       ))}
     </div>
@@ -321,23 +258,11 @@ function HistorySkeleton() {
 
 function BootSkeleton() {
   return (
-    <div className="flex flex-1 flex-col gap-3 px-3 py-4" aria-busy="true">
-      <div className="vz-ai-msg flex gap-2.5">
-        <div className="vz-ai-shimmer h-8 w-8 shrink-0 rounded-full" />
-        <div className="vz-ai-skeleton-card flex-1 space-y-2 p-3.5">
-          <div className="vz-ai-shimmer h-2.5 w-20 rounded-full" />
-          <div className="vz-ai-shimmer h-2.5 w-[92%] rounded-full" />
-          <div className="vz-ai-shimmer h-2.5 w-[70%] rounded-full" />
-          <div className="vz-ai-shimmer h-2.5 w-[48%] rounded-full" />
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-2 pt-2">
-        {[0, 1, 2, 3].map((i) => (
-          <div key={i} className="vz-ai-skeleton-card space-y-2 p-3">
-            <div className="vz-ai-shimmer h-2.5 w-16 rounded-full" />
-            <div className="vz-ai-shimmer h-2 w-full rounded-full" />
-          </div>
-        ))}
+    <div className="flex flex-1 items-start gap-2.5 px-3 py-4" aria-busy="true">
+      <div className="vz-ai-shimmer h-8 w-8 shrink-0 rounded-full" />
+      <div className="min-w-0 flex-1 space-y-2 pt-1">
+        <div className="vz-ai-shimmer h-2.5 w-[70%] rounded-full" />
+        <div className="vz-ai-shimmer h-2.5 w-[45%] rounded-full" />
       </div>
     </div>
   );
