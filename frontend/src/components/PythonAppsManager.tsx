@@ -369,7 +369,7 @@ function AppCard({
             <Terminal className="h-3.5 w-3.5" />
           </IconAction>
           <IconAction
-            label="pip install -r requirements.txt"
+            label="pip install (requirements + paquet manquant)"
             size="sm"
             disabled={busy}
             onClick={() => onAction("install")}

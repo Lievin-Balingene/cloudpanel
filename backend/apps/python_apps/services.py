@@ -704,8 +704,18 @@ def update_python_app(
 def install_requirements(app: PythonApp) -> dict:
     _, app_root = resolve_app_root(app.owner, app.relative_root)
     req = app_root / (app.requirements_file or "requirements.txt")
-    if not req.exists():
-        raise VZoneAPIException(detail="requirements.txt introuvable.", code="no_requirements", status_code=400)
+    missing_mod = _extract_missing_module(app.last_error or "")
+    missing_pkg = _pip_package_for_module(missing_mod) if missing_mod else ""
+    if not req.exists() and not missing_pkg:
+        raise VZoneAPIException(
+            detail=(
+                "requirements.txt introuvable et aucun module manquant détecté. "
+                "Ajoutez un requirements.txt dans l'application root, "
+                "ou démarrez l'app une fois pour capturer le ModuleNotFoundError."
+            ),
+            code="no_requirements",
+            status_code=400,
+        )
     venv_dir = resolve_app_venv_dir(app)
     # Aligne venv / version système avant pip
     if provision_mode() != "mock" and should_execute():
@@ -718,24 +728,58 @@ def install_requirements(app: PythonApp) -> dict:
     if provision_mode() == "mock" or not py.exists():
         log = app_root / "logs" / "pip.log"
         log.parent.mkdir(parents=True, exist_ok=True)
-        log.write_text(f"mock install -r {req.name}\n", encoding="utf-8")
-        return {"mode": "mock", "requirements": str(req), "log": str(log), "venv": str(venv_dir)}
+        parts = []
+        if req.exists():
+            parts.append(f"mock install -r {req.name}")
+        if missing_pkg:
+            parts.append(f"mock install {missing_pkg}")
+        log.write_text("\n".join(parts) + "\n", encoding="utf-8")
+        return {
+            "mode": "mock",
+            "requirements": str(req) if req.exists() else "",
+            "extra_packages": [missing_pkg] if missing_pkg else [],
+            "log": str(log),
+            "venv": str(venv_dir),
+        }
     ensure_client_pip_dirs(app.owner)
     # Ownership avant pip jailé
     fix_client_paths(app.owner, app_root, venv_dir)
-    result = _run_as_owner(
-        app.owner,
-        [str(py), "-m", "pip", "install", "-r", str(req)],
-        cwd=app_root,
-    )
+    chunks: list[str] = []
+    if req.exists():
+        try:
+            result = _run_as_owner(
+                app.owner,
+                [str(py), "-m", "pip", "install", "-r", str(req)],
+                cwd=app_root,
+            )
+            chunks.append(f"# pip install -r {req.name}\n{result.stdout}\n{result.stderr}")
+        except VZoneAPIException as req_exc:
+            chunks.append(f"# pip install -r {req.name} FAILED\n{req_exc.detail}\n")
+            if not missing_pkg:
+                raise
+            logger.warning("pip -r échoué, tentative paquet manquant %s", missing_pkg)
+    # Paquet manquant (souvent absent du requirements ou nom PyPI différent)
+    if missing_pkg:
+        result = _run_as_owner(
+            app.owner,
+            [str(py), "-m", "pip", "install", missing_pkg],
+            cwd=app_root,
+        )
+        chunks.append(f"# pip install {missing_pkg}\n{result.stdout}\n{result.stderr}")
     log = app_root / "logs" / "pip.log"
     try:
         log.parent.mkdir(parents=True, exist_ok=True)
-        log.write_text(result.stdout + "\n" + result.stderr, encoding="utf-8")
+        log.write_text("\n".join(chunks), encoding="utf-8")
     except OSError:
         pass
     fix_client_paths(app.owner, app_root, venv_dir)
-    return {"mode": "live", "requirements": str(req), "log": str(log), "venv": str(venv_dir)}
+    return {
+        "mode": "live",
+        "requirements": str(req) if req.exists() else "",
+        "extra_packages": [missing_pkg] if missing_pkg else [],
+        "log": str(log),
+        "venv": str(venv_dir),
+    }
 
 
 def _module_importable(py: Path, module: str) -> bool:
@@ -1160,6 +1204,45 @@ def _extract_missing_module(err: str) -> str | None:
     return m.group(1).split(".")[0].strip() or None
 
 
+# Import Python → nom PyPI (souvent différent : widget_tweaks ≠ widget_tweaks sur PyPI).
+PIP_MODULE_ALIASES: dict[str, str] = {
+    "widget_tweaks": "django-widget-tweaks",
+    "jazzmin": "django-jazzmin",
+    "crispy_forms": "django-crispy-forms",
+    "rest_framework": "djangorestframework",
+    "corsheaders": "django-cors-headers",
+    "allauth": "django-allauth",
+    "ckeditor": "django-ckeditor",
+    "tinymce": "django-tinymce",
+    "import_export": "django-import-export",
+    "django_filters": "django-filter",
+    "environ": "django-environ",
+    "decouple": "python-decouple",
+    "PIL": "Pillow",
+    "cv2": "opencv-python",
+    "sklearn": "scikit-learn",
+    "yaml": "PyYAML",
+    "bs4": "beautifulsoup4",
+    "OpenSSL": "pyOpenSSL",
+    "dateutil": "python-dateutil",
+    "jose": "python-jose",
+    "jwt": "PyJWT",
+    "dotenv": "python-dotenv",
+    "MySQLdb": "mysqlclient",
+    "pymysql": "PyMySQL",
+    "psycopg2": "psycopg2-binary",
+    "magic": "python-magic",
+}
+
+
+def _pip_package_for_module(module: str) -> str:
+    """Nom à passer à `pip install` pour un module import manquant."""
+    name = (module or "").strip()
+    if not name:
+        return name
+    return PIP_MODULE_ALIASES.get(name, name)
+
+
 def _preflight_app_import(
     app: PythonApp,
     app_root: Path,
@@ -1212,13 +1295,15 @@ def _preflight_app_import(
             extra={"stderr": err},
         )
 
-    # Venv souvent vide après bascule 3.12→3.10 : pip -r puis retry
+    # Venv souvent vide après bascule 3.12→3.10 : pip -r puis paquet manquant
     missing = _extract_missing_module(err or (proc.stderr or ""))
     if missing and provision_mode() != "mock" and should_execute():
+        pkg = _pip_package_for_module(missing)
         logger.warning(
-            "Préflight %s : module `%s` manquant — pip install (requirements / paquet)",
+            "Préflight %s : module `%s` manquant — pip install %s (requirements / paquet)",
             app.name,
             missing,
+            pkg,
         )
         ensure_client_pip_dirs(app.owner)
         fix_client_paths(
@@ -1229,15 +1314,22 @@ def _preflight_app_import(
         req = app_root / (app.requirements_file or "requirements.txt")
         try:
             if req.is_file():
+                try:
+                    _run_as_owner(
+                        app.owner,
+                        [str(py), "-m", "pip", "install", "-r", str(req)],
+                        cwd=app_root,
+                    )
+                except VZoneAPIException as req_exc:
+                    # requirements incomplet / conflit : on tente quand même le paquet manquant
+                    logger.warning("pip -r échoué pour %s : %s", app.name, req_exc.detail)
+                    err = f"{err}\nPip -r échoué : {req_exc.detail}"
+            # Toujours tenter le paquet manquant : requirements peut l'omettre,
+            # et le nom PyPI peut différer du nom d'import (widget_tweaks → django-widget-tweaks).
+            if pkg:
                 _run_as_owner(
                     app.owner,
-                    [str(py), "-m", "pip", "install", "-r", str(req)],
-                    cwd=app_root,
-                )
-            else:
-                _run_as_owner(
-                    app.owner,
-                    [str(py), "-m", "pip", "install", missing],
+                    [str(py), "-m", "pip", "install", pkg],
                     cwd=app_root,
                 )
             proc = _run_probe()
@@ -1248,21 +1340,28 @@ def _preflight_app_import(
             err = f"{err}\nPip auto-install échoué : {pip_exc.detail}"
 
     hint = _venv_version_mismatch_hint(venv_dir or Path(), app.python_version)
+    pip_hint = ""
+    if missing:
+        pkg = _pip_package_for_module(missing)
+        pip_hint = (
+            f" Installez dans le venv : `source {resolve_app_venv_dir(app)}/bin/activate "
+            f"&& pip install {pkg}`."
+        )
     raise VZoneAPIException(
         detail=(
             f"Échec import `{mod}` (avant gunicorn). "
             + (_clip_end(err, 500) if err else "Erreur d'import inconnue.")
-            + (
-                f" Installez dans le venv : `source {resolve_app_venv_dir(app)}/bin/activate "
-                f"&& pip install {missing or '-r requirements.txt'}`."
-                if missing
-                else ""
-            )
+            + pip_hint
             + hint
         ),
         code="app_import_failed",
         status_code=400,
-        extra={"module": mod, "stderr": err[-1500:] if err else "", "missing": missing or ""},
+        extra={
+            "module": mod,
+            "stderr": err[-1500:] if err else "",
+            "missing": missing or "",
+            "pip_package": _pip_package_for_module(missing) if missing else "",
+        },
     )
 
 
@@ -1767,12 +1866,19 @@ def _run_as_owner(
             timeout=300,
         )
     except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        stderr = getattr(exc, "stderr", None) or str(exc)
+        stderr = getattr(exc, "stderr", None) or ""
+        stdout = getattr(exc, "stdout", None) or ""
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", errors="replace")
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8", errors="replace")
+        detail_tail = _clip_end((stderr or stdout or str(exc)).strip(), 420)
+        # Aide lisible pour pip (No matching distribution, etc.)
         raise VZoneAPIException(
-            detail="Échec commande Python (jail).",
+            detail=f"Échec commande Python (jail) : {detail_tail or str(exc)}",
             code="python_cmd_failed",
             status_code=502,
-            extra={"stderr": stderr, "cmd": full},
+            extra={"stderr": stderr[-2000:] if stderr else str(exc), "cmd": full},
         ) from exc
 
 

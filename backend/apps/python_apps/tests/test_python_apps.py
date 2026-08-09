@@ -315,10 +315,14 @@ def test_resolve_app_venv_prefers_existing_activate(settings, py_root):
 
 @pytest.mark.unit
 def test_extract_missing_module():
-    from apps.python_apps.services import _extract_missing_module
+    from apps.python_apps.services import _extract_missing_module, _pip_package_for_module
 
     assert _extract_missing_module("ModuleNotFoundError: No module named 'pymysql'") == "pymysql"
     assert _extract_missing_module("No module named 'django.db'") == "django"
+    assert _pip_package_for_module("widget_tweaks") == "django-widget-tweaks"
+    assert _pip_package_for_module("jazzmin") == "django-jazzmin"
+    assert _pip_package_for_module("pymysql") == "PyMySQL"
+    assert _pip_package_for_module("requests") == "requests"
 
     from apps.python_apps.services import (
         _parse_python_version_output,
