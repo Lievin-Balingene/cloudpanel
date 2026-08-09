@@ -84,6 +84,8 @@ def run_assistant_turn(
     # Intent WP multi-tours : hostname fourni en retard, ou « vas-y »
     from apps.ai_assistant.providers.mock import (
         _extract_hostname,
+        _extract_project_folder,
+        _wants_django_deploy,
         _wants_wordpress_install,
     )
 
@@ -100,6 +102,28 @@ def run_assistant_turn(
         conversation.context = ctx_now
         conversation.save(update_fields=["context", "updated_at"])
 
+    folder_now = _extract_project_folder(safe_user)
+    if _wants_django_deploy(safe_user):
+        ctx_now["pending_deploy"] = True
+        ctx_now["pending_deploy_framework"] = "django"
+        if folder_now:
+            ctx_now["pending_deploy_root"] = folder_now
+        if host_now:
+            ctx_now["pending_deploy_domain"] = host_now
+        conversation.context = ctx_now
+        conversation.save(update_fields=["context", "updated_at"])
+    elif ctx_now.get("pending_deploy"):
+        dirty = False
+        if folder_now:
+            ctx_now["pending_deploy_root"] = folder_now
+            dirty = True
+        if host_now:
+            ctx_now["pending_deploy_domain"] = host_now
+            dirty = True
+        if dirty:
+            conversation.context = ctx_now
+            conversation.save(update_fields=["context", "updated_at"])
+
     context_blob = redact_obj(
         {
             "username": (conversation.context or {}).get("username"),
@@ -112,6 +136,10 @@ def run_assistant_turn(
             "last_app": (conversation.context or {}).get("last_app"),
             "pending_wp": bool((conversation.context or {}).get("pending_wp")),
             "pending_wp_host": (conversation.context or {}).get("pending_wp_host") or "",
+            "pending_deploy": bool((conversation.context or {}).get("pending_deploy")),
+            "pending_deploy_root": (conversation.context or {}).get("pending_deploy_root") or "",
+            "pending_deploy_domain": (conversation.context or {}).get("pending_deploy_domain")
+            or "",
         }
     )
     messages: list[ChatMessage] = [
@@ -255,6 +283,14 @@ def run_assistant_turn(
                     ctx2 = dict(conversation.context or {})
                     ctx2.pop("pending_wp", None)
                     ctx2.pop("pending_wp_host", None)
+                    conversation.context = ctx2
+                    conversation.save(update_fields=["context", "updated_at"])
+                if tool.spec.name == "create_python_app":
+                    ctx2 = dict(conversation.context or {})
+                    ctx2.pop("pending_deploy", None)
+                    ctx2.pop("pending_deploy_root", None)
+                    ctx2.pop("pending_deploy_domain", None)
+                    ctx2.pop("pending_deploy_framework", None)
                     conversation.context = ctx2
                     conversation.save(update_fields=["context", "updated_at"])
                 pending_actions.append(

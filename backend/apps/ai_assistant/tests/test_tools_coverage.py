@@ -410,6 +410,106 @@ def test_mock_list_mailboxes_not_hijacked_by_file_manager_page():
         assert r.tool_calls[0].name == "list_mailboxes", f"{prompt} → {r.tool_calls[0].name}"
 
 
+def test_mock_django_deploy_from_folder_flow():
+    from apps.ai_assistant.providers import ChatMessage, ToolSpec
+    from apps.ai_assistant.providers.mock import (
+        MockProvider,
+        _extract_project_folder,
+        _wants_django_deploy,
+    )
+
+    assert _wants_django_deploy("peux tu deployer une nouvelle app django depuis zero??")
+    assert _extract_project_folder("le dossier vzone contient le projet a deployer") == "vzone"
+
+    p = MockProvider()
+    tools = [
+        ToolSpec(name=n, description=n, parameters={"type": "object", "properties": {}})
+        for n in (
+            "check_application_status",
+            "list_domains",
+            "list_files",
+            "create_python_app",
+            "list_mailboxes",
+        )
+    ]
+
+    r1 = p.chat(
+        [ChatMessage(role="user", content="peux tu deployer une nouvelle app django depuis zero??")],
+        tools=tools,
+    )
+    assert r1.tool_calls
+    names = {c.name for c in r1.tool_calls}
+    assert "check_application_status" in names
+    assert "list_domains" in names
+
+    sys_pending = (
+        'Contexte\n{"pending_deploy": true, "pending_deploy_root": "", "username": "lievin"}'
+    )
+    r2 = p.chat(
+        [
+            ChatMessage(role="system", content=sys_pending),
+            ChatMessage(role="user", content="peux tu deployer une nouvelle app django depuis zero??"),
+            ChatMessage(
+                role="assistant",
+                content="Compris — déploiement Django. Je vérifie…",
+            ),
+            ChatMessage(role="user", content="le dossier vzone contient le projet a deployer"),
+            ChatMessage(
+                role="tool",
+                name="check_application_status",
+                content='{"ok":true,"python_apps":[],"node_apps":[]}',
+            ),
+            ChatMessage(
+                role="tool",
+                name="list_domains",
+                content='{"ok":true,"domains":[{"id":1,"name":"vzone.7une.info"},{"id":2,"name":"7une.info"}]}',
+            ),
+            ChatMessage(
+                role="tool",
+                name="list_files",
+                content='{"ok":true,"result":{"cwd":"","entries":[{"name":"vzone","is_dir":true}]}}',
+            ),
+        ],
+        tools=tools,
+    )
+    assert not r2.tool_calls
+    assert "vzone" in (r2.content or "").lower()
+    assert "domaine" in (r2.content or "").lower()
+
+    r3 = p.chat(
+        [
+            ChatMessage(
+                role="system",
+                content='{"pending_deploy": true, "pending_deploy_root": "vzone"}',
+            ),
+            ChatMessage(role="user", content="deploy django"),
+            ChatMessage(role="user", content="le dossier vzone contient le projet"),
+            ChatMessage(role="user", content="domaine vzone.7une.info"),
+            ChatMessage(
+                role="tool",
+                name="check_application_status",
+                content='{"ok":true,"python_apps":[],"node_apps":[]}',
+            ),
+            ChatMessage(
+                role="tool",
+                name="list_domains",
+                content='{"ok":true,"domains":[{"id":1,"name":"vzone.7une.info"}]}',
+            ),
+            ChatMessage(
+                role="tool",
+                name="list_files",
+                content='{"ok":true,"entries":[{"name":"vzone","is_dir":true}]}',
+            ),
+        ],
+        tools=tools,
+    )
+    assert r3.tool_calls
+    assert r3.tool_calls[0].name == "create_python_app"
+    assert r3.tool_calls[0].arguments.get("relative_root") == "vzone"
+    assert r3.tool_calls[0].arguments.get("framework") == "django"
+    assert r3.tool_calls[0].arguments.get("domain_name") == "vzone.7une.info"
+
+
 def test_mock_message_beats_page_for_domains_and_apps():
     from apps.ai_assistant.providers import ChatMessage, ToolSpec
     from apps.ai_assistant.providers.mock import MockProvider

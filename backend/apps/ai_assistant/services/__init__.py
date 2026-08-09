@@ -26,6 +26,10 @@ _EPHEMERAL_CONTEXT_KEYS = (
     "pending_wp",
     "pending_wp_host",
     "wp_install_after",
+    "pending_deploy",
+    "pending_deploy_root",
+    "pending_deploy_domain",
+    "pending_deploy_framework",
 )
 
 

@@ -53,6 +53,11 @@ class MockProvider:
             )
             if follow is not None:
                 return follow
+            follow = _django_after_tools(
+                messages, tool_names, last_user_l, user_turns=user_turns
+            )
+            if follow is not None:
+                return follow
             return ChatResult(
                 content=_synthesize_tools(messages),
                 provider=self.name,
@@ -708,6 +713,297 @@ def _mail_after_tools(
         provider="mock",
         model="mock-coach",
     )
+
+
+def _wants_django_deploy(text: str) -> bool:
+    t = _norm_text(text)
+    deployish = any(
+        k in t
+        for k in (
+            "deploy",
+            "deployer",
+            "deploie",
+            "deploiement",
+            "mise en prod",
+            "depuis zero",
+            "from scratch",
+            "nouvelle app",
+            "nouveau projet",
+            "mettre en ligne",
+            "publier",
+        )
+    )
+    djangoish = any(
+        k in t
+        for k in ("django", "flask", "fastapi", "wsgi", "asgi", "gunicorn", "uvicorn")
+    )
+    python_app = ("python" in t and "app" in t) or "app python" in t
+    if djangoish and (deployish or any(k in t for k in ("cree", "creer", "installe", "nouvelle", "nouveau"))):
+        return True
+    if deployish and (djangoish or python_app or "projet" in t):
+        return True
+    return False
+
+
+def _extract_project_folder(text: str) -> str | None:
+    raw = (text or "").strip()
+    m = re.search(
+        r"(?:dossier|folder|repertoire|répertoire|projet|chemin|app(?:lication)?\s+root)\s+"
+        r"(?:s['\u2019]?appelle\s+|nomm[ée]e?\s+|du\s+nom\s+|c['\u2019]?est\s+)?"
+        r"[«\"'`]?([a-zA-Z0-9._/-]+)",
+        raw,
+        re.I,
+    )
+    if m:
+        name = m.group(1).strip("/\\")
+        if name.lower() not in {"le", "la", "un", "une", "du", "de", "des", "mon", "mes", "projet"}:
+            return name
+    m = re.search(
+        r"\b([a-zA-Z0-9_-]+)\s+contient\s+(?:le\s+)?projet",
+        raw,
+        re.I,
+    )
+    if m:
+        return m.group(1).strip()
+    m = re.search(
+        r"(?:dans|sur)\s+(?:le\s+)?(?:dossier\s+)?[«\"'`]?([a-zA-Z0-9._/-]+)[»\"'`]?\s*$",
+        raw,
+        re.I,
+    )
+    if m and "." not in m.group(1):  # pas un domaine
+        return m.group(1).strip("/\\")
+    return None
+
+
+def _pending_django_deploy(messages: list[ChatMessage], user_turns: list[str]) -> bool:
+    for m in messages:
+        if m.role == "system" and '"pending_deploy"' in (m.content or ""):
+            if re.search(r'"pending_deploy"\s*:\s*true', m.content or "", re.I):
+                return True
+    for turn in reversed(user_turns[:-1] if len(user_turns) > 1 else []):
+        if _wants_django_deploy(turn):
+            return True
+        if len(turn) > 40 and not _extract_project_folder(turn) and not _extract_hostname(turn.lower()):
+            break
+    for m in reversed(messages):
+        if m.role != "assistant" or not m.content:
+            continue
+        if m.content.startswith("(outil"):
+            continue
+        low = m.content.lower()
+        if any(
+            k in low
+            for k in (
+                "déploiement django",
+                "deploy django",
+                "application root",
+                "dossier du projet",
+                "prépare la création de l'app",
+                "création de l'app python",
+            )
+        ):
+            return True
+        break
+    return False
+
+
+def _resolve_deploy_root(
+    last_user: str,
+    messages: list[ChatMessage],
+    user_turns: list[str],
+) -> str | None:
+    folder = _extract_project_folder(last_user)
+    if folder:
+        return folder
+    for m in messages:
+        if m.role != "system":
+            continue
+        found = re.search(r'"pending_deploy_root"\s*:\s*"([^"]+)"', m.content or "")
+        if found:
+            return found.group(1).strip()
+    for turn in reversed(user_turns[:-1] if len(user_turns) > 1 else []):
+        f = _extract_project_folder(turn)
+        if f:
+            return f
+    return None
+
+
+def _resolve_deploy_domain(
+    last_user_l: str,
+    messages: list[ChatMessage],
+    user_turns: list[str],
+) -> str | None:
+    host = _extract_hostname(last_user_l)
+    if host:
+        return host
+    for m in messages:
+        if m.role != "system":
+            continue
+        found = re.search(r'"pending_deploy_domain"\s*:\s*"([^"]+)"', m.content or "")
+        if found:
+            return found.group(1).strip().lower()
+    for turn in reversed(user_turns[:-1] if len(user_turns) > 1 else []):
+        h = _extract_hostname(turn.lower())
+        if h:
+            return h
+    return None
+
+
+def _django_deploy_active(
+    last_user_l: str,
+    messages: list[ChatMessage],
+    user_turns: list[str],
+) -> bool:
+    if _wants_django_deploy(last_user_l):
+        return True
+    pending = _pending_django_deploy(messages, user_turns)
+    if not pending:
+        return False
+    if _extract_project_folder(last_user_l) or _extract_hostname(last_user_l):
+        return True
+    if _wants_go_ahead(last_user_l):
+        return True
+    return False
+
+
+def _django_after_tools(
+    messages: list[ChatMessage],
+    tool_names: set[str],
+    last_user_l: str,
+    *,
+    user_turns: list[str] | None = None,
+) -> ChatResult | None:
+    turns = user_turns or []
+    if not _django_deploy_active(last_user_l, messages, turns):
+        return None
+
+    recent: list[ChatMessage] = []
+    for m in reversed(messages):
+        if m.role != "tool":
+            break
+        recent.append(m)
+    recent.reverse()
+    if not recent:
+        return None
+    names = {(m.name or "") for m in recent}
+    if "create_python_app" in names:
+        return None
+    if not names & {
+        "list_domains",
+        "list_files",
+        "check_application_status",
+        "get_deployment_context",
+    }:
+        return None
+
+    domains: list[dict] = []
+    py_apps: list[dict] = []
+    file_dirs: list[str] = []
+    for m in recent:
+        try:
+            data = json.loads(m.content or "{}")
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        name = m.name or ""
+        if name == "list_domains":
+            domains = _domains_from_tool_payload(data)
+        elif name == "check_application_status":
+            py_apps, _node = _apps_from_tool_payload(data)
+        elif name == "list_files":
+            payload = data.get("data") if isinstance(data.get("data"), dict) else data
+            if isinstance(payload.get("result"), dict):
+                payload = payload["result"]
+            entries = (payload or {}).get("entries") or []
+            for e in entries:
+                if isinstance(e, dict) and e.get("is_dir"):
+                    n = str(e.get("name") or "")
+                    if n and not n.startswith("."):
+                        file_dirs.append(n)
+
+    root = _resolve_deploy_root(last_user_l, messages, turns)
+    domain = _resolve_deploy_domain(last_user_l, messages, turns)
+
+    # App déjà présente sur ce root ?
+    if root:
+        existing = next(
+            (
+                a
+                for a in py_apps
+                if str(a.get("relative_root") or a.get("name") or "").strip("/") == root
+                or str(a.get("name") or "") == root
+            ),
+            None,
+        )
+        if existing:
+            aid = int(existing.get("id") or 0)
+            return ChatResult(
+                content=(
+                    f"Le projet **`{root}`** est déjà enregistré comme app "
+                    f"**#{aid}** `{existing.get('name')}` ({existing.get('status')}).\n\n"
+                    "Je peux **installer les dépendances** puis **démarrer**. "
+                    "Dis *installe les deps* ou *démarre l'app*."
+                ),
+                provider="mock",
+                model="mock-coach",
+            )
+
+    if root and domain and "create_python_app" in tool_names:
+        app_name = re.sub(r"[^a-z0-9_-]", "-", root.lower())[:40] or "django-app"
+        return ChatResult(
+            content=(
+                f"Parfait — projet **`{root}`**, domaine **`{domain}`**.\n"
+                "Je prépare **create_python_app** (Django / WSGI) — "
+                "clique **Exécuter** pour confirmer."
+            ),
+            tool_calls=[
+                ToolCallRequest(
+                    id=str(uuid4()),
+                    name="create_python_app",
+                    arguments={
+                        "name": app_name,
+                        "label": app_name,
+                        "relative_root": root,
+                        "framework": "django",
+                        "mode": "wsgi",
+                        "python_version": "3.12",
+                        "domain_name": domain,
+                        "entrypoint": "passenger_wsgi.py",
+                    },
+                )
+            ],
+            provider="mock",
+            model="mock-coach",
+        )
+
+    if root and not domain:
+        sample = ", ".join(f"`{d.get('name')}`" for d in domains[:8]) if domains else "(aucun)"
+        return ChatResult(
+            content=(
+                f"Projet détecté : **`{root}`**.\n"
+                f"Domaines dispo : {sample}\n\n"
+                "Indique le **domaine** (ex. *vzone.7une.info*) et j'enchaîne la création de l'app."
+            ),
+            provider="mock",
+            model="mock-coach",
+        )
+
+    if not root:
+        dirs = [d for d in file_dirs if d not in {"mail", "ssl", "tmp", "logs", "etc", "domains"}][:12]
+        hint = ", ".join(f"`{d}`" for d in dirs) if dirs else "ex. `vzone`"
+        return ChatResult(
+            content=(
+                "Pour déployer Django, j'ai besoin du **dossier projet** (Application root).\n"
+                f"Dossiers visibles : {hint}\n\n"
+                "Exemple : *le dossier vzone contient le projet* "
+                "puis le domaine (*vzone.7une.info*)."
+            ),
+            provider="mock",
+            model="mock-coach",
+        )
+
+    return None
 
 
 def _parent_hostname(host: str) -> str | None:
@@ -1402,6 +1698,25 @@ def _detect_intent(
             "tools": [("list_domains", {}), ("list_wordpress_sites", {})],
         }
 
+    # Déploiement Django / Python (dossier local multi-tours)
+    if _django_deploy_active(last_user_l, messages, turns):
+        root = _resolve_deploy_root(last_user_l, messages, turns)
+        domain = _resolve_deploy_domain(last_user_l, messages, turns)
+        say = "Compris — déploiement **Django/Python**"
+        if root:
+            say += f" depuis **`{root}`**"
+        if domain:
+            say += f" → **{domain}**"
+        say += ". Je vérifie apps, domaines et fichiers…"
+        return {
+            "say": say,
+            "tools": [
+                ("check_application_status", {}),
+                ("list_domains", {}),
+                ("list_files", {"path": ""}),
+            ],
+        }
+
     if _wants_mkdir(last_user_l):
         name = _extract_path_name(last_user_l, kind="dir")
         if name and "mkdir_path" in tool_names:
@@ -2078,12 +2393,13 @@ def _converse(
     if m:
         url = m.group(1)
 
-    if url or any(k in low for k in ("django", "flask", "fastapi", "déploy", "deploy", "github")):
+    if url or any(k in low for k in ("github",)):
         return (
-            "OK pour le déploiement"
+            "Repo noté"
             + (f" (`{url}`)" if url else "")
-            + ". Dis-moi où tu en es : repo prêt ? domaine ? erreur sous les yeux ? "
-            "On avance message par message."
+            + ". Pour Django/Python, dis plutôt : "
+            "*déploie Django depuis le dossier … sur domaine.tld* "
+            "— sinon donne le dossier local + le domaine cible."
         )
 
     # Multi-tours / fallback : toujours refléter le message, proposer l'action la plus proche
@@ -2091,6 +2407,11 @@ def _converse(
     tn = _norm_text(low)
     if any(k in tn for k in ("mail", "boite", "messagerie", "email")):
         hint = "Ex. *liste mes boîtes mail* ou *crée contact@domaine.tld mot de passe …*"
+    elif any(k in tn for k in ("django", "deploy", "deployer", "deploie", "flask", "fastapi")):
+        hint = (
+            "Ex. *déploie Django depuis le dossier vzone sur vzone.7une.info* "
+            "— je crée l'app et demande confirmation."
+        )
     elif any(k in tn for k in ("fichier", "dossier", "repertoire")):
         hint = "Ex. *liste mes fichiers* ou *crée un fichier du nom notes.txt*"
     elif any(k in tn for k in ("domaine", "ssl", "wordpress", "wp")):
