@@ -169,7 +169,7 @@ export function ClientHomePage() {
               {section.title}
             </h2>
           </div>
-          <div className="grid gap-2 p-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 p-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {section.tools.map((tool) => {
               const body = (
                 <div

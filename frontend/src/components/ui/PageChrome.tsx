@@ -44,13 +44,13 @@ export function PageHeader({
   stats?: { label: string; value: string | number }[];
 }) {
   return (
-    <div className="vz-panel p-4">
+    <div className="vz-panel p-3 sm:p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">{title}</h1>
+        <div className="min-w-0">
+          <h1 className="text-lg font-semibold sm:text-xl">{title}</h1>
           {subtitle && <p className="mt-0.5 text-sm text-cp-muted">{subtitle}</p>}
         </div>
-        {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+        {actions && <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">{actions}</div>}
       </div>
       {stats && stats.length > 0 && (
         <div className="mt-4 flex flex-wrap gap-4 text-sm">

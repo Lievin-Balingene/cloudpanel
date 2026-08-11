@@ -236,8 +236,8 @@ export function WhmAccountsPage() {
         </p>
       )}
 
-      <div className="overflow-hidden rounded-lg border border-cp-border bg-white shadow-panel dark:border-ink-800 dark:bg-ink-950">
-        <table className="min-w-full text-left text-sm">
+      <div className="vz-table-wrap overflow-hidden rounded-lg border border-cp-border bg-white shadow-panel dark:border-ink-800 dark:bg-ink-950">
+        <table className="min-w-[40rem] w-full text-left text-sm">
           <thead className="bg-cp-canvas text-[11px] uppercase tracking-wide text-cp-muted dark:bg-ink-900">
             <tr>
               <th className="px-3 py-2.5">Domain</th>

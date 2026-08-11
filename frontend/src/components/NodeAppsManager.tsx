@@ -188,7 +188,7 @@ function AppCard({
           )}
         </div>
 
-        <div className="flex shrink-0 items-center gap-0.5 self-start sm:self-center">
+        <div className="flex shrink-0 flex-wrap items-center gap-1 self-start sm:self-center">
           {busy ? (
             <span className="inline-flex h-7 w-7 items-center justify-center">
               <Loader2 className="h-3.5 w-3.5 animate-spin text-cp-orange" />

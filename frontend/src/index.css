@@ -56,10 +56,11 @@ html.dark body {
       dark:border-ink-700 dark:bg-transparent dark:text-ink-100 dark:hover:bg-ink-900;
   }
 
-  /* Toolbar File Manager — boutons compacts */
+  /* Toolbar File Manager — boutons compacts (cibles tactiles plus grandes sur mobile) */
   .vz-btn-sm {
-    @apply inline-flex items-center justify-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium leading-none
-      transition duration-150 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex min-h-9 items-center justify-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium leading-none
+      transition duration-150 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50
+      sm:min-h-0 sm:px-2 sm:py-1 sm:text-[11px];
   }
   .vz-btn-sm.vz-btn-primary {
     @apply bg-cp-navy text-white shadow-sm hover:bg-cp-navy-soft;
@@ -67,6 +68,14 @@ html.dark body {
   .vz-btn-sm.vz-btn-ghost {
     @apply border border-cp-border bg-white text-cp-text hover:border-cp-link/40 hover:bg-cp-link-soft
       dark:border-ink-700 dark:bg-transparent dark:text-ink-100 dark:hover:bg-ink-900;
+  }
+
+  .vz-table-wrap {
+    @apply -mx-1 overflow-x-auto overscroll-x-contain px-1;
+  }
+
+  .vz-label-sm {
+    @apply hidden sm:inline;
   }
 
   .whm-nav-item {
@@ -97,7 +106,7 @@ html.dark body {
   }
 
   .whm-form-row {
-    @apply grid gap-1 border-b border-cp-border/70 px-4 py-3 sm:grid-cols-[220px_1fr] sm:items-center
+    @apply grid gap-1 border-b border-cp-border/70 px-3 py-3 sm:grid-cols-[220px_1fr] sm:items-center sm:px-4
       dark:border-ink-800;
   }
 
@@ -114,9 +123,10 @@ html.dark body {
   }
 
   .cp-tool {
-    @apply flex flex-col items-center gap-2 rounded-[10px] border border-cp-border bg-white p-4 text-center
+    @apply flex flex-col items-center gap-1.5 rounded-[10px] border border-cp-border bg-white p-3 text-center
       shadow-tool transition duration-200 hover:-translate-y-0.5 hover:border-cp-orange hover:shadow-panel
-      dark:border-ink-700 dark:bg-ink-950 dark:shadow-[0_4px_16px_rgba(0,0,0,0.3)];
+      dark:border-ink-700 dark:bg-ink-950 dark:shadow-[0_4px_16px_rgba(0,0,0,0.3)]
+      sm:gap-2 sm:p-4;
   }
 
   /* Zone contenu client : fond plus marqué pour détacher les cartes blanches */

@@ -43,7 +43,7 @@ export function IconAction({
       onClick={onClick}
       className={`inline-flex items-center justify-center rounded-md border border-transparent transition
         disabled:cursor-not-allowed disabled:opacity-40
-        ${size === "sm" ? "h-7 w-7" : "h-8 w-8"}
+        ${size === "sm" ? "h-9 w-9 sm:h-7 sm:w-7" : "h-9 w-9 sm:h-8 sm:w-8"}
         ${TONE[resolved]}
         ${active ? "border-cp-link/40 bg-cp-link-soft text-cp-link" : ""}`}
     >

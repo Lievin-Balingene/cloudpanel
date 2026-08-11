@@ -224,7 +224,7 @@ export function DomainsManager({ title }: { title: string }) {
       )}
 
       <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
-        <div className="vz-panel overflow-hidden">
+        <div className={`vz-panel overflow-hidden ${selected ? "hidden lg:block" : ""}`}>
           <div className="border-b border-cp-border bg-cp-canvas px-3 py-2 text-xs font-semibold uppercase text-cp-muted dark:border-ink-800 dark:bg-ink-900">
             Domaines {isLoading ? "…" : `(${domains.length})`}
           </div>
@@ -233,7 +233,7 @@ export function DomainsManager({ title }: { title: string }) {
               <li key={d.id}>
                 <button
                   type="button"
-                  className={`block w-full border-b border-cp-border px-3 py-2 text-left text-sm dark:border-ink-800 ${
+                  className={`block w-full border-b border-cp-border px-3 py-3 text-left text-sm dark:border-ink-800 sm:py-2 ${
                     selected?.id === d.id ? "bg-cp-orange-soft font-semibold text-cp-orange-dark" : ""
                   }`}
                   onClick={() => setSelectedId(d.id)}
@@ -252,7 +252,14 @@ export function DomainsManager({ title }: { title: string }) {
 
         {selected ? (
           <div className="space-y-3">
-            <div className="vz-panel p-4">
+            <button
+              type="button"
+              className="vz-btn-ghost vz-btn-sm lg:hidden"
+              onClick={() => setSelectedId(null)}
+            >
+              ← Domaines
+            </button>
+            <div className="vz-panel p-3 sm:p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="text-lg font-semibold">{selected.name}</p>

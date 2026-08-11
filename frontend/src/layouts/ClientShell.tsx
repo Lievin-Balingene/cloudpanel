@@ -25,8 +25,10 @@ import {
   ChevronDown,
   Activity,
   Clock,
+  Menu,
+  X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
 import { useAuthStore } from "@/stores/auth";
@@ -278,12 +280,18 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function AsideMenu() {
+function ToolsNav({ onNavigate }: { onNavigate?: () => void }) {
   const location = useLocation();
   const initiallyOpen = useMemo(() => {
     const open = new Set<string>(["files", "domains", "email", "software"]);
     for (const section of sections) {
-      if (section.items.some((i) => location.pathname === i.to || (i.to !== "/panel" && location.pathname.startsWith(i.to)))) {
+      if (
+        section.items.some(
+          (i) =>
+            location.pathname === i.to ||
+            (i.to !== "/panel" && location.pathname.startsWith(i.to)),
+        )
+      ) {
         open.add(section.id);
       }
     }
@@ -301,61 +309,69 @@ function AsideMenu() {
   }
 
   return (
+    <nav className="max-h-[calc(100dvh-8rem)] overflow-y-auto overscroll-contain py-1">
+      <NavLink
+        to="/panel"
+        end
+        onClick={onNavigate}
+        className={({ isActive }) =>
+          `flex items-center gap-2 px-3 py-2.5 text-sm sm:py-2 ${
+            isActive ? "bg-cp-orange-soft font-semibold text-cp-orange-dark" : "text-cp-text hover:bg-cp-canvas"
+          }`
+        }
+      >
+        <Home className="h-4 w-4 text-cp-orange" />
+        Home
+      </NavLink>
+      {sections.map((section) => {
+        const open = openIds.has(section.id);
+        return (
+          <div key={section.id} className="border-t border-cp-border/70">
+            <button
+              type="button"
+              className="flex w-full items-center justify-between px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-cp-muted hover:bg-cp-canvas sm:py-2"
+              onClick={() => toggle(section.id)}
+            >
+              {section.label}
+              <ChevronDown className={`h-3.5 w-3.5 transition ${open ? "rotate-180" : ""}`} />
+            </button>
+            {open && (
+              <div className="pb-1">
+                {section.items.map((item) => (
+                  <NavLink
+                    key={`${section.id}-${item.to}-${item.label}`}
+                    to={item.to}
+                    end={item.end}
+                    onClick={onNavigate}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2 px-3 py-2 pl-4 text-sm sm:py-1.5 ${
+                        isActive
+                          ? "bg-cp-orange-soft font-medium text-cp-orange-dark"
+                          : "text-cp-text hover:bg-cp-canvas"
+                      }`
+                    }
+                  >
+                    <item.icon className="h-3.5 w-3.5 text-cp-orange" />
+                    {item.label}
+                  </NavLink>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </nav>
+  );
+}
+
+function AsideMenu() {
+  return (
     <aside className="hidden w-56 shrink-0 md:block">
       <div className="vz-panel sticky top-4 overflow-hidden">
         <div className="border-b border-cp-border bg-cp-header px-3 py-2 text-xs font-semibold uppercase tracking-wide text-white">
           Tools
         </div>
-        <nav className="max-h-[calc(100vh-8rem)] overflow-y-auto py-1">
-          <NavLink
-            to="/panel"
-            end
-            className={({ isActive }) =>
-              `flex items-center gap-2 px-3 py-2 text-sm ${
-                isActive ? "bg-cp-orange-soft font-semibold text-cp-orange-dark" : "text-cp-text hover:bg-cp-canvas"
-              }`
-            }
-          >
-            <Home className="h-4 w-4 text-cp-orange" />
-            Home
-          </NavLink>
-          {sections.map((section) => {
-            const open = openIds.has(section.id);
-            return (
-              <div key={section.id} className="border-t border-cp-border/70">
-                <button
-                  type="button"
-                  className="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-cp-muted hover:bg-cp-canvas"
-                  onClick={() => toggle(section.id)}
-                >
-                  {section.label}
-                  <ChevronDown className={`h-3.5 w-3.5 transition ${open ? "rotate-180" : ""}`} />
-                </button>
-                {open && (
-                  <div className="pb-1">
-                    {section.items.map((item) => (
-                      <NavLink
-                        key={`${section.id}-${item.to}-${item.label}`}
-                        to={item.to}
-                        end={item.end}
-                        className={({ isActive }) =>
-                          `flex items-center gap-2 px-3 py-1.5 pl-4 text-sm ${
-                            isActive
-                              ? "bg-cp-orange-soft font-medium text-cp-orange-dark"
-                              : "text-cp-text hover:bg-cp-canvas"
-                          }`
-                        }
-                      >
-                        <item.icon className="h-3.5 w-3.5 text-cp-orange" />
-                        {item.label}
-                      </NavLink>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </nav>
+        <ToolsNav />
       </div>
     </aside>
   );
@@ -366,42 +382,103 @@ export function ClientShell() {
   const logout = useAuthStore((s) => s.logout);
   const theme = useThemeStore((s) => s.theme);
   const toggle = useThemeStore((s) => s.toggle);
+  const location = useLocation();
+  const [navOpen, setNavOpen] = useState(false);
+
+  useEffect(() => {
+    setNavOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!navOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setNavOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [navOpen]);
 
   return (
     <div className="vz-client-canvas min-h-screen dark:bg-surface-dark">
       <header className="sticky top-0 z-20 border-b border-black/20 bg-cp-header text-white shadow-md">
-        <div className="flex items-center justify-between px-4 py-2.5">
-          <div className="flex items-center gap-2.5">
+        <div className="flex items-center justify-between gap-2 px-3 py-2.5 sm:px-4">
+          <div className="flex min-w-0 items-center gap-2">
+            <button
+              type="button"
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg hover:bg-white/15 md:hidden"
+              aria-label="Ouvrir le menu"
+              aria-expanded={navOpen}
+              onClick={() => setNavOpen(true)}
+            >
+              <Menu className="h-5 w-5" />
+            </button>
             <img
               src="/vzone-mark.svg"
               alt="V-zone"
-              className="h-8 w-8 rounded-lg shadow-sm"
+              className="h-8 w-8 shrink-0 rounded-lg shadow-sm"
               width={32}
               height={32}
             />
-            <div>
+            <div className="min-w-0">
               <p className="text-sm font-semibold tracking-wide">V-zone</p>
-              <p className="text-[11px] text-white/85">Panneau client</p>
+              <p className="truncate text-[11px] text-white/85">Panneau client</p>
             </div>
           </div>
-          <div className="flex items-center gap-2 text-sm">
+          <div className="flex shrink-0 items-center gap-1 text-sm sm:gap-2">
             <span className="hidden rounded-full bg-white/15 px-2.5 py-1 sm:inline">{user?.username}</span>
-            <button type="button" className="rounded-lg px-2 py-1.5 transition hover:bg-white/15" onClick={toggle}>
+            <button
+              type="button"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg transition hover:bg-white/15"
+              onClick={toggle}
+              aria-label="Thème"
+            >
               {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
             <button
               type="button"
-              className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 transition hover:bg-white/15"
+              className="inline-flex h-9 items-center gap-1 rounded-lg px-2 transition hover:bg-white/15 sm:px-2.5"
               onClick={() => void logout()}
             >
               <LogOut className="h-4 w-4" />
-              Logout
+              <span className="hidden sm:inline">Logout</span>
             </button>
           </div>
         </div>
       </header>
 
-      <div className="mx-auto flex max-w-[1400px] gap-5 p-4 md:gap-6 md:p-6">
+      {navOpen ? (
+        <>
+          <button
+            type="button"
+            className="fixed inset-0 z-40 bg-black/45 md:hidden"
+            aria-label="Fermer le menu"
+            onClick={() => setNavOpen(false)}
+          />
+          <div className="fixed inset-y-0 left-0 z-50 flex w-[min(18rem,88vw)] flex-col bg-cp-canvas p-3 shadow-xl dark:bg-ink-950 md:hidden">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-cp-text">Tools</p>
+              <button
+                type="button"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-cp-muted hover:bg-cp-canvas hover:text-cp-text dark:hover:bg-ink-900"
+                aria-label="Fermer"
+                onClick={() => setNavOpen(false)}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="vz-panel min-h-0 flex-1 overflow-hidden">
+              <ToolsNav onNavigate={() => setNavOpen(false)} />
+            </div>
+          </div>
+        </>
+      ) : null}
+
+      <div className="mx-auto flex max-w-[1400px] gap-4 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:gap-5 sm:p-4 md:gap-6 md:p-6">
         <AsideMenu />
         <main className="min-w-0 flex-1 space-y-4 animate-fade-up">
           <Outlet />

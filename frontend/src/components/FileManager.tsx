@@ -479,15 +479,15 @@ export function FileManager({ title }: { title: string }) {
         ))}
       </div>
 
-      <div className="vz-panel flex flex-wrap items-center gap-1 px-2 py-1.5">
+      <div className="vz-panel flex flex-wrap items-center gap-1.5 px-2 py-2 sm:gap-1 sm:py-1.5">
         <button
           type="button"
           className="vz-btn-primary vz-btn-sm"
           onClick={() => launchUpload(cwd)}
           title="Ouvre un nouvel onglet pour suivre l'upload"
         >
-          <Upload className="h-3 w-3" />
-          Upload
+          <Upload className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
+          <span className="vz-label-sm">Upload</span>
         </button>
         <button
           type="button"
@@ -495,12 +495,12 @@ export function FileManager({ title }: { title: string }) {
           onClick={() => launchUpload(cwd, { preferFolder: true })}
           title="Ouvre un nouvel onglet pour envoyer un dossier"
         >
-          <FolderPlus className="h-3 w-3" />
-          Dossier
+          <FolderPlus className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
+          <span className="vz-label-sm">Dossier</span>
         </button>
         {selected.length > 0 && (
-          <span className="ml-1 mr-1 text-[11px] font-medium text-cp-muted">
-            {selected.length} sélectionné{selected.length > 1 ? "s" : ""}
+          <span className="ml-0.5 mr-0.5 text-[11px] font-medium text-cp-muted">
+            {selected.length} sél.
           </span>
         )}
         <button
@@ -508,23 +508,26 @@ export function FileManager({ title }: { title: string }) {
           className="vz-btn-ghost vz-btn-sm"
           disabled={!selected.length}
           onClick={() => setClipboard({ mode: "copy", paths: selected })}
+          title="Copier"
         >
-          <Copy className="h-3 w-3" />
-          Copier
+          <Copy className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
+          <span className="vz-label-sm">Copier</span>
         </button>
         <button
           type="button"
           className="vz-btn-ghost vz-btn-sm"
           disabled={!selected.length}
           onClick={() => setClipboard({ mode: "cut", paths: selected })}
+          title="Couper"
         >
-          <Scissors className="h-3 w-3" />
-          Couper
+          <Scissors className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
+          <span className="vz-label-sm">Couper</span>
         </button>
         <button
           type="button"
           className="vz-btn-ghost vz-btn-sm"
           disabled={!clipboard.mode || !clipboard.paths.length}
+          title="Coller"
           onClick={() =>
             void run(async () => {
               const endpoint = clipboard.mode === "cut" ? "/files/move/" : "/files/copy/";
@@ -536,17 +539,24 @@ export function FileManager({ title }: { title: string }) {
             })
           }
         >
-          <ClipboardPaste className="h-3 w-3" />
-          Coller
-        </button>
-        <button type="button" className="vz-btn-ghost vz-btn-sm" disabled={!selected.length} onClick={requestDelete}>
-          <Trash2 className="h-3 w-3" />
-          Supprimer
+          <ClipboardPaste className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
+          <span className="vz-label-sm">Coller</span>
         </button>
         <button
           type="button"
           className="vz-btn-ghost vz-btn-sm"
           disabled={!selected.length}
+          onClick={requestDelete}
+          title="Supprimer"
+        >
+          <Trash2 className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
+          <span className="vz-label-sm">Supprimer</span>
+        </button>
+        <button
+          type="button"
+          className="vz-btn-ghost vz-btn-sm"
+          disabled={!selected.length}
+          title="Zip"
           onClick={() =>
             void run(() =>
               apiRequest("/files/compress/", {
@@ -560,22 +570,24 @@ export function FileManager({ title }: { title: string }) {
             )
           }
         >
-          <Archive className="h-3 w-3" />
-          Zip
+          <Archive className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
+          <span className="vz-label-sm">Zip</span>
         </button>
         <button
           type="button"
           className="vz-btn-ghost vz-btn-sm"
           disabled={!selected.length}
           onClick={() => void downloadSelected()}
+          title="Télécharger"
         >
-          <Download className="h-3 w-3" />
-          Télécharger
+          <Download className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
+          <span className="vz-label-sm">Télécharger</span>
         </button>
         <button
           type="button"
           className="vz-btn-ghost vz-btn-sm"
           disabled={selected.length !== 1}
+          title="chmod"
           onClick={() => {
             const path = selected[0];
             setChmodPath(path);
@@ -583,31 +595,31 @@ export function FileManager({ title }: { title: string }) {
             if (entry) setChmodMode(entry.mode.toString(8).padStart(3, "0"));
           }}
         >
-          <Shield className="h-3 w-3" />
-          chmod
+          <Shield className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
+          <span className="vz-label-sm">chmod</span>
         </button>
         <form
-          className="ml-auto flex gap-1"
+          className="flex w-full gap-1 sm:ml-auto sm:w-auto"
           onSubmit={(e) => {
             e.preventDefault();
             searchMutation.mutate();
           }}
         >
           <input
-            className="vz-input !px-2 !py-1 !text-xs w-36"
+            className="vz-input !px-2 !py-1.5 !text-xs w-full min-w-0 sm:w-36 sm:!py-1"
             placeholder="Rechercher…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <button className="vz-btn-ghost vz-btn-sm" type="submit">
-            <Search className="h-3 w-3" />
+          <button className="vz-btn-ghost vz-btn-sm shrink-0" type="submit" title="Rechercher">
+            <Search className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
           </button>
         </form>
       </div>
 
       <div className="grid gap-2 lg:grid-cols-[1fr_180px]">
         <div
-          className={`vz-panel relative min-h-[360px] overflow-auto ${
+          className={`vz-panel relative min-h-[280px] overflow-auto sm:min-h-[360px] ${
             dragOver && !internalDrag ? "ring-2 ring-cp-orange" : ""
           }`}
           onDragEnter={(e) => {
@@ -665,9 +677,9 @@ export function FileManager({ title }: { title: string }) {
                   />
                 </th>
                 <th className="px-2 py-1.5 font-semibold">Nom</th>
-                <th className="w-20 px-2 py-1.5 font-semibold">Taille</th>
-                <th className="w-24 px-2 py-1.5 font-semibold">Perms</th>
-                <th className="w-36 px-2 py-1.5 font-semibold">Modifié</th>
+                <th className="hidden w-20 px-2 py-1.5 font-semibold sm:table-cell">Taille</th>
+                <th className="hidden w-24 px-2 py-1.5 font-semibold md:table-cell">Perms</th>
+                <th className="hidden w-36 px-2 py-1.5 font-semibold md:table-cell">Modifié</th>
               </tr>
             </thead>
             <tbody>
@@ -800,7 +812,7 @@ export function FileManager({ title }: { title: string }) {
                         aria-label={`Sélectionner ${entry.name}`}
                       />
                     </td>
-                    <td className="max-w-[1px] truncate px-2 py-1">
+                    <td className="max-w-[1px] truncate px-2 py-2 sm:py-1">
                       <span className="inline-flex min-w-0 items-center gap-1.5">
                         {entry.is_dir ? (
                           <Folder className="h-3.5 w-3.5 shrink-0 text-cp-orange" />
@@ -810,13 +822,13 @@ export function FileManager({ title }: { title: string }) {
                         <span className="truncate font-medium">{entry.name}</span>
                       </span>
                     </td>
-                    <td className="whitespace-nowrap px-2 py-1 text-cp-muted">
+                    <td className="hidden whitespace-nowrap px-2 py-1 text-cp-muted sm:table-cell">
                       {entry.is_dir ? "—" : formatBytes(entry.size)}
                     </td>
-                    <td className="whitespace-nowrap px-2 py-1 font-mono text-[10px] text-cp-muted">
+                    <td className="hidden whitespace-nowrap px-2 py-1 font-mono text-[10px] text-cp-muted md:table-cell">
                       {entry.permissions}
                     </td>
-                    <td className="whitespace-nowrap px-2 py-1 text-[10px] text-cp-muted">
+                    <td className="hidden whitespace-nowrap px-2 py-1 text-[10px] text-cp-muted md:table-cell">
                       {new Date(entry.modified_at).toLocaleString("fr-FR", {
                         day: "2-digit",
                         month: "2-digit",

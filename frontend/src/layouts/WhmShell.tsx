@@ -40,6 +40,7 @@ import {
   ChevronsDown,
   ChevronsUp,
   User,
+  Menu,
   type LucideIcon,
 } from "lucide-react";
 import { useAuthStore } from "@/stores/auth";
@@ -267,6 +268,7 @@ export function WhmShell() {
   const [headerQuery, setHeaderQuery] = useState("");
   const [asideQuery, setAsideQuery] = useState("");
   const [headerOpen, setHeaderOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
   const [openSections, setOpenSections] = useState<Set<string>>(() => new Set(["favorites"]));
   const headerSearchWrap = useRef<HTMLDivElement>(null);
 
@@ -302,8 +304,9 @@ export function WhmShell() {
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  // Ouvre la section active selon la route
+  // Ouvre la section active selon la route + ferme le drawer mobile
   useEffect(() => {
+    setNavOpen(false);
     const active = navSections.find((s) => sectionContainsPath(s, location.pathname));
     if (active) {
       setOpenSections((prev) => {
@@ -314,6 +317,20 @@ export function WhmShell() {
       });
     }
   }, [location.pathname]);
+
+  useEffect(() => {
+    if (!navOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setNavOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [navOpen]);
 
   const headerResults = useMemo(() => {
     const q = headerQuery.trim().toLowerCase();
@@ -361,6 +378,7 @@ export function WhmShell() {
     setHeaderQuery("");
     setHeaderOpen(false);
     setAsideQuery("");
+    setNavOpen(false);
   }
 
   function onHeaderSubmit() {
@@ -384,9 +402,22 @@ export function WhmShell() {
   const version = panelInfo?.version || "";
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#d8e0ea] dark:bg-surface-dark">
-      {/* Sidebar V-zone Admin */}
-      <aside className="flex h-full w-[248px] shrink-0 flex-col bg-[#2a4a6b] text-white shadow-[2px_0_8px_rgba(0,0,0,0.25)]">
+    <div className="flex h-[100dvh] overflow-hidden bg-[#d8e0ea] dark:bg-surface-dark">
+      {navOpen ? (
+        <button
+          type="button"
+          className="fixed inset-0 z-40 bg-black/45 md:hidden"
+          aria-label="Fermer le menu"
+          onClick={() => setNavOpen(false)}
+        />
+      ) : null}
+
+      {/* Sidebar V-zone Admin — drawer mobile, fixe desktop */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 flex h-full w-[min(248px,88vw)] shrink-0 flex-col bg-[#2a4a6b] text-white shadow-[2px_0_8px_rgba(0,0,0,0.25)] transition-transform duration-200 ease-out md:static md:z-auto md:w-[248px] md:translate-x-0 ${
+          navOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
         <div className="shrink-0 px-3 pb-2 pt-3">
           <div className="flex items-center gap-2.5">
             <img
@@ -396,7 +427,7 @@ export function WhmShell() {
               width={36}
               height={36}
             />
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="select-none font-sans text-[20px] font-bold leading-none tracking-tight text-white">
                 Admin
               </p>
@@ -404,6 +435,14 @@ export function WhmShell() {
                 V-zone
               </p>
             </div>
+            <button
+              type="button"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-md text-white/80 hover:bg-white/10 md:hidden"
+              aria-label="Fermer le menu"
+              onClick={() => setNavOpen(false)}
+            >
+              <X className="h-5 w-5" />
+            </button>
           </div>
 
           <div className="mt-3 grid grid-cols-2 gap-1.5">
@@ -468,7 +507,10 @@ export function WhmShell() {
                                 : "border-transparent text-white/85 hover:bg-white/10 hover:text-white"
                             }`
                           }
-                          onClick={() => setAsideQuery("")}
+                          onClick={() => {
+                            setAsideQuery("");
+                            setNavOpen(false);
+                          }}
                         >
                           <item.icon className="h-3.5 w-3.5 shrink-0 opacity-80" />
                           <span className="truncate">{item.label}</span>
@@ -491,7 +533,7 @@ export function WhmShell() {
       {/* Colonne droite : topbar */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="z-30 shrink-0 border-b border-[#c5d0dc] bg-white shadow-sm dark:border-ink-700 dark:bg-ink-950">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-3 py-1.5 text-[11px] text-[#5a6f85] dark:text-ink-300 sm:px-4">
+          <div className="hidden flex-wrap items-center gap-x-4 gap-y-2 px-3 py-1.5 text-[11px] text-[#5a6f85] dark:text-ink-300 sm:flex sm:px-4">
             <span>
               <span className="text-[#8a9bb0]">Username:</span>{" "}
               <span className="font-medium text-[#2c3e50] dark:text-ink-100">{user?.username || "—"}</span>
@@ -516,8 +558,17 @@ export function WhmShell() {
             </span>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 border-t border-[#e8eef4] px-3 py-2 dark:border-ink-800 sm:px-4">
-            <div className="relative min-w-[200px] flex-1" ref={headerSearchWrap}>
+          <div className="flex items-center gap-2 border-t border-[#e8eef4] px-2 py-2 dark:border-ink-800 sm:px-4">
+            <button
+              type="button"
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#c5d0dc] text-[#2c3e50] hover:bg-[#f0f4f8] dark:border-ink-600 dark:text-ink-100 dark:hover:bg-ink-800 md:hidden"
+              aria-label="Ouvrir le menu"
+              aria-expanded={navOpen}
+              onClick={() => setNavOpen(true)}
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+            <div className="relative min-w-0 flex-1" ref={headerSearchWrap}>
               <WhmSearchField
                 variant="header"
                 value={headerQuery}
@@ -526,17 +577,17 @@ export function WhmShell() {
                   setHeaderOpen(true);
                 }}
                 onSubmitFirst={onHeaderSubmit}
-                placeholder="Search Tools and Accounts (/)"
+                placeholder="Search Tools…"
                 results={headerResults}
                 onPick={goTo}
                 showResults={headerOpen}
               />
             </div>
 
-            <div className="ml-auto flex shrink-0 items-center gap-1">
+            <div className="flex shrink-0 items-center gap-1">
               <button
                 type="button"
-                className="flex h-8 w-8 items-center justify-center rounded-full border border-[#c5d0dc] text-[#5a6f85] hover:bg-[#f0f4f8] dark:border-ink-600 dark:text-ink-300 dark:hover:bg-ink-800"
+                className="flex h-9 w-9 items-center justify-center rounded-full border border-[#c5d0dc] text-[#5a6f85] hover:bg-[#f0f4f8] dark:border-ink-600 dark:text-ink-300 dark:hover:bg-ink-800"
                 onClick={toggle}
                 title="Theme"
               >
@@ -544,14 +595,14 @@ export function WhmShell() {
               </button>
               <button
                 type="button"
-                className="flex h-8 w-8 items-center justify-center rounded-full border border-[#c5d0dc] text-[#5a6f85] hover:bg-[#f0f4f8] dark:border-ink-600 dark:text-ink-300"
+                className="hidden h-9 w-9 items-center justify-center rounded-full border border-[#c5d0dc] text-[#5a6f85] hover:bg-[#f0f4f8] dark:border-ink-600 dark:text-ink-300 sm:flex"
                 title={user?.username}
               >
                 <User className="h-3.5 w-3.5" />
               </button>
               <button
                 type="button"
-                className="inline-flex items-center gap-1.5 rounded-full border border-[#c5d0dc] px-2.5 py-1.5 text-xs font-medium text-[#2c3e50] hover:bg-[#f0f4f8] dark:border-ink-600 dark:text-ink-100 dark:hover:bg-ink-800"
+                className="inline-flex h-9 items-center gap-1.5 rounded-full border border-[#c5d0dc] px-2.5 text-xs font-medium text-[#2c3e50] hover:bg-[#f0f4f8] dark:border-ink-600 dark:text-ink-100 dark:hover:bg-ink-800"
                 onClick={() => void logout()}
               >
                 <LogOut className="h-3.5 w-3.5" />
@@ -561,7 +612,7 @@ export function WhmShell() {
           </div>
         </header>
 
-        <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-[#eef2f6] p-4 dark:bg-surface-dark md:p-6">
+        <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-[#eef2f6] p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] dark:bg-surface-dark sm:p-4 md:p-6">
           <Outlet />
         </main>
       </div>
