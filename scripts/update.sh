@@ -38,7 +38,12 @@ systemctl stop vzone-api vzone-worker vzone-beat 2>/dev/null || true
 python manage.py migrate --noinput || BACKEND_OK=0
 python manage.py collectstatic --noinput || true
 deactivate
-systemctl start vzone-api vzone-worker vzone-beat 2>/dev/null || true
+systemctl start vzone-worker vzone-beat 2>/dev/null || true
+if [[ -f "${REPO_DIR}/scripts/ensure-vzone-api.sh" ]]; then
+  bash "${REPO_DIR}/scripts/ensure-vzone-api.sh" || true
+else
+  systemctl start vzone-api 2>/dev/null || true
+fi
 
 # Frontend : toujours reconstruire (évite 404 nginx sur toutes les pages)
 cd "${VZONE_ROOT}/frontend"
@@ -57,6 +62,7 @@ if [[ "${BACKEND_OK}" -ne 1 ]]; then
 fi
 
 # (Ré)installe les unités systemd — utile après une install partielle
+install -m 755 "${REPO_DIR}/scripts/ensure-vzone-api.sh" /usr/local/sbin/vzone-ensure-api 2>/dev/null || true
 install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-api.service" /etc/systemd/system/
 install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-worker.service" /etc/systemd/system/
 install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-beat.service" /etc/systemd/system/
@@ -213,13 +219,12 @@ systemctl enable --now redis-server 2>/dev/null || systemctl enable --now redis 
 systemctl enable --now vzone-postgresql.service 2>/dev/null || true
 systemctl enable --now vzone-api vzone-worker vzone-beat nginx
 
-# Garantir que le login ne tombe pas en 502 après update
-if ! ss -lntp 2>/dev/null | grep -q ':8000'; then
-  echo "[vzone] API absente sur :8000 — repair-api-502"
+# Garantir Daphne sur :8000 (tue gunicorn orphelin si besoin)
+if [[ -f "${REPO_DIR}/scripts/ensure-vzone-api.sh" ]]; then
+  bash "${REPO_DIR}/scripts/ensure-vzone-api.sh" || bash "${REPO_DIR}/scripts/repair-api-502.sh" || true
+elif ! ss -lntp 2>/dev/null | grep ':8000' | grep -qi daphne; then
+  echo "[vzone] API absente ou mauvais processus sur :8000 — repair-api-502"
   bash "${REPO_DIR}/scripts/repair-api-502.sh" || true
-else
-  systemctl restart vzone-api
-  sleep 2
 fi
 
 # Cron Jobs (agent root → /etc/cron.d)

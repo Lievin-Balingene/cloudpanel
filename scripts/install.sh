@@ -183,6 +183,7 @@ PY
   npm ci || npm install
   npm run build
 
+  install -m 755 "${SCRIPT_DIR}/ensure-vzone-api.sh" /usr/local/sbin/vzone-ensure-api
   install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-api.service" /etc/systemd/system/
   install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-worker.service" /etc/systemd/system/
   install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-beat.service" /etc/systemd/system/
@@ -190,7 +191,9 @@ PY
   bash "${SCRIPT_DIR}/ensure-nginx.sh" "${VZONE_ROOT}/deploy/nginx/vzone.conf"
   systemctl daemon-reload
   systemctl enable --now redis-server 2>/dev/null || systemctl enable --now redis
-  systemctl enable --now vzone-api vzone-worker vzone-beat nginx
+  systemctl enable vzone-worker vzone-beat nginx
+  bash "${SCRIPT_DIR}/ensure-vzone-api.sh"
+  systemctl enable --now vzone-worker vzone-beat
 
   configure_firewall
   # Stack mail (Postfix + Dovecot + OpenDKIM)
@@ -235,11 +238,15 @@ PY
   systemctl daemon-reload
   systemctl enable --now vzone-postgresql.service || true
   bash "${SCRIPT_DIR}/ensure-nginx.sh" "${VZONE_ROOT}/deploy/nginx/vzone.conf" || true
+  bash "${SCRIPT_DIR}/ensure-vzone-api.sh" || fail "API panel indisponible — voir journalctl -u vzone-api"
 
   HOST_IP="$(hostname -I | awk '{print $1}')"
+  ADMIN_PORT="${VZONE_ADMIN_PORT:-9086}"
+  CLIENT_PORT="${VZONE_CLIENT_PORT:-9082}"
   cat > /etc/vzone/install-info.txt <<EOF
 version=${VZONE_VERSION}
-url=http://${HOST_IP}/
+url_admin=http://${HOST_IP}:${ADMIN_PORT}/
+url_client=http://${HOST_IP}:${CLIENT_PORT}/
 admin_user=admin
 admin_email=${ADMIN_EMAIL}
 admin_temp_password=${ADMIN_PASS}
@@ -251,7 +258,9 @@ EOF
   echo "============================================================"
   echo " Installation terminée."
   echo "============================================================"
-  echo " URL d'accès          : http://${HOST_IP}/"
+  echo " Admin (WHM)          : http://${HOST_IP}:${ADMIN_PORT}/"
+  echo " Client (panel)       : http://${HOST_IP}:${CLIENT_PORT}/"
+  echo " (Le port 80 sur l'IP publique = Access Denied — normal)"
   echo " Utilisateur admin    : admin"
   echo " Mot de passe temp.   : ${ADMIN_PASS}"
   echo " Changer le mot de passe :"
@@ -268,6 +277,9 @@ configure_firewall() {
     ufw allow OpenSSH || true
     ufw allow 80/tcp || true
     ufw allow 443/tcp || true
+    ufw allow "${VZONE_ADMIN_PORT:-9086}"/tcp || true
+    ufw allow "${VZONE_CLIENT_PORT:-9082}"/tcp || true
+    ufw allow "${VZONE_WEBMAIL_PORT:-9095}"/tcp || true
     ufw allow 25/tcp || true
     ufw allow 587/tcp || true
     ufw allow 465/tcp || true
@@ -281,6 +293,9 @@ configure_firewall() {
     firewall-cmd --permanent --add-service=ssh
     firewall-cmd --permanent --add-service=http
     firewall-cmd --permanent --add-service=https
+    firewall-cmd --permanent --add-port="${VZONE_ADMIN_PORT:-9086}"/tcp
+    firewall-cmd --permanent --add-port="${VZONE_CLIENT_PORT:-9082}"/tcp
+    firewall-cmd --permanent --add-port="${VZONE_WEBMAIL_PORT:-9095}"/tcp
     firewall-cmd --permanent --add-service=smtp
     firewall-cmd --permanent --add-service=smtps
     firewall-cmd --permanent --add-port=587/tcp

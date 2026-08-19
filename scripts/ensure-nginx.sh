@@ -487,27 +487,17 @@ if [[ -f "$ENV_FILE" ]]; then
     grep -q '^VZONE_MAIL_PUBLIC_IP=' "$ENV_FILE" || echo "VZONE_MAIL_PUBLIC_IP=${HOST_IP}" >> "$ENV_FILE"
   fi
   # Ne jamais tuer vzone-api pendant un job SSL (VZONE_SKIP_API_RESTART=1).
-  # Sur changement ALLOWED_HOSTS : restart doux + attente :8000 (évite 502 login).
   if [[ "${VZONE_SKIP_API_RESTART:-0}" != "1" && "$HOSTS_CHANGED" -eq 1 ]]; then
-    systemctl try-restart vzone-api 2>/dev/null || true
-    for i in $(seq 1 20); do
-      if ss -lntp 2>/dev/null | grep -q ':8000'; then
-        break
-      fi
-      sleep 0.5
-    done
+    bash "${SCRIPT_DIR}/ensure-vzone-api.sh" || echo "[vzone] ERREUR: ensure-vzone-api — sudo bash /opt/vzone-src/scripts/repair-api-502.sh" >&2
   fi
   echo "[vzone] ALLOWED_HOSTS → ${MERGED}"
 fi
 
-# Garde-fou final : API doit écouter sinon login = 502
-if ! ss -lntp 2>/dev/null | grep -q ':8000'; then
-  echo "[vzone] ALERTE: rien sur :8000 — redémarrage vzone-api"
-  systemctl restart vzone-api 2>/dev/null || true
-  sleep 2
-fi
-if ss -lntp 2>/dev/null | grep -q ':8000'; then
-  echo "[vzone] API Daphne OK (127.0.0.1:8000)"
-else
-  echo "[vzone] ERREUR: API absente — sudo bash /opt/vzone-src/scripts/repair-api-502.sh" >&2
+# Garde-fou final : Daphne sur :8000 (pas un gunicorn orphelin)
+if [[ "${VZONE_SKIP_API_RESTART:-0}" != "1" ]]; then
+  if [[ -f "${SCRIPT_DIR}/ensure-vzone-api.sh" ]]; then
+    bash "${SCRIPT_DIR}/ensure-vzone-api.sh" || echo "[vzone] ERREUR: API absente — sudo bash /opt/vzone-src/scripts/repair-api-502.sh" >&2
+  elif ! ss -lntp 2>/dev/null | grep ':8000' | grep -qi daphne; then
+    echo "[vzone] ERREUR: API absente ou gunicorn sur :8000 — sudo bash /opt/vzone-src/scripts/repair-api-502.sh" >&2
+  fi
 fi
