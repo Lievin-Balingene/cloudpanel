@@ -96,7 +96,7 @@ export function DnsManager({ title }: { title: string }) {
     <div className="space-y-4 animate-fade-up">
       <PageHeader
         title={title}
-        subtitle="Zones DNS, enregistrements, DNSSEC et numéros de série SOA automatiques."
+        subtitle="Pointez votre nom de domaine (A, MX, TXT…) vers ce serveur."
         stats={[
           { label: "Zones", value: zones.length },
           { label: "Enregistrements", value: zones.reduce((total, zone) => total + zone.record_count, 0) },

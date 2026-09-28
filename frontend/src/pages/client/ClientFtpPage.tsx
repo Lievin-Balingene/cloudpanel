@@ -1,5 +1,5 @@
 import { FtpManager } from "@/components/FtpManager";
 
 export function ClientFtpPage() {
-  return <FtpManager title="FTP Accounts" />;
+  return <FtpManager title="Accès FTP" />;
 }

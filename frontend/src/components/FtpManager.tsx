@@ -115,7 +115,7 @@ export function FtpManager({ title }: { title: string }) {
     <div className="space-y-4 animate-fade-up">
       <PageHeader
         title={title}
-        subtitle="Comptes FTP virtuels, suspension, quotas et journaux d’accès."
+        subtitle="Créez un accès pour envoyer des fichiers (site, développeur, outil)."
         stats={[
           { label: "Comptes", value: stats?.accounts_total ?? "—" },
           { label: "Actifs", value: stats?.accounts_active ?? "—" },

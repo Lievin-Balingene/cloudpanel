@@ -1,5 +1,5 @@
 import { CronManager } from "@/components/CronManager";
 
 export function ClientCronPage() {
-  return <CronManager title="Cron Jobs" />;
+  return <CronManager title="Tâches planifiées" />;
 }

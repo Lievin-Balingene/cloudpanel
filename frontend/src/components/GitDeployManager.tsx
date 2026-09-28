@@ -227,7 +227,7 @@ export function GitDeployManager({ title }: { title: string }) {
     <div className="space-y-4 animate-fade-up">
       <PageHeader
         title={title}
-        subtitle="Clonez des dépôts, récupérez les mises à jour et configurez clés de déploiement et webhooks."
+        subtitle="Clonez un projet Git et déployez-le dans votre espace."
         stats={[
           { label: "Dépôts", value: overview?.repositories ?? "—" },
           { label: "Prêts", value: overview?.ready ?? "—" },

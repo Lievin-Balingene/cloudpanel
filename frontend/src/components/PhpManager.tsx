@@ -121,7 +121,7 @@ export function PhpManager({ title }: { title: string }) {
 
   return (
     <div className="space-y-4 animate-fade-up">
-      <PageHeader title={title} subtitle="Versions PHP et sélecteurs par chemin, avec pools FPM et .user.ini." stats={[{ label: "Versions", value: overview?.versions ?? "—" }, { label: "Défaut", value: overview?.default_version ?? "—" }, { label: "Sélecteurs actifs", value: overview?.active_selectors ?? "—" }]} actions={<button className="vz-btn-primary" type="button" onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" /> Créer un sélecteur</button>} />
+      <PageHeader title={title} subtitle="Choisissez la version PHP utilisée par votre site." stats={[{ label: "Versions", value: overview?.versions ?? "—" }, { label: "Défaut", value: overview?.default_version ?? "—" }, { label: "Sélecteurs actifs", value: overview?.active_selectors ?? "—" }]} actions={<button className="vz-btn-primary" type="button" onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" /> Créer un sélecteur</button>} />
 
       {error && (
         <p className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-cp-danger">{error}</p>

@@ -172,7 +172,7 @@ export function DomainsManager({ title }: { title: string }) {
     <div className="space-y-4 animate-fade-up">
       <PageHeader
         title={title}
-        subtitle="Domaines, alias, sous-domaines, redirections et certificats Let’s Encrypt."
+        subtitle="Domaines, sous-domaines, redirections et certificat HTTPS."
         stats={[
           { label: "Domaines", value: domains.length },
           { label: "SSL actifs", value: domains.filter((d) => d.ssl?.status === "active").length },

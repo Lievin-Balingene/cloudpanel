@@ -227,7 +227,7 @@ export function BackupManager({ title }: { title: string }) {
     <div className="space-y-4 animate-fade-up">
       <PageHeader
         title={title}
-        subtitle={`Moteur ${overview?.engine ?? "restic"} · stockage ${overview?.storage ?? "rclone"} · ${overview?.max_backups ?? "—"} archives max.`}
+        subtitle="Créez une sauvegarde ou restaurez vos fichiers, bases et e-mails."
         stats={[
           { label: "Archives", value: overview?.archives ?? "—" },
           { label: "Terminées", value: overview?.completed ?? "—" },

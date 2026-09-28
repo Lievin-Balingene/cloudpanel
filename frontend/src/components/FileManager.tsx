@@ -450,7 +450,7 @@ export function FileManager({ title }: { title: string }) {
         <div>
           <h1 className="text-base font-semibold leading-tight">{title}</h1>
           <p className="text-[11px] text-cp-muted">
-            Glisser-déposer · édition · jailé dans le home
+            Envoyez, modifiez et organisez vos fichiers
           </p>
         </div>
         <button

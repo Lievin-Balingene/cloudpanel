@@ -162,7 +162,7 @@ export function WordPressManager({ title }: { title: string }) {
 
   return (
     <div className="space-y-4 animate-fade-up">
-      <PageHeader title={title} subtitle="Installez WordPress avec MySQL, PHP-FPM et WP-CLI." stats={[{ label: "Sites", value: overview?.sites ?? "—" }, { label: "Actifs", value: overview?.active ?? "—" }, { label: "Erreurs", value: overview?.error ?? "—" }, { label: "WP-CLI", value: overview?.wp_cli ? "OK" : "—" }]} actions={<button type="button" className="vz-btn-primary" onClick={() => setInstallOpen(true)} disabled={!availableDomains.length}><Plus className="h-4 w-4" /> Installer WordPress</button>} />
+      <PageHeader title={title} subtitle="Installez un site WordPress en quelques minutes." stats={[{ label: "Sites", value: overview?.sites ?? "—" }, { label: "Actifs", value: overview?.active ?? "—" }, { label: "Erreurs", value: overview?.error ?? "—" }, { label: "WP-CLI", value: overview?.wp_cli ? "OK" : "—" }]} actions={<button type="button" className="vz-btn-primary" onClick={() => setInstallOpen(true)} disabled={!availableDomains.length}><Plus className="h-4 w-4" /> Installer WordPress</button>} />
       {overview && !overview.wp_cli && overview.provision_mode !== "mock" && (
           <p className="mt-2 text-sm text-amber-700">
             WP-CLI n’est pas détecté sur le serveur. Exécutez{" "}

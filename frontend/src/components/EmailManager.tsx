@@ -438,7 +438,7 @@ export function EmailManager({ title }: { title: string }) {
           <div>
             <h1 className="text-xl font-semibold">{title}</h1>
             <p className="mt-0.5 text-sm text-cp-muted">
-              Créez des boîtes, ouvrez le webmail, gérez domaines et redirections.
+              Créez une adresse e-mail et ouvrez le webmail en un clic.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -448,10 +448,10 @@ export function EmailManager({ title }: { title: string }) {
                 href={resolveAppUrl(overview.webmail_url)}
                 target="_blank"
                 rel="noreferrer"
-                title="Ouvrir Roundcube"
+                title="Ouvrir le webmail"
               >
                 <ExternalLink className="h-4 w-4" />
-                <span className="hidden sm:inline">Roundcube</span>
+                <span className="hidden sm:inline">Webmail</span>
               </a>
             )}
             <button

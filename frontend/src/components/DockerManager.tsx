@@ -117,7 +117,7 @@ export function DockerManager({ title }: { title: string }) {
     <div className="space-y-4 animate-fade-up">
       <PageHeader
         title={title}
-        subtitle="Conteneurs Docker — images, ports, démarrage, journaux et quotas."
+        subtitle="Lancez une image Docker si votre forfait l’autorise."
         stats={[
           { label: "Conteneurs", value: overview?.containers ?? "—" },
           { label: "En cours", value: overview?.running ?? "—" },

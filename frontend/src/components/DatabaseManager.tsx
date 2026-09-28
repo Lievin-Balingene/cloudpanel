@@ -214,7 +214,7 @@ export function DatabaseManager({ title }: { title: string }) {
           <div>
             <h1 className="text-xl font-semibold">{title}</h1>
             <p className="text-sm text-cp-muted">
-              Manage MySQL and PostgreSQL databases, users, and privileges.
+              Créez une base, un utilisateur et ouvrez phpMyAdmin.
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
               <span className="rounded border border-cp-border bg-cp-canvas px-2 py-1 text-cp-muted">

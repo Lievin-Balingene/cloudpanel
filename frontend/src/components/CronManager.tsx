@@ -153,7 +153,7 @@ export function CronManager({ title }: { title: string }) {
     <div className="space-y-4">
       <PageHeader
         title={title}
-        subtitle="Planifiez des commandes comme sur cPanel (Common Settings + Standard)."
+        subtitle="Planifiez une commande qui s’exécute automatiquement (ex. tous les jours à 3 h)."
       />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

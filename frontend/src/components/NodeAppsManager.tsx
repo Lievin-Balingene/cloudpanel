@@ -365,7 +365,7 @@ export function NodeAppsManager({ title }: { title: string }) {
     <div className="space-y-3 animate-fade-up">
       <PageHeader
         title={title}
-        subtitle="Créez une app Node, liez un domaine, npm install, puis démarrez."
+        subtitle="Créez une app Node.js, liez un domaine, puis démarrez-la."
         actions={
           <button
             type="button"
