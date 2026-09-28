@@ -826,11 +826,42 @@ def create_mailing_list(
     return lst
 
 
-def webmail_url() -> str:
-    return getattr(settings, "VZONE_WEBMAIL_URL", "/webmail/")
+def webmail_url(request=None) -> str:
+    """
+    URL de base Roundcube.
+
+    Si VZONE_WEBMAIL_URL est absolue (http…), on la garde.
+    Sinon on construit ``http(s)://host:9095/webmail/`` pour que le SSO
+    depuis le panel client (:9082) n'ouvre pas le SPA (qui n'avait pas /webmail/).
+    """
+    configured = (getattr(settings, "VZONE_WEBMAIL_URL", None) or "/webmail/").strip()
+    if configured.startswith("http://") or configured.startswith("https://"):
+        return configured if configured.endswith("/") else configured + "/"
+
+    path = configured if configured.startswith("/") else f"/{configured}"
+    if not path.endswith("/"):
+        path += "/"
+
+    if request is None:
+        return path
+
+    port = int(getattr(settings, "VZONE_WEBMAIL_PORT", 9095) or 9095)
+    xf_host = (
+        request.META.get("HTTP_X_FORWARDED_HOST")
+        or request.META.get("HTTP_X_ORIGINAL_HOST")
+        or ""
+    )
+    host = (xf_host.split(",")[0].strip() if xf_host else "") or request.get_host()
+    host = host.split(":")[0].strip() or "localhost"
+    scheme = (
+        request.META.get("HTTP_X_FORWARDED_PROTO")
+        or ("https" if request.is_secure() else "http")
+    )
+    scheme = scheme.split(",")[0].strip() or "http"
+    return f"{scheme}://{host}:{port}{path}"
 
 
-def create_webmail_sso(box: Mailbox) -> dict:
+def create_webmail_sso(box: Mailbox, *, request=None) -> dict:
     """Génère un token one-shot pour ouvrir Roundcube déjà authentifié."""
     import json
     import secrets
@@ -889,9 +920,10 @@ def create_webmail_sso(box: Mailbox) -> dict:
         except OSError:
             pass
 
-    base = webmail_url().rstrip("/") + "/"
+    base = webmail_url(request).rstrip("/") + "/"
     return {
         "url": f"{base}vzone-sso.php?t={token}",
         "expires_in": 90,
         "address": box.address,
+        "webmail_base": base,
     }

@@ -84,7 +84,7 @@ def test_create_domain_mailbox_forwarder(api: APIClient, mail_root):
     assert data["domains"] == 1
     assert data["mailboxes"] == 1
     assert data["forwarders"] == 1
-    assert data["webmail_url"] == "/webmail/"
+    assert data["webmail_url"].endswith("/webmail/")
 
     maps = write_mail_maps()
     assert (maps / "vmailbox").exists()

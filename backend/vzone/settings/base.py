@@ -328,6 +328,8 @@ VZONE_ENABLED_MODULES = env_list(
 
 # Email / webmail
 VZONE_WEBMAIL_URL = env("VZONE_WEBMAIL_URL", "/webmail/")
+# Port dédié webmail (comme cPanel :2096) — utilisé pour les liens SSO absolus
+VZONE_WEBMAIL_PORT = env_int("VZONE_WEBMAIL_PORT", 9095)
 VZONE_MAIL_MAPS_DIR = env("VZONE_MAIL_MAPS_DIR", str(VZONE_DATA_ROOT / "mail" / "maps"))
 # Maildirs virtuels (Dovecot vmail) — PAS sous /home (sinon Roundcube refuse le login)
 VZONE_MAIL_HOME_ROOT = env("VZONE_MAIL_HOME_ROOT", "cpanel")  # cpanel → ~/mail ; ou chemin absolu

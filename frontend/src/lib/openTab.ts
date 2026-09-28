@@ -17,29 +17,50 @@ export function openBlankTab(): Window | null {
   }
 }
 
-/** Navigue l’onglet pré-ouvert, sinon nouvel onglet, sinon navigation même onglet. */
+/**
+ * Navigue l’onglet pré-ouvert.
+ * Utilise document.write + meta refresh (fiable cross-origin about:blank),
+ * sinon location, sinon navigation même onglet (toujours OK).
+ */
 export function navigateOpenedTab(win: Window | null, rawUrl: string): void {
   const url = resolveAppUrl(rawUrl);
   if (!url) return;
 
   if (win && !win.closed) {
     try {
-      win.location.replace(url);
-      win.focus();
+      const safe = url.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+      win.document.open();
+      win.document.write(
+        `<!DOCTYPE html><html><head><meta charset="utf-8">` +
+          `<meta http-equiv="refresh" content="0;url=${safe}">` +
+          `<title>Connexion webmail…</title></head><body style="font-family:system-ui;padding:2rem">` +
+          `<p>Connexion au webmail…</p>` +
+          `<script>location.replace(${JSON.stringify(url)});</script>` +
+          `</body></html>`,
+      );
+      win.document.close();
+      try {
+        win.focus();
+      } catch {
+        /* ignore */
+      }
       return;
     } catch {
       try {
-        win.close();
+        win.location.href = url;
+        return;
       } catch {
-        /* ignore */
+        try {
+          win.close();
+        } catch {
+          /* ignore */
+        }
       }
     }
   }
 
-  const popup = window.open(url, "_blank");
-  if (!popup) {
-    window.location.assign(url);
-  }
+  // Dernier recours : même onglet (jamais bloqué)
+  window.location.assign(url);
 }
 
 export function closeOpenedTab(win: Window | null): void {

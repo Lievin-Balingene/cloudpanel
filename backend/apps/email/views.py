@@ -313,7 +313,7 @@ class EmailOverviewView(APIView):
                     "mailboxes": boxes.count(),
                     "active_mailboxes": boxes.filter(is_active=True, is_suspended=False).count(),
                     "forwarders": MailForwarder.objects.filter(mail_domain__in=domains).count(),
-                    "webmail_url": webmail_url(),
+                    "webmail_url": webmail_url(request),
                 },
             }
         )
@@ -332,5 +332,5 @@ class WebmailSsoView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         box = get_object_or_404(mailboxes_qs(request.user), pk=mailbox_id)
-        data = create_webmail_sso(box)
+        data = create_webmail_sso(box, request=request)
         return Response({"success": True, "data": data})
