@@ -1,10 +1,32 @@
 #!/usr/bin/env bash
-# Installe les deps npm + build le frontend V-zone (robuste face à ENOTEMPTY).
+# Sync sources + deps npm + build frontend V-zone (robuste face à ENOTEMPTY).
 # Usage: bash scripts/npm-frontend.sh [/opt/vzone/frontend]
 set -euo pipefail
 
 FRONTEND_DIR="${1:-${VZONE_ROOT:-/opt/vzone}/frontend}"
-[[ -d "$FRONTEND_DIR" ]] || { echo "[vzone] Frontend introuvable: $FRONTEND_DIR" >&2; exit 1; }
+REPO_DIR="${REPO_DIR:-/opt/vzone-src}"
+SRC_FE=""
+for candidate in \
+  "${REPO_DIR}/frontend" \
+  /opt/vzone-src/frontend \
+  "$(cd "$(dirname "$0")/.." && pwd)/frontend"; do
+  if [[ -f "${candidate}/package.json" ]]; then
+    SRC_FE="$candidate"
+    break
+  fi
+done
+
+mkdir -p "$FRONTEND_DIR"
+
+# Toujours resync le code source depuis le dépôt (sinon rebuild = ancien JS)
+if [[ -n "$SRC_FE" && "$(cd "$SRC_FE" && pwd)" != "$(cd "$FRONTEND_DIR" && pwd 2>/dev/null || true)" ]]; then
+  echo "[vzone] Sync frontend ${SRC_FE} → ${FRONTEND_DIR}"
+  rsync -a \
+    --exclude node_modules \
+    --exclude dist \
+    "${SRC_FE}/" "${FRONTEND_DIR}/"
+fi
+
 [[ -f "${FRONTEND_DIR}/package.json" ]] || {
   echo "[vzone] package.json manquant dans $FRONTEND_DIR" >&2
   exit 1
@@ -13,7 +35,6 @@ FRONTEND_DIR="${1:-${VZONE_ROOT:-/opt/vzone}/frontend}"
 cd "$FRONTEND_DIR"
 
 npm_install_deps() {
-  # --prefer-offline accélère ; --no-fund évite le bruit CI
   if [[ -f package-lock.json ]]; then
     npm ci --no-audit --no-fund "$@"
   else
@@ -24,12 +45,9 @@ npm_install_deps() {
 echo "[vzone] npm deps → ${FRONTEND_DIR}"
 if ! npm_install_deps; then
   echo "[vzone] npm a échoué (souvent ENOTEMPTY) — purge node_modules + retry…"
-  # Sur certains FS (overlay/rsync), rmdir échoue si des fichiers fantômes restent
   rm -rf node_modules
-  # Dossiers de rename npm (.pkg-XXXX) laissés par un install interrompu
   find . -maxdepth 1 -type d -name '.*' -name '*-*' 2>/dev/null \
     | while read -r d; do rm -rf "$d" 2>/dev/null || true; done
-  # Cache npm local du projet si présent
   rm -rf .npm 2>/dev/null || true
 
   if ! npm_install_deps; then
@@ -49,4 +67,10 @@ if [[ ! -f "${FRONTEND_DIR}/dist/index.html" ]]; then
 fi
 
 chmod -R a+rX "${FRONTEND_DIR}/dist" || true
-echo "[vzone] Frontend OK → ${FRONTEND_DIR}/dist/index.html"
+# Afficher le hash du bundle pour vérifier qu'un vrai rebuild a eu lieu
+JS_BUNDLE="$(ls -1 "${FRONTEND_DIR}/dist/assets/"index-*.js 2>/dev/null | head -n1 || true)"
+if [[ -n "$JS_BUNDLE" ]]; then
+  echo "[vzone] Frontend OK → ${FRONTEND_DIR}/dist/index.html ($(basename "$JS_BUNDLE"))"
+else
+  echo "[vzone] Frontend OK → ${FRONTEND_DIR}/dist/index.html"
+fi
