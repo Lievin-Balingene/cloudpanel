@@ -122,7 +122,7 @@ def render_vhconf(*, domain: Domain, docroot: str, php_version: str) -> str:
     aliases = ""
     if domain.domain_type in {Domain.DomainType.PRIMARY, Domain.DomainType.ADDON}:
         aliases = f"www.{domain.name}"
-    # docRoot absolu (sous vhRoot = home) — index.html en premier = page « Site prêt »
+    # docRoot absolu (sous vhRoot = home) — index.php en premier pour WordPress / PHP
     return f"""# V-zone OLS vhconf — {domain.name}
 docRoot                   {docroot.rstrip('/')}/
 vhDomain                  {domain.name}
@@ -140,9 +140,10 @@ accesslog /var/lib/vzone/ols/logs/{_safe_vh_name(domain.name)}.access.log {{
   rollingSize             10M
 }}
 
+    # index.php en premier : WordPress / apps PHP ; index.html seulement si pas de PHP
 index  {{
   useServer               0
-  indexFiles              index.html, index.htm, index.php
+  indexFiles              index.php, index.html, index.htm
 }}
 
 scripthandler  {{

@@ -357,10 +357,10 @@ def _location_body(backend: DomainBackend, *, use_ols: bool = False) -> str:
         # Pas de `$uri/` seul : sinon dossier sans index → 403 nginx (directory index).
         return f"""
     root {docroot};
-    index index.html index.htm index.php;
+    index index.php index.html index.htm;
 
     location / {{
-        try_files $uri $uri/index.html $uri/index.htm /index.php?$query_string;
+        try_files $uri $uri/index.php $uri/index.html $uri/index.htm /index.php?$query_string;
     }}
 
     location ~ \\.php$ {{
@@ -405,7 +405,7 @@ def _location_body(backend: DomainBackend, *, use_ols: bool = False) -> str:
     if default_sock:
         location_root = """
     location / {
-        try_files $uri $uri/index.html $uri/index.htm /index.php?$query_string;
+        try_files $uri $uri/index.php $uri/index.html $uri/index.htm /index.php?$query_string;
     }
 """
     else:
@@ -417,7 +417,7 @@ def _location_body(backend: DomainBackend, *, use_ols: bool = False) -> str:
 
     return f"""
     root {docroot};
-    index index.html index.htm index.php;
+    index index.php index.html index.htm;
 {location_root}{php_block}
     location ~* \\.(?:css|js|jpg|jpeg|gif|png|ico|svg|woff2?)$ {{
         expires 7d;

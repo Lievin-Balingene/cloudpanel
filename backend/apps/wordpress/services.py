@@ -104,6 +104,63 @@ def _php_bin(version: str = "") -> str:
     return "php"
 
 
+def _clear_welcome_index(docroot: Path, *, force: bool = False) -> bool:
+    """
+    Retire index.html / index.htm qui masquent WordPress.
+
+    Nginx/OLS listent index.html AVANT index.php → la page « Site prêt »
+    continue de s'afficher tant qu'elle existe, même après wp core install.
+    """
+    removed = False
+    for name in ("index.html", "index.htm", "index.HTML", "index.HTM"):
+        path = docroot / name
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            text = ""
+        is_welcome = any(
+            marker in text
+            for marker in (
+                "Site prêt",
+                "Site Ready",
+                "V-zone",
+                "cPanel",
+                "Document root",
+                "prêt à recevoir du contenu",
+                "ready to receive content",
+            )
+        )
+        # Si WP (ou autre PHP) est déjà là, toujours enlever le HTML d'accueil
+        has_wp = (docroot / "index.php").is_file() or (docroot / "wp-config.php").is_file()
+        if force or is_welcome or has_wp:
+            try:
+                path.unlink(missing_ok=True)
+                removed = True
+                logger.info("Removed conflicting %s in %s", name, docroot)
+            except OSError:
+                logger.exception("Cannot remove %s in %s", name, docroot)
+    return removed
+
+
+def repair_wordpress_frontends(user: User | None = None) -> int:
+    """Corrige les sites WP actifs encore masqués par index.html (Site prêt)."""
+    qs = WordPressSite.objects.filter(status=WordPressSite.Status.ACTIVE)
+    if user is not None and user.role != User.Role.ADMINISTRATOR:
+        qs = sites_qs(user).filter(status=WordPressSite.Status.ACTIVE)
+    fixed = 0
+    for site in qs.iterator():
+        root = Path(site.document_root) if site.document_root else None
+        if root is None or not root.is_dir():
+            continue
+        if not (root / "index.php").is_file() and not (root / "wp-config.php").is_file():
+            continue
+        if _clear_welcome_index(root, force=True):
+            fixed += 1
+    return fixed
+
+
 def _refresh_routing() -> None:
     try:
         from apps.domains.services import refresh_web_routing
@@ -400,10 +457,8 @@ def install_wordpress(
             mysql_host = "localhost"
 
         if should_execute():
-            # Retirer la page d'accueil panel si présente
-            welcome = docroot / "index.html"
-            if welcome.is_file() and "V-zone" in welcome.read_text(encoding="utf-8", errors="ignore"):
-                welcome.unlink(missing_ok=True)
+            # Toujours retirer la page « Site prêt » (sinon elle prime sur index.php)
+            _clear_welcome_index(docroot, force=True)
 
             _run_wp(
                 ["core", "download", f"--locale={locale}", "--force"],
@@ -411,6 +466,9 @@ def install_wordpress(
                 php_version=site.php_version,
                 timeout=420,
             )
+            # wp download peut laisser / réécrire des stubs — purge HTML d'accueil à nouveau
+            _clear_welcome_index(docroot, force=True)
+
             _run_wp(
                 [
                     "config",
@@ -446,9 +504,11 @@ def install_wordpress(
                 path=docroot,
                 php_version=site.php_version,
             )
+            _clear_welcome_index(docroot, force=True)
             _fix_ownership(docroot, owner.username)
         else:
             _mock_install(docroot, title=title, site_url=site_url)
+            _clear_welcome_index(docroot, force=True)
 
         site.status = WordPressSite.Status.ACTIVE
         site.last_error = ""

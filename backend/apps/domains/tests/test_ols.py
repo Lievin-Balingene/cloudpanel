@@ -55,7 +55,7 @@ def test_ols_vhconf_contains_lsphp():
     assert "docRoot" in text
     assert "lsapi:" in text
     assert "autoLoadHtaccess" in text
-    assert "index.html, index.htm, index.php" in text
+    assert "index.php, index.html, index.htm" in text
     block = render_virtualhost_block(domain=domain, docroot="/home/u/public_html")
     assert "virtualhost" in block
     assert "setUIDMode              2" in block

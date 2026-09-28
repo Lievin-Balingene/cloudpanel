@@ -14,6 +14,7 @@ from apps.wordpress.services import (
     delete_wordpress,
     install_wordpress,
     overview_for,
+    repair_wordpress_frontends,
     sites_qs,
 )
 
@@ -31,6 +32,11 @@ class WordPressOverviewView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request: Request) -> Response:
+        # Corrige les sites déjà installés encore masqués par index.html « Site prêt »
+        try:
+            repair_wordpress_frontends(request.user)
+        except Exception:  # noqa: BLE001
+            pass
         return Response({"success": True, "data": overview_for(request.user)})
 
 
@@ -38,6 +44,10 @@ class WordPressSiteListCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request: Request) -> Response:
+        try:
+            repair_wordpress_frontends(request.user)
+        except Exception:  # noqa: BLE001
+            pass
         qs = sites_qs(request.user)
         return Response({"success": True, "data": WordPressSiteSerializer(qs, many=True).data})
 
