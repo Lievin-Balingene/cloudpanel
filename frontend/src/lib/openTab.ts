@@ -18,9 +18,8 @@ export function openBlankTab(): Window | null {
 }
 
 /**
- * Navigue l’onglet pré-ouvert.
- * Utilise document.write + meta refresh (fiable cross-origin about:blank),
- * sinon location, sinon navigation même onglet (toujours OK).
+ * Navigue l’onglet pré-ouvert EXACTEMENT une fois.
+ * (meta refresh + location.replace = double hit → token SSO consommé 2×)
  */
 export function navigateOpenedTab(win: Window | null, rawUrl: string): void {
   const url = resolveAppUrl(rawUrl);
@@ -28,17 +27,8 @@ export function navigateOpenedTab(win: Window | null, rawUrl: string): void {
 
   if (win && !win.closed) {
     try {
-      const safe = url.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
-      win.document.open();
-      win.document.write(
-        `<!DOCTYPE html><html><head><meta charset="utf-8">` +
-          `<meta http-equiv="refresh" content="0;url=${safe}">` +
-          `<title>Connexion webmail…</title></head><body style="font-family:system-ui;padding:2rem">` +
-          `<p>Connexion au webmail…</p>` +
-          `<script>location.replace(${JSON.stringify(url)});</script>` +
-          `</body></html>`,
-      );
-      win.document.close();
+      // Une seule navigation — pas de meta refresh en plus
+      win.location.replace(url);
       try {
         win.focus();
       } catch {
@@ -47,7 +37,12 @@ export function navigateOpenedTab(win: Window | null, rawUrl: string): void {
       return;
     } catch {
       try {
-        win.location.href = url;
+        win.document.open();
+        win.document.write(
+          `<!DOCTYPE html><html><head><meta charset="utf-8"><title>…</title></head>` +
+            `<body><script>location.replace(${JSON.stringify(url)});</script></body></html>`,
+        );
+        win.document.close();
         return;
       } catch {
         try {
@@ -59,7 +54,7 @@ export function navigateOpenedTab(win: Window | null, rawUrl: string): void {
     }
   }
 
-  // Dernier recours : même onglet (jamais bloqué)
+  // Dernier recours : même onglet (jamais bloqué par le popup blocker)
   window.location.assign(url);
 }
 

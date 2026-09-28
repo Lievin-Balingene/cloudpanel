@@ -906,19 +906,42 @@ def create_webmail_sso(box: Mailbox, *, request=None) -> dict:
         "exp": int(time.time()) + 90,
     }
     token_path = sso_dir / f"{token}.json"
-    token_path.write_text(json.dumps(payload), encoding="utf-8")
+    # Écriture + droits explicites pour PHP-FPM (www-data)
+    payload_json = json.dumps(payload)
+    fd = os.open(
+        str(token_path),
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        0o664,
+    )
     try:
-        token_path.chmod(0o660)
+        os.write(fd, payload_json.encode("utf-8"))
+    finally:
+        os.close(fd)
+    try:
+        os.chmod(token_path, 0o664)
+    except OSError:
+        pass
+    try:
         import grp
+        import pwd
 
-        # Lisible par PHP-FPM (www-data)
+        uid = pwd.getpwnam("vzone").pw_uid
         gid = grp.getgrnam("www-data").gr_gid
-        os.chown(token_path, -1, gid)
+        os.chown(token_path, uid, gid)
     except (OSError, KeyError, ImportError):
         try:
-            token_path.chmod(0o644)
+            # Fallback : lisible par tous si chown impossible
+            os.chmod(token_path, 0o644)
         except OSError:
             pass
+    # Dossier SSO : setgid www-data
+    try:
+        import grp
+
+        os.chmod(sso_dir, 0o2770)
+        os.chown(sso_dir, -1, grp.getgrnam("www-data").gr_gid)
+    except (OSError, KeyError, ImportError):
+        pass
 
     base = webmail_url(request).rstrip("/") + "/"
     return {

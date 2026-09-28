@@ -40,18 +40,35 @@ if ($token === '' || strlen($token) < 32) {
 }
 
 $path = rtrim($ssoDir, '/') . '/' . $token . '.json';
-if (!is_file($path) || !is_readable($path)) {
+$consumed = $path . '.used';
+
+// Consommation atomique : une seule requête gagne le rename
+if (!is_file($path) || !@rename($path, $consumed)) {
+    $hint = !is_dir($ssoDir)
+        ? 'dir_missing'
+        : (!is_readable($ssoDir) ? 'dir_unreadable' : 'token_missing_or_used');
     header('Content-Type: text/plain; charset=utf-8');
     http_response_code(403);
     exit(
         "Session expirée ou token déjà utilisé.\n" .
-        "Rouvrez le webmail depuis le panel (nouveau token, 90s).\n" .
-        "SSO dir: {$ssoDir}\n"
+        "Rouvrez le webmail depuis le panel (un seul clic, sans recharger).\n" .
+        "SSO dir: {$ssoDir} ({$hint})\n" .
+        "Réparez si besoin: sudo bash /opt/vzone-src/scripts/repair-roundcube.sh\n"
     );
 }
 
-$raw = file_get_contents($path);
-@unlink($path);
+if (!is_readable($consumed)) {
+    @unlink($consumed);
+    header('Content-Type: text/plain; charset=utf-8');
+    http_response_code(403);
+    exit(
+        "Token SSO illisible par PHP (droits fichier).\n" .
+        "sudo chown -R vzone:www-data /var/lib/vzone/roundcube && sudo chmod 2770 /var/lib/vzone/roundcube/sso\n"
+    );
+}
+
+$raw = file_get_contents($consumed);
+@unlink($consumed);
 $data = json_decode((string)$raw, true);
 if (!is_array($data) || empty($data['user']) || !array_key_exists('password', $data)) {
     header('Content-Type: text/plain; charset=utf-8');
