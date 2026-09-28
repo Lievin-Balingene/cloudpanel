@@ -65,6 +65,13 @@ else
     fi
   fi
   php -l "$CFG"
+  # session_path requis pour que le cookie SSO survive au redirect inbox
+  if ! grep -q "session_path" "$CFG"; then
+    sed -i "/request_path/a \$config['session_path'] = '/webmail/';" "$CFG" || true
+  fi
+  if ! grep -q "session_domain" "$CFG"; then
+    sed -i "/session_path/a \$config['session_domain'] = '';" "$CFG" || true
+  fi
 fi
 
 echo

@@ -885,6 +885,21 @@ def create_webmail_sso(box: Mailbox, *, request=None) -> dict:
             code="no_secret",
             status_code=400,
         )
+    # Cohérence hash ↔ secret (sinon Roundcube ouvre sans IMAP auth)
+    if not box.check_password(password):
+        raise VZoneAPIException(
+            detail=(
+                "Le secret SSO ne correspond plus au mot de passe de la boîte. "
+                "Réinitialisez le mot de passe dans le panel, puis réessayez Webmail."
+            ),
+            code="secret_mismatch",
+            status_code=400,
+        )
+    # Publier les maps Dovecot juste avant le SSO
+    try:
+        write_mail_maps()
+    except Exception:  # noqa: BLE001
+        logger.exception("write_mail_maps avant SSO a échoué")
 
     sso_dir = Path(
         getattr(settings, "VZONE_ROUNDCUBE_SSO_DIR", None)

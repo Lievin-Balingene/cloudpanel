@@ -38,6 +38,8 @@ $config['temp_dir'] = '__TEMP_DIR__';
 $config['mime_types'] = null;
 
 $config['request_path'] = '/webmail/';
+$config['session_path'] = '/webmail/';
+$config['session_domain'] = '';
 
 $config['imap_conn_options'] = [
     'ssl' => [
