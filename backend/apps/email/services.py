@@ -906,10 +906,34 @@ def create_webmail_sso(box: Mailbox, *, request=None) -> dict:
         or (Path(settings.VZONE_DATA_ROOT) / "roundcube" / "sso")
     )
     sso_dir.mkdir(parents=True, exist_ok=True)
+    # Droits : Django (vzone) écrit, PHP-FPM (www-data) rename/lit
     try:
+        import grp
+        import pwd
+
+        uid = pwd.getpwnam("vzone").pw_uid
+        gid = grp.getgrnam("www-data").gr_gid
+        os.chown(sso_dir, uid, gid)
         os.chmod(sso_dir, 0o2770)
+    except (OSError, KeyError, ImportError):
+        try:
+            # Sans root : dossier world-sticky pour que PHP puisse rename
+            os.chmod(sso_dir, 0o1777)
+        except OSError:
+            pass
+
+    # Nettoyage tokens périmés / .used vieux (> 10 min)
+    try:
+        now = time.time()
+        for stale in sso_dir.glob("*.json*"):
+            try:
+                if now - stale.stat().st_mtime > 600:
+                    stale.unlink(missing_ok=True)
+            except OSError:
+                pass
     except OSError:
         pass
+
     token = secrets.token_hex(32)
     imap_host = (
         getattr(settings, "VZONE_ROUNDCUBE_IMAP_HOST", None) or "127.0.0.1:143"
@@ -918,24 +942,42 @@ def create_webmail_sso(box: Mailbox, *, request=None) -> dict:
         "user": box.address,
         "password": password,
         "imap_host": imap_host,
-        "exp": int(time.time()) + 90,
+        "exp": int(time.time()) + 120,
     }
     token_path = sso_dir / f"{token}.json"
-    # Écriture + droits explicites pour PHP-FPM (www-data)
+    # Écriture atomique + droits pour www-data
     payload_json = json.dumps(payload)
+    tmp_path = sso_dir / f".{token}.tmp"
     fd = os.open(
-        str(token_path),
+        str(tmp_path),
         os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
-        0o664,
+        0o660,
     )
     try:
         os.write(fd, payload_json.encode("utf-8"))
     finally:
         os.close(fd)
     try:
-        os.chmod(token_path, 0o664)
+        import grp
+        import pwd
+
+        uid = pwd.getpwnam("vzone").pw_uid
+        gid = grp.getgrnam("www-data").gr_gid
+        os.chown(tmp_path, uid, gid)
+        os.chmod(tmp_path, 0o660)
+    except (OSError, KeyError, ImportError):
+        try:
+            os.chmod(tmp_path, 0o666)
+        except OSError:
+            pass
+    os.replace(str(tmp_path), str(token_path))
+    try:
+        os.chmod(token_path, 0o660)
     except OSError:
-        pass
+        try:
+            os.chmod(token_path, 0o666)
+        except OSError:
+            pass
     try:
         import grp
         import pwd
@@ -944,24 +986,12 @@ def create_webmail_sso(box: Mailbox, *, request=None) -> dict:
         gid = grp.getgrnam("www-data").gr_gid
         os.chown(token_path, uid, gid)
     except (OSError, KeyError, ImportError):
-        try:
-            # Fallback : lisible par tous si chown impossible
-            os.chmod(token_path, 0o644)
-        except OSError:
-            pass
-    # Dossier SSO : setgid www-data
-    try:
-        import grp
-
-        os.chmod(sso_dir, 0o2770)
-        os.chown(sso_dir, -1, grp.getgrnam("www-data").gr_gid)
-    except (OSError, KeyError, ImportError):
         pass
 
     base = webmail_url(request).rstrip("/") + "/"
     return {
         "url": f"{base}vzone-sso.php?t={token}",
-        "expires_in": 90,
+        "expires_in": 120,
         "address": box.address,
         "webmail_base": base,
     }

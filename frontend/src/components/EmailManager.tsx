@@ -314,6 +314,8 @@ export function EmailManager({ title }: { title: string }) {
       apiRequest<{ url: string; address: string }>("/email/webmail/sso/", {
         method: "POST",
         body: JSON.stringify({ mailbox_id: mailboxId }),
+        // Un seul essai : un retry créerait un 2ᵉ token / confusion
+        retry: false,
       }),
     onSuccess: (data, vars) => {
       setError(null);
@@ -331,6 +333,7 @@ export function EmailManager({ title }: { title: string }) {
   });
 
   function connectWebmail(mailboxId: number) {
+    if (openWebmail.isPending) return;
     setError(null);
     // Ouvrir l’onglet PENDANT le geste clic (sinon bloqueur de popups après fetch)
     const win = openBlankTab();

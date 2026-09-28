@@ -51,8 +51,18 @@ chmod -R g+rwX "${DATA_ROOT}/mail" 2>/dev/null || true
 
 SSO_DIR="${VZONE_ROUNDCUBE_SSO_DIR:-${DATA_ROOT}/roundcube/sso}"
 mkdir -p "$SSO_DIR"
+# vzone écrit, www-data (PHP-FPM) rename/lit — setgid + sticky absents
 chown vzone:www-data "$SSO_DIR"
 chmod 2770 "$SSO_DIR"
+# Nettoyage tokens orphelins
+find "$SSO_DIR" -type f -name '*.json*' -mmin +10 -delete 2>/dev/null || true
+# Garantir que www-data est dans le groupe et peut écrire
+usermod -aG www-data vzone 2>/dev/null || true
+# Test écriture PHP-compatible
+touch "${SSO_DIR}/.write-test" 2>/dev/null && chown vzone:www-data "${SSO_DIR}/.write-test" && chmod 660 "${SSO_DIR}/.write-test" && rm -f "${SSO_DIR}/.write-test" || {
+  echo "[warn] SSO dir peu accessible — fallback 1777"
+  chmod 1777 "$SSO_DIR" || true
+}
 
 touch "$ENV_FILE"
 grep -q '^VZONE_MAIL_HOME_ROOT=' "$ENV_FILE" 2>/dev/null \

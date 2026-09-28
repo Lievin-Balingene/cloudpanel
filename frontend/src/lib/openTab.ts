@@ -27,8 +27,10 @@ export function navigateOpenedTab(win: Window | null, rawUrl: string): void {
 
   if (win && !win.closed) {
     try {
-      // Une seule navigation — pas de meta refresh en plus
-      win.location.replace(url);
+      // Empêche un éventuel prefetch / historique de rejouer le GET SSO
+      const sep = url.includes("?") ? "&" : "?";
+      const once = `${url}${sep}_=${Date.now().toString(36)}`;
+      win.location.replace(once);
       try {
         win.focus();
       } catch {
@@ -39,8 +41,10 @@ export function navigateOpenedTab(win: Window | null, rawUrl: string): void {
       try {
         win.document.open();
         win.document.write(
-          `<!DOCTYPE html><html><head><meta charset="utf-8"><title>…</title></head>` +
-            `<body><script>location.replace(${JSON.stringify(url)});</script></body></html>`,
+          `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Webmail</title>` +
+            `<meta http-equiv="Cache-Control" content="no-store">` +
+            `</head><body><p>Ouverture du webmail…</p>` +
+            `<script>location.replace(${JSON.stringify(url)});</script></body></html>`,
         );
         win.document.close();
         return;

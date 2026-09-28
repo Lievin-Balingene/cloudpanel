@@ -39,15 +39,19 @@ async function parseJson<T>(response: Response): Promise<T> {
 
 export async function apiRequest<T>(
   path: string,
-  options: RequestInit = {},
+  options: RequestInit & { retry?: boolean | number } = {},
 ): Promise<T> {
-  const maxAttempts =
-    options.method && options.method.toUpperCase() !== "GET" ? 3 : 2;
+  const { retry, ...fetchInit } = options;
+  const method = (fetchInit.method || "GET").toUpperCase();
+  let maxAttempts = method === "GET" ? 2 : 3;
+  if (retry === false) maxAttempts = 1;
+  else if (typeof retry === "number" && retry >= 1) maxAttempts = retry;
+
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      return await apiRequestOnce<T>(path, options);
+      return await apiRequestOnce<T>(path, fetchInit);
     } catch (err) {
       lastError = err;
       const retryable =
