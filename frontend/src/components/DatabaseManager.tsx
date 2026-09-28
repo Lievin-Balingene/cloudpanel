@@ -8,6 +8,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
+import { closeOpenedTab, navigateOpenedTab, openBlankTab } from "@/lib/openTab";
 import { IconAction } from "@/components/ui/IconAction";
 
 interface DbOverview {
@@ -114,16 +115,24 @@ export function DatabaseManager({ title }: { title: string }) {
   });
 
   const openPhpMyAdmin = useMutation({
-    mutationFn: (userId: number) =>
+    mutationFn: async ({ userId }: { userId: number; win: Window | null }) =>
       apiRequest<{ url: string }>("/databases/phpmyadmin/sso/", {
         method: "POST",
         body: JSON.stringify({ user_id: userId }),
       }),
-    onSuccess: (data) => {
+    onSuccess: (data, vars) => {
       setError(null);
-      window.open(data.url, "_blank", "noopener,noreferrer");
+      if (!data?.url) {
+        closeOpenedTab(vars.win);
+        setError("URL phpMyAdmin manquante.");
+        return;
+      }
+      navigateOpenedTab(vars.win, data.url);
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error, vars) => {
+      closeOpenedTab(vars.win);
+      setError(err.message);
+    },
   });
 
   const removeGrant = useMutation({
@@ -365,7 +374,10 @@ export function DatabaseManager({ title }: { title: string }) {
                       <IconAction
                         label={`Ouvrir phpMyAdmin (${u.username})`}
                         disabled={openPhpMyAdmin.isPending}
-                        onClick={() => openPhpMyAdmin.mutate(u.id)}
+                        onClick={() => {
+                          const win = openBlankTab();
+                          openPhpMyAdmin.mutate({ userId: u.id, win });
+                        }}
                       >
                         <ExternalLink className="h-4 w-4" />
                       </IconAction>

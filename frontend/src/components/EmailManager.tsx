@@ -5,6 +5,7 @@ import {
   Forward,
   Globe,
   KeyRound,
+  Loader2,
   Mail,
   PauseCircle,
   PlayCircle,
@@ -16,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
+import { closeOpenedTab, navigateOpenedTab, openBlankTab, resolveAppUrl } from "@/lib/openTab";
 
 interface MailOverview {
   domains: number;
@@ -308,22 +310,32 @@ export function EmailManager({ title }: { title: string }) {
   });
 
   const openWebmail = useMutation({
-    mutationFn: (mailboxId: number) =>
+    mutationFn: async ({ mailboxId }: { mailboxId: number; win: Window | null }) =>
       apiRequest<{ url: string; address: string }>("/email/webmail/sso/", {
         method: "POST",
         body: JSON.stringify({ mailbox_id: mailboxId }),
       }),
-    onSuccess: (data) => {
+    onSuccess: (data, vars) => {
       setError(null);
-      const raw = data.url || "";
-      const url = raw.startsWith("http")
-        ? raw
-        : `${window.location.origin}${raw.startsWith("/") ? "" : "/"}${raw}`;
-      const popup = window.open(url, "_blank", "noopener,noreferrer");
-      if (!popup) window.location.assign(url);
+      if (!data?.url) {
+        closeOpenedTab(vars.win);
+        setError("URL webmail manquante — réessayez ou ouvrez Roundcube manuellement.");
+        return;
+      }
+      navigateOpenedTab(vars.win, data.url);
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error, vars) => {
+      closeOpenedTab(vars.win);
+      setError(err.message || "Connexion au webmail impossible.");
+    },
   });
+
+  function connectWebmail(mailboxId: number) {
+    setError(null);
+    // Ouvrir l’onglet PENDANT le geste clic (sinon bloqueur de popups après fetch)
+    const win = openBlankTab();
+    openWebmail.mutate({ mailboxId, win });
+  }
 
   const changePassword = useMutation({
     mutationFn: ({ id, password }: { id: number; password: string }) =>
@@ -433,7 +445,7 @@ export function EmailManager({ title }: { title: string }) {
             {overview?.webmail_url && (
               <a
                 className="vz-btn-ghost !px-2.5"
-                href={overview.webmail_url}
+                href={resolveAppUrl(overview.webmail_url)}
                 target="_blank"
                 rel="noreferrer"
                 title="Ouvrir Roundcube"
@@ -565,13 +577,21 @@ export function EmailManager({ title }: { title: string }) {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-0.5">
-                        <IconAction
-                          label="Ouvrir le webmail"
-                          disabled={box.status !== "active" || openWebmail.isPending}
-                          onClick={() => openWebmail.mutate(box.id)}
+                        <button
+                          type="button"
+                          className="vz-btn-ghost !h-8 !gap-1 !px-2 !text-[11px]"
+                          disabled={box.status === "suspended" || openWebmail.isPending}
+                          title="Connexion au webmail (SSO Roundcube)"
+                          onClick={() => connectWebmail(box.id)}
                         >
-                          <Mail className="h-4 w-4" />
-                        </IconAction>
+                          {openWebmail.isPending &&
+                          openWebmail.variables?.mailboxId === box.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Mail className="h-3.5 w-3.5" />
+                          )}
+                          <span className="hidden sm:inline">Webmail</span>
+                        </button>
                         <IconAction
                           label="Changer le mot de passe"
                           onClick={() =>
