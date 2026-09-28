@@ -18,8 +18,14 @@ if [[ -d "${REPO_DIR}/frontend" ]]; then
 fi
 
 cd "${VZONE_ROOT}/frontend"
-npm ci || npm install
-npm run build
+# Si le helper n'est pas encore syncé (chicken/egg mid-update), fallback inline
+if [[ -f "${REPO_DIR}/scripts/npm-frontend.sh" ]]; then
+  bash "${REPO_DIR}/scripts/npm-frontend.sh" "${VZONE_ROOT}/frontend"
+else
+  rm -rf node_modules
+  npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+  npm run build
+fi
 
 if [[ ! -f "${VZONE_ROOT}/frontend/dist/index.html" ]]; then
   echo "[vzone] ÉCHEC: index.html toujours absent après build" >&2

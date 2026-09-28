@@ -354,8 +354,13 @@ if [[ ! -f "${VZONE_ROOT}/frontend/dist/index.html" ]]; then
     mkdir -p "${VZONE_ROOT}/frontend"
     rsync -a --delete --exclude node_modules --exclude dist "${SRC_FE}/" "${VZONE_ROOT}/frontend/"
     cd "${VZONE_ROOT}/frontend"
-    npm ci || npm install
-    npm run build
+    if [[ -f /opt/vzone-src/scripts/npm-frontend.sh ]]; then
+      bash /opt/vzone-src/scripts/npm-frontend.sh "${VZONE_ROOT}/frontend"
+    else
+      rm -rf node_modules
+      npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+      npm run build
+    fi
   fi
 fi
 if [[ ! -f "${VZONE_ROOT}/frontend/dist/index.html" ]]; then

@@ -46,15 +46,12 @@ else
 fi
 
 # Frontend : toujours reconstruire (évite 404 nginx sur toutes les pages)
-cd "${VZONE_ROOT}/frontend"
-npm ci || npm install
-npm run build
+bash "${REPO_DIR}/scripts/npm-frontend.sh" "${VZONE_ROOT}/frontend"
 if [[ ! -f "${VZONE_ROOT}/frontend/dist/index.html" ]]; then
   echo "[vzone] ERREUR: build frontend échoué — ${VZONE_ROOT}/frontend/dist/index.html manquant" >&2
   echo "[vzone] Réparez avec: sudo bash ${REPO_DIR}/scripts/repair-frontend.sh" >&2
   exit 1
 fi
-chmod -R a+rX "${VZONE_ROOT}/frontend/dist" || true
 
 if [[ "${BACKEND_OK}" -ne 1 ]]; then
   echo "[vzone] ERREUR: étapes backend (pip/migrate) ont échoué — corrigez puis relancez update.sh" >&2

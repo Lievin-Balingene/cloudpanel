@@ -190,9 +190,14 @@ print("seed packages:", [p.name for p in created] or "(déjà présents)")
 PY
   deactivate
 
-  cd "${VZONE_ROOT}/frontend"
-  npm ci || npm install
-  npm run build
+  if [[ -f "${SCRIPT_DIR}/npm-frontend.sh" ]]; then
+    bash "${SCRIPT_DIR}/npm-frontend.sh" "${VZONE_ROOT}/frontend"
+  else
+    cd "${VZONE_ROOT}/frontend"
+    rm -rf node_modules
+    npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+    npm run build
+  fi
 
   install -m 755 "${SCRIPT_DIR}/ensure-vzone-api.sh" /usr/local/sbin/vzone-ensure-api
   install -m 755 "${SCRIPT_DIR}/post-install-bootstrap.sh" /usr/local/sbin/vzone-bootstrap
