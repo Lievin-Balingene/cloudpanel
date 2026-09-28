@@ -56,7 +56,6 @@ import { ClientDockerPage } from "./pages/client/ClientDockerPage";
 import { ClientBackupPage } from "./pages/client/ClientBackupPage";
 import { ClientSecurityPage } from "./pages/client/ClientSecurityPage";
 import { ClientWordPressPage } from "./pages/client/ClientWordPressPage";
-import { ClientKubernetesPage } from "./pages/client/ClientKubernetesPage";
 import { ClientTerminalPage } from "./pages/client/ClientTerminalPage";
 import { useAuthStore } from "./stores/auth";
 import {
@@ -191,7 +190,7 @@ export default function App() {
         <Route path="node" element={<ClientNodePage />} />
         <Route path="php" element={<ClientPhpPage />} />
         <Route path="wordpress" element={<ClientWordPressPage />} />
-        <Route path="kubernetes" element={<ClientKubernetesPage />} />
+        <Route path="kubernetes" element={<Navigate to="/panel" replace />} />
         <Route path="terminal" element={<ClientTerminalPage />} />
         <Route path="git" element={<ClientGitPage />} />
         <Route path="docker" element={<ClientDockerPage />} />

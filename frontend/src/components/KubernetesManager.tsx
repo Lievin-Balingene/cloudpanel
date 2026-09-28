@@ -24,13 +24,23 @@ interface K8sRes {
 
 export function KubernetesManager({ title }: { title: string }) {
   const qc = useQueryClient();
-  const { data: overview } = useQuery({
+  const {
+    data: overview,
+    error: overviewError,
+    isError: overviewFailed,
+  } = useQuery({
     queryKey: ["k8s-overview"],
     queryFn: () => apiRequest<K8sOverview>("/kubernetes/overview/"),
+    retry: false,
   });
-  const { data: resources } = useQuery({
+  const {
+    data: resources,
+    error: resourcesError,
+    isError: resourcesFailed,
+  } = useQuery({
     queryKey: ["k8s-resources"],
     queryFn: () => apiRequest<K8sRes>("/kubernetes/resources/"),
+    retry: false,
   });
   const [manifest, setManifest] = useState(`apiVersion: v1
 kind: Namespace
@@ -40,6 +50,11 @@ metadata:
   const [namespace, setNamespace] = useState("");
   const [output, setOutput] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  const accessError =
+    (overviewError instanceof Error && overviewError.message) ||
+    (resourcesError instanceof Error && resourcesError.message) ||
+    null;
 
   const sampleManifest = `apiVersion: v1
 kind: Namespace
@@ -103,6 +118,12 @@ metadata:
         </p>
       </div>
 
+      {(overviewFailed || resourcesFailed) && accessError && (
+        <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          Accès Kubernetes indisponible : {accessError}
+        </div>
+      )}
+
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {[
           { label: "Namespaces", value: overview?.namespaces ?? "—" },
@@ -149,14 +170,15 @@ metadata:
             placeholder="namespace (optionnel)"
             value={namespace}
             onChange={(e) => setNamespace(e.target.value)}
+            disabled={Boolean(accessError)}
           />
-          <button className="vz-btn-primary" type="submit" disabled={apply.isPending}>
+          <button className="vz-btn-primary" type="submit" disabled={apply.isPending || Boolean(accessError)}>
             Apply YAML
           </button>
           <button
             className="vz-btn-secondary"
             type="button"
-            disabled={remove.isPending}
+            disabled={remove.isPending || Boolean(accessError)}
             onClick={() => remove.mutate()}
           >
             Delete YAML

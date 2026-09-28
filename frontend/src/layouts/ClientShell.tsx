@@ -16,7 +16,6 @@ import {
   Terminal,
   FileCode2,
   LayoutTemplate,
-  Network,
   GitBranch,
   Box,
   HardDrive,
@@ -95,7 +94,6 @@ const sections: NavSection[] = [
     items: [
       { to: "/panel/php", label: "Select PHP Version", icon: FileCode2 },
       { to: "/panel/wordpress", label: "WordPress", icon: LayoutTemplate },
-      { to: "/panel/kubernetes", label: "Kubernetes", icon: Network },
       { to: "/panel/terminal", label: "Terminal SSH", icon: Terminal },
       { to: "/panel/python", label: "Setup Python App", icon: Code2 },
       { to: "/panel/node", label: "Setup Node.js App", icon: Terminal },
@@ -390,6 +388,10 @@ export function ClientShell() {
   useEffect(() => {
     setNavOpen(false);
   }, [location.pathname]);
+
+  useEffect(() => {
+    document.title = "Panneau client · V-zone";
+  }, []);
 
   useEffect(() => {
     if (!navOpen) return;
