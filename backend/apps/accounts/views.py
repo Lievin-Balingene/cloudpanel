@@ -22,7 +22,7 @@ from apps.accounts.serializers import (
     UserUpdateSerializer,
 )
 from apps.accounts.services import issue_tokens, provisioning_uri, revoke_refresh_token
-from apps.core.permissions import IsAdministrator
+from apps.core.permissions import IsAdministrator, IsResellerOrAdmin
 
 
 class AuthRateThrottle(AnonRateThrottle):
@@ -253,6 +253,19 @@ class SuspendUserView(APIView):
     permission_classes = [IsAuthenticated, CanManageUsers]
 
     def post(self, request: Request, pk: int) -> Response:
+        if request.user.role == User.Role.RESELLER and not request.user.has_reseller_priv(
+            "suspend-acct"
+        ):
+            return Response(
+                {
+                    "success": False,
+                    "error": {
+                        "code": "reseller_privilege_denied",
+                        "message": "Privilege suspend-acct requis.",
+                    },
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
         # Même scope que UserDetailView (anti-IDOR : pas de get() global)
         qs = User.objects.all()
         if request.user.role == User.Role.ADMINISTRATOR:
@@ -319,3 +332,106 @@ class RefreshTokenView(TokenRefreshView):
 
         response = super().post(request, *args, **kwargs)
         return Response({"success": True, "data": response.data}, status=response.status_code)
+
+
+class ResellerPrivilegeCatalogView(APIView):
+    """Catalogue des privileges (Edit Reseller Privileges)."""
+
+    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+
+    def get(self, request: Request) -> Response:
+        from apps.accounts.reseller_acl import catalog_as_list
+
+        return Response({"success": True, "data": catalog_as_list()})
+
+
+class ResellerPrivilegesDetailView(APIView):
+    """
+    GET/PUT privileges d'un revendeur.
+    Admin : tous. Revendeur : lecture de ses propres privileges uniquement.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request, pk: int) -> Response:
+        from apps.accounts.models import ResellerPrivileges
+        from apps.accounts.reseller_acl import catalog_as_list, default_privileges_for_package
+        from apps.accounts.reseller_services import ensure_reseller_privileges
+
+        try:
+            target = User.objects.get(pk=pk, role=User.Role.RESELLER)
+        except User.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+
+        if request.user.is_reseller and request.user.pk != target.pk:
+            return Response(status=status.HTTP_403_FORBIDDEN)
+        if not (request.user.is_administrator or request.user.is_reseller):
+            return Response(status=status.HTTP_403_FORBIDDEN)
+
+        acl = ResellerPrivileges.objects.filter(user=target).first()
+        if acl is None:
+            acl = ensure_reseller_privileges(target)
+
+        return Response(
+            {
+                "success": True,
+                "data": {
+                    "user_id": target.pk,
+                    "username": target.username,
+                    "privileges": list(acl.privileges or []),
+                    "enforce_ownership": acl.enforce_ownership,
+                    "allow_overselling": acl.allow_overselling,
+                    "notes": acl.notes,
+                    "catalog": catalog_as_list(),
+                    "defaults": default_privileges_for_package(),
+                },
+            }
+        )
+
+    def put(self, request: Request, pk: int) -> Response:
+        from apps.accounts.reseller_acl import sanitize_privileges
+        from apps.accounts.reseller_services import ensure_reseller_privileges
+
+        if not request.user.is_administrator:
+            return Response(
+                {
+                    "success": False,
+                    "error": {
+                        "code": "forbidden",
+                        "message": "Seul un administrateur peut modifier les privileges revendeur.",
+                    },
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
+            target = User.objects.get(pk=pk, role=User.Role.RESELLER)
+        except User.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+
+        privileges = sanitize_privileges(request.data.get("privileges") or [])
+        acl = ensure_reseller_privileges(
+            target,
+            privileges=privileges,
+            updated_by=request.user,
+        )
+        if "enforce_ownership" in request.data:
+            acl.enforce_ownership = bool(request.data.get("enforce_ownership"))
+        if "allow_overselling" in request.data:
+            acl.allow_overselling = bool(request.data.get("allow_overselling"))
+        if "notes" in request.data:
+            acl.notes = str(request.data.get("notes") or "")[:255]
+        acl.updated_by = request.user
+        acl.save()
+        return Response(
+            {
+                "success": True,
+                "data": {
+                    "user_id": target.pk,
+                    "username": target.username,
+                    "privileges": list(acl.privileges or []),
+                    "enforce_ownership": acl.enforce_ownership,
+                    "allow_overselling": acl.allow_overselling,
+                    "notes": acl.notes,
+                },
+            }
+        )

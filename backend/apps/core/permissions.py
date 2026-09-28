@@ -46,3 +46,28 @@ class HasModulePermission(BasePermission):
         if perms is None:
             return False
         return self.permission_codename in perms
+
+
+class HasResellerPrivilege(BasePermission):
+    """
+    Privilege ACL revendeur (style cPanel).
+    Sur la vue : `reseller_privilege = "create-acct"` ou `reseller_privileges = [...]`.
+    """
+
+    message = "Privilege revendeur insuffisant."
+
+    def has_permission(self, request, view) -> bool:  # type: ignore[no-untyped-def]
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        if getattr(user, "role", None) == "administrator":
+            return True
+        if getattr(user, "role", None) != "reseller":
+            return False
+        codes = getattr(view, "reseller_privileges", None)
+        if codes is None:
+            single = getattr(view, "reseller_privilege", None)
+            codes = [single] if single else []
+        if not codes:
+            return True
+        return any(user.has_reseller_priv(c) for c in codes if c)

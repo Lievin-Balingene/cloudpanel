@@ -9,6 +9,8 @@ from apps.accounts.views import (
     LogoutView,
     MeView,
     RefreshTokenView,
+    ResellerPrivilegeCatalogView,
+    ResellerPrivilegesDetailView,
     SuspendUserView,
     TwoFactorSetupView,
     UserDetailView,
@@ -25,4 +27,14 @@ urlpatterns = [
     path("users/", UserListCreateView.as_view(), name="user-list"),
     path("users/<int:pk>/", UserDetailView.as_view(), name="user-detail"),
     path("users/<int:pk>/suspend/", SuspendUserView.as_view(), name="user-suspend"),
+    path(
+        "reseller-privileges/catalog/",
+        ResellerPrivilegeCatalogView.as_view(),
+        name="reseller-priv-catalog",
+    ),
+    path(
+        "reseller-privileges/<int:pk>/",
+        ResellerPrivilegesDetailView.as_view(),
+        name="reseller-priv-detail",
+    ),
 ]

@@ -89,6 +89,19 @@ class User(AbstractBaseUser, PermissionsMixin):
             return True
         return codename in (self.module_permissions or [])
 
+    def has_reseller_priv(self, code: str) -> bool:
+        """Admin = tout ; revendeur = ACL ; client = non."""
+        if self.is_administrator:
+            return True
+        if not self.is_reseller:
+            return False
+        acl = getattr(self, "reseller_privileges", None)
+        if acl is None:
+            from apps.accounts.reseller_acl import DEFAULT_RESELLER_PRIVILEGES
+
+            return code in DEFAULT_RESELLER_PRIVILEGES
+        return acl.has_priv(code)
+
 
 class ResourceQuota(models.Model):
     """Quotas de ressources attachés à un utilisateur."""
@@ -156,3 +169,50 @@ class UserSession(models.Model):
 
     def __str__(self) -> str:
         return f"Session({self.user_id}, {self.jti[:8]})"
+
+
+class ResellerPrivileges(models.Model):
+    """
+    ACL WHM du revendeur (équivalent cPanel « Edit Reseller Privileges »).
+    Les comptes clients créés via ce revendeur ont toujours parent=revendeur.
+    """
+
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name="reseller_privileges",
+        limit_choices_to={"role": User.Role.RESELLER},
+    )
+    privileges = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Liste de codes privilege (create-acct, manage-dns, …).",
+    )
+    # Securite isolation (style cPanel reseller ownership)
+    enforce_ownership = models.BooleanField(
+        default=True,
+        help_text="Les ressources des clients restent rattachees au revendeur (owner.parent).",
+    )
+    allow_overselling = models.BooleanField(
+        default=False,
+        help_text="Si false, les packages clients ne peuvent pas depasser le pool du revendeur.",
+    )
+    notes = models.CharField(max_length=255, blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reseller_acl_updates",
+    )
+
+    class Meta:
+        verbose_name = "Privileges revendeur"
+        verbose_name_plural = "Privileges revendeurs"
+
+    def __str__(self) -> str:
+        return f"ResellerACL({self.user.username})"
+
+    def has_priv(self, code: str) -> bool:
+        return code in (self.privileges or [])

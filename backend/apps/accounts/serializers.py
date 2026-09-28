@@ -32,6 +32,8 @@ class ResourceQuotaSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     quota = ResourceQuotaSerializer(read_only=True)
     primary_domain = serializers.SerializerMethodField()
+    parent_username = serializers.SerializerMethodField()
+    owner_label = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -48,6 +50,8 @@ class UserSerializer(serializers.ModelSerializer):
             "two_factor_enabled",
             "module_permissions",
             "parent",
+            "parent_username",
+            "owner_label",
             "system_username",
             "home_directory",
             "primary_domain",
@@ -65,6 +69,8 @@ class UserSerializer(serializers.ModelSerializer):
             "home_directory",
             "primary_domain",
             "two_factor_enabled",
+            "parent_username",
+            "owner_label",
         )
 
     def get_primary_domain(self, obj: User) -> str:
@@ -84,6 +90,18 @@ class UserSerializer(serializers.ModelSerializer):
             return primary or ""
         except Exception:  # noqa: BLE001
             return ""
+
+    def get_parent_username(self, obj: User) -> str:
+        parent = getattr(obj, "parent", None)
+        return parent.username if parent else ""
+
+    def get_owner_label(self, obj: User) -> str:
+        """Affichage proprietaire (revendeur) pour les listes WHM."""
+        if obj.role == User.Role.RESELLER:
+            return "root" if not obj.parent_id else (obj.parent.username if obj.parent else "root")
+        if obj.parent_id and obj.parent:
+            return obj.parent.username
+        return "root"
 
 
 class UserUpdateSerializer(serializers.ModelSerializer):
@@ -237,6 +255,12 @@ class UserCreateSerializer(serializers.ModelSerializer):
                     "domain": "Le domaine principal est requis (comme sur cPanel Create a New Account).",
                 }
             )
+        request = self.context.get("request")
+        actor = getattr(request, "user", None)
+        # Securite : un revendeur force parent=soi et role=client
+        if actor is not None and actor.is_authenticated and actor.role == User.Role.RESELLER:
+            attrs["parent"] = actor
+            attrs["role"] = User.Role.CLIENT
         return attrs
 
     def create(self, validated_data: dict) -> User:
@@ -288,6 +312,29 @@ class UserCreateSerializer(serializers.ModelSerializer):
             except VZoneAPIException as exc:
                 # Compte créé mais domaine KO — remonter clairement
                 raise serializers.ValidationError({"domain": str(exc.detail)}) from exc
+
+        # ACL revendeur des la creation
+        if user.role == User.Role.RESELLER:
+            from apps.accounts.reseller_services import ensure_reseller_privileges
+
+            can_pkgs = True
+            if package_id:
+                try:
+                    from apps.packages.models import HostingPackage
+
+                    can_pkgs = bool(
+                        HostingPackage.objects.filter(pk=package_id).values_list(
+                            "can_create_packages", flat=True
+                        ).first()
+                    )
+                except Exception:  # noqa: BLE001
+                    can_pkgs = True
+            request = self.context.get("request")
+            ensure_reseller_privileges(
+                user,
+                can_create_packages=can_pkgs,
+                updated_by=getattr(request, "user", None),
+            )
 
         user.refresh_from_db()
         return user
@@ -419,6 +466,27 @@ class ChangePasswordSerializer(serializers.Serializer):
 
 
 class MeSerializer(UserSerializer):
-    """Profil de l'utilisateur connecté."""
+    """Profil de l'utilisateur connecte + ACL WHM si revendeur."""
 
-    pass
+    reseller_privileges = serializers.SerializerMethodField()
+    reseller_privilege_catalog = serializers.SerializerMethodField()
+
+    class Meta(UserSerializer.Meta):
+        fields = UserSerializer.Meta.fields + (
+            "reseller_privileges",
+            "reseller_privilege_catalog",
+        )
+
+    def get_reseller_privileges(self, obj: User) -> list[str]:
+        from apps.accounts.reseller_services import get_reseller_privilege_codes
+
+        if obj.is_administrator or obj.is_reseller:
+            return get_reseller_privilege_codes(obj)
+        return []
+
+    def get_reseller_privilege_catalog(self, obj: User) -> list[dict]:
+        if not (obj.is_administrator or obj.is_reseller):
+            return []
+        from apps.accounts.reseller_acl import catalog_as_list
+
+        return catalog_as_list()

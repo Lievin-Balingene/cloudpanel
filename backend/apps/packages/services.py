@@ -71,6 +71,23 @@ def apply_package_to_user(
             "notes": notes,
         },
     )
+    if user.role == User.Role.RESELLER:
+        from apps.accounts.models import ResellerPrivileges
+        from apps.accounts.reseller_services import (
+            ensure_reseller_privileges,
+            sync_privileges_from_package,
+        )
+
+        if not ResellerPrivileges.objects.filter(user=user).exists():
+            ensure_reseller_privileges(
+                user,
+                can_create_packages=package.can_create_packages,
+                updated_by=assigned_by,
+            )
+        else:
+            sync_privileges_from_package(
+                user, can_create_packages=package.can_create_packages
+            )
     return assignment
 
 
@@ -137,10 +154,41 @@ def seed_default_packages() -> list[HostingPackage]:
             "domains": 50,
             "emails": 200,
             "databases": 50,
+            "ftp_accounts": 50,
+            "python_apps": 10,
+            "node_apps": 10,
             "max_accounts": 25,
             "can_create_packages": True,
+            "allow_ssh": False,
+            "allow_dns": True,
+            "allow_ssl": True,
+            "allow_backup": True,
+            "allow_git": True,
             "unlimited_disk": False,
             "sort_order": 10,
+            "description": "Pack revendeur standard — jusqu'a 25 comptes clients, packages personnalises.",
+        },
+        {
+            "name": "Reseller Plus",
+            "package_type": HostingPackage.PackageType.RESELLER,
+            "disk_mb": 512000,
+            "bandwidth_mb": 5120000,
+            "domains": 200,
+            "emails": 1000,
+            "databases": 200,
+            "ftp_accounts": 200,
+            "python_apps": 50,
+            "node_apps": 50,
+            "docker_containers": 10,
+            "max_accounts": 100,
+            "can_create_packages": True,
+            "allow_ssh": True,
+            "allow_dns": True,
+            "allow_ssl": True,
+            "allow_backup": True,
+            "allow_git": True,
+            "sort_order": 20,
+            "description": "Pack revendeur avance — 100 comptes, SSH, Docker limite.",
         },
     ]
     created: list[HostingPackage] = []

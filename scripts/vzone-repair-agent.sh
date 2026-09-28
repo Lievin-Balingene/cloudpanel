@@ -26,6 +26,7 @@ ALLOWED = {
     "nginx-500": "repair-nginx-500.sh",
     "domains-403": "repair-domains-403.sh",
     "external-access": "repair-external-access.sh",
+    "full-bootstrap": "repair-full-bootstrap.sh",
 }
 
 

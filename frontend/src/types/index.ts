@@ -28,10 +28,18 @@ export interface User {
   must_change_password: boolean;
   two_factor_enabled: boolean;
   module_permissions: string[];
+  parent?: number | null;
+  parent_username?: string;
+  owner_label?: string;
   system_username?: string;
   home_directory?: string;
   primary_domain?: string;
   quota?: ResourceQuota;
+  reseller_privileges?: string[];
+  reseller_privilege_catalog?: {
+    group: string;
+    privileges: { code: string; label: string }[];
+  }[];
 }
 
 export interface ApiSuccess<T> {

@@ -48,6 +48,7 @@ import { useThemeStore } from "@/stores/theme";
 import { OperationProgressHost } from "@/components/OperationProgressHost";
 import { AiDeploymentAssistant } from "@/components/AiDeploymentAssistant";
 import { apiRequest } from "@/lib/api";
+import { canAccessWhmRoute } from "@/lib/resellerAcl";
 import type { DashboardOverview } from "@/types";
 
 type NavItem = {
@@ -91,6 +92,12 @@ const navSections: NavSection[] = [
     items: [
       { to: "/whm/transfer", label: "Transfer Tool", icon: ArrowRightLeft, keywords: ["migration"] },
       { to: "/whm/packages", label: "Packages", icon: Package, keywords: ["quota", "plan"] },
+      {
+        to: "/whm/resellers",
+        label: "Edit Reseller Privileges",
+        icon: Shield,
+        keywords: ["revendeur", "acl", "privileges", "cpanel"],
+      },
       { to: "/whm/domains", label: "Domains", icon: AppWindow, keywords: ["domaine", "ssl"] },
       { to: "/whm/dns", label: "DNS Functions", icon: Globe, keywords: ["zone", "record"] },
     ],
@@ -265,6 +272,25 @@ export function WhmShell() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  const visibleSections = useMemo(() => {
+    const role = user?.role;
+    const privs = user?.reseller_privileges;
+    return navSections
+      .map((section) => ({
+        ...section,
+        items: section.items.filter((item) => canAccessWhmRoute(role, privs, item.to)),
+      }))
+      .filter((section) => section.items.length > 0);
+  }, [user?.role, user?.reseller_privileges]);
+
+  const visibleTools = useMemo(
+    () =>
+      visibleSections.flatMap((s) =>
+        s.items.map((item) => ({ ...item, section: s.title, sectionId: s.id })),
+      ),
+    [visibleSections],
+  );
+
   const [headerQuery, setHeaderQuery] = useState("");
   const [asideQuery, setAsideQuery] = useState("");
   const [headerOpen, setHeaderOpen] = useState(false);
@@ -307,7 +333,7 @@ export function WhmShell() {
   // Ouvre la section active selon la route + ferme le drawer mobile
   useEffect(() => {
     setNavOpen(false);
-    const active = navSections.find((s) => sectionContainsPath(s, location.pathname));
+    const active = visibleSections.find((s) => sectionContainsPath(s, location.pathname));
     if (active) {
       setOpenSections((prev) => {
         if (prev.has(active.id)) return prev;
@@ -316,7 +342,7 @@ export function WhmShell() {
         return next;
       });
     }
-  }, [location.pathname]);
+  }, [location.pathname, visibleSections]);
 
   useEffect(() => {
     if (!navOpen) return;
@@ -335,19 +361,19 @@ export function WhmShell() {
   const headerResults = useMemo(() => {
     const q = headerQuery.trim().toLowerCase();
     if (!q) return [];
-    return allTools.filter((item) => matchesQuery(item, q));
-  }, [headerQuery]);
+    return visibleTools.filter((item) => matchesQuery(item, q));
+  }, [headerQuery, visibleTools]);
 
   const filteredSections = useMemo(() => {
     const q = asideQuery.trim().toLowerCase();
-    if (!q) return navSections;
-    return navSections
+    if (!q) return visibleSections;
+    return visibleSections
       .map((section) => ({
         ...section,
         items: section.items.filter((item) => matchesQuery(item, q)),
       }))
       .filter((section) => section.items.length > 0);
-  }, [asideQuery]);
+  }, [asideQuery, visibleSections]);
 
   // Pendant une recherche sidebar : tout ouvrir
   useEffect(() => {
@@ -366,7 +392,7 @@ export function WhmShell() {
   }
 
   function expandAll() {
-    setOpenSections(new Set(navSections.map((s) => s.id)));
+    setOpenSections(new Set(visibleSections.map((s) => s.id)));
   }
 
   function collapseAll() {
@@ -389,7 +415,7 @@ export function WhmShell() {
     e?.preventDefault();
     const q = asideQuery.trim().toLowerCase();
     if (!q) return;
-    const first = allTools.find((item) => matchesQuery(item, q));
+    const first = visibleTools.find((item) => matchesQuery(item, q));
     if (first) goTo(first.to);
   }
 

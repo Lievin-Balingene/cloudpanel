@@ -244,6 +244,7 @@ export function WhmAccountsPage() {
               <th className="px-3 py-2.5">User</th>
               <th className="px-3 py-2.5">Email</th>
               <th className="px-3 py-2.5">Role</th>
+              <th className="px-3 py-2.5">Owner</th>
               <th className="px-3 py-2.5">Status</th>
               <th className="px-3 py-2.5">Disk</th>
               <th className="px-3 py-2.5">Actions</th>
@@ -252,7 +253,7 @@ export function WhmAccountsPage() {
           <tbody>
             {isLoading && (
               <tr>
-                <td className="px-3 py-6 text-cp-muted" colSpan={7}>
+                <td className="px-3 py-6 text-cp-muted" colSpan={8}>
                   Loading…
                 </td>
               </tr>
@@ -277,6 +278,18 @@ export function WhmAccountsPage() {
                 <td className="px-3 py-2.5 font-medium">{u.username}</td>
                 <td className="px-3 py-2.5 text-cp-muted">{u.email}</td>
                 <td className="px-3 py-2.5 capitalize">{u.role}</td>
+                <td className="px-3 py-2.5 font-mono text-xs text-cp-muted">
+                  {u.owner_label || u.parent_username || "root"}
+                  {u.role === "reseller" && (
+                    <Link
+                      to={`/whm/resellers?user=${u.id}`}
+                      className="ml-2 text-cp-link hover:underline"
+                      title="Edit Reseller Privileges"
+                    >
+                      ACL
+                    </Link>
+                  )}
+                </td>
                 <td className="px-3 py-2.5">
                   <span
                     className={
@@ -326,7 +339,7 @@ export function WhmAccountsPage() {
             ))}
             {!isLoading && filtered.length === 0 && (
               <tr>
-                <td className="px-3 py-8 text-center text-cp-muted" colSpan={7}>
+                <td className="px-3 py-8 text-center text-cp-muted" colSpan={8}>
                   No accounts.{" "}
                   <Link to="/whm/accounts/create" className="text-cp-link hover:underline">
                     Create a New Account

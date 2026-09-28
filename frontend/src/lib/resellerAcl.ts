@@ -1,0 +1,58 @@
+/** Mapping routes WHM → privilege ACL revendeur (miroir backend). */
+export const ROUTE_PRIVILEGE_MAP: Record<string, string> = {
+  "/whm/accounts/create": "create-acct",
+  "/whm/accounts": "list-accts",
+  "/whm/packages": "list-pkgs",
+  "/whm/domains": "manage-domains",
+  "/whm/dns": "manage-dns",
+  "/whm/email": "manage-email",
+  "/whm/databases": "manage-databases",
+  "/whm/ftp": "manage-ftp",
+  "/whm/cron": "manage-cron",
+  "/whm/files": "manage-files",
+  "/whm/files/upload": "manage-files",
+  "/whm/files/edit": "manage-files",
+  "/whm/backups": "manage-backups",
+  "/whm/python": "manage-python",
+  "/whm/node": "manage-node",
+  "/whm/php": "manage-php",
+  "/whm/wordpress": "manage-wordpress",
+  "/whm/git": "manage-git",
+  "/whm/docker": "manage-docker",
+  "/whm/server-setup": "res-server-setup",
+  "/whm/transfer": "res-transfer",
+  "/whm/ols": "res-ols",
+  "/whm/terminal": "res-terminal",
+  "/whm/kubernetes": "res-kubernetes",
+  "/whm/panel-update": "res-panel-update",
+  "/whm/repairs": "res-repairs",
+  "/whm/monitoring": "res-monitoring",
+  "/whm/resources": "res-resources",
+  "/whm/firewall": "res-firewall",
+  "/whm/security": "res-security",
+  "/whm/account-security": "list-accts",
+  "/whm/resellers": "edit-reseller-acls",
+};
+
+export function canAccessWhmRoute(
+  role: string | undefined,
+  privileges: string[] | undefined,
+  path: string,
+): boolean {
+  if (role === "administrator") return true;
+  if (role !== "reseller") return false;
+  if (path === "/whm" || path === "/whm/") return true;
+  const priv = ROUTE_PRIVILEGE_MAP[path];
+  if (!priv) return false;
+  return (privileges || []).includes(priv);
+}
+
+export function hasResellerPriv(
+  role: string | undefined,
+  privileges: string[] | undefined,
+  code: string,
+): boolean {
+  if (role === "administrator") return true;
+  if (role !== "reseller") return false;
+  return (privileges || []).includes(code);
+}

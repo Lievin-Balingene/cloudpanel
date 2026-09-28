@@ -147,7 +147,11 @@ VZONE_LINUX_USER_PROVISION=auto
 VZONE_TERMINAL_FALLBACK_SAME_UID=false
 VZONE_SECURE_SSL_REDIRECT=false
 VZONE_VERSION=${VZONE_VERSION}
-VZONE_ENABLED_MODULES=core,accounts,packages,dns,dashboard,domains,files,ftp,email,databases,python_apps,node_apps,php,git_deploy,docker_mgmt,backups,monitoring,firewall,security
+VZONE_ADMIN_PORT=${VZONE_ADMIN_PORT:-9086}
+VZONE_CLIENT_PORT=${VZONE_CLIENT_PORT:-9082}
+VZONE_WEBMAIL_PORT=${VZONE_WEBMAIL_PORT:-9095}
+VZONE_OLS_ENABLED=${VZONE_OLS_ENABLED:-1}
+VZONE_ENABLED_MODULES=core,accounts,packages,dns,dashboard,domains,files,ftp,email,databases,python_apps,node_apps,php,git_deploy,docker_mgmt,backups,monitoring,firewall,security,server_setup,wordpress,ai_assistant,cron,transfer
 EOF
   chown root:"${VZONE_USER}" /etc/vzone/vzone.env
   chmod 640 /etc/vzone/vzone.env
@@ -174,8 +178,15 @@ if not User.objects.filter(username="admin").exists():
         password="${ADMIN_PASS}",
     )
     u = User.objects.get(username="admin")
+    u.role = User.Role.ADMINISTRATOR
     u.must_change_password = True
-    u.save(update_fields=["must_change_password"])
+    u.save(update_fields=["role", "must_change_password"])
+PY
+  # Seed packages système (client + revendeur)
+  python manage.py shell <<'PY' || true
+from apps.packages.services import seed_default_packages
+created = seed_default_packages()
+print("seed packages:", [p.name for p in created] or "(déjà présents)")
 PY
   deactivate
 
@@ -184,6 +195,7 @@ PY
   npm run build
 
   install -m 755 "${SCRIPT_DIR}/ensure-vzone-api.sh" /usr/local/sbin/vzone-ensure-api
+  install -m 755 "${SCRIPT_DIR}/post-install-bootstrap.sh" /usr/local/sbin/vzone-bootstrap
   install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-api.service" /etc/systemd/system/
   install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-worker.service" /etc/systemd/system/
   install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-beat.service" /etc/systemd/system/
@@ -196,80 +208,49 @@ PY
   systemctl enable --now vzone-worker vzone-beat
 
   configure_firewall
-  # Stack mail (Postfix + Dovecot + OpenDKIM)
-  if [[ -f "${SCRIPT_DIR}/install-mail.sh" ]]; then
-    bash "${SCRIPT_DIR}/install-mail.sh" || log "Avertissement: stack mail non installée"
-  fi
-  # phpMyAdmin
-  if [[ -f "${SCRIPT_DIR}/install-phpmyadmin.sh" ]]; then
-    bash "${SCRIPT_DIR}/install-phpmyadmin.sh" || log "Avertissement: phpMyAdmin non installé"
-  fi
-  # PostgreSQL clusters + provisioning live
-  if [[ -f "${SCRIPT_DIR}/install-postgresql.sh" ]]; then
-    bash "${SCRIPT_DIR}/install-postgresql.sh" || log "Avertissement: PostgreSQL non configuré"
-  fi
-  # Roundcube Webmail
-  if [[ -f "${SCRIPT_DIR}/install-roundcube.sh" ]]; then
-    bash "${SCRIPT_DIR}/install-roundcube.sh" || log "Avertissement: Roundcube non installé"
-  fi
-  # Certbot / Let's Encrypt
-  if [[ -f "${SCRIPT_DIR}/install-certbot.sh" ]]; then
-    bash "${SCRIPT_DIR}/install-certbot.sh" || log "Avertissement: certbot non installé"
-  fi
-  if [[ -f "${SCRIPT_DIR}/install-cron.sh" ]]; then
-    bash "${SCRIPT_DIR}/install-cron.sh" || log "Avertissement: agent cron non installé"
-  fi
-  if [[ -f "${SCRIPT_DIR}/install-hostname-agent.sh" ]]; then
-    bash "${SCRIPT_DIR}/install-hostname-agent.sh" || log "Avertissement: agent hostname non installé"
-  fi
-  if [[ "${VZONE_OLS_ENABLED:-0}" =~ ^(1|true|TRUE|yes|YES)$ ]] && [[ -f "${SCRIPT_DIR}/install-openlitespeed.sh" ]]; then
-    bash "${SCRIPT_DIR}/install-openlitespeed.sh" || log "Avertissement: OpenLiteSpeed non installé"
-  fi
-  # WP-CLI / WordPress
-  if [[ -f "${SCRIPT_DIR}/install-wp-cli.sh" ]]; then
-    bash "${SCRIPT_DIR}/install-wp-cli.sh" || log "Avertissement: wp-cli non installé"
-  fi
-  # Kubernetes / kubectl
-  if [[ -f "${SCRIPT_DIR}/install-kubernetes.sh" ]]; then
-    bash "${SCRIPT_DIR}/install-kubernetes.sh" || log "Avertissement: kubectl non installé"
-  fi
-  install -m 755 "${SCRIPT_DIR}/vzone-postgresql-ensure.sh" /usr/local/sbin/vzone-postgresql-ensure
-  install -m 644 "${REPO_DIR}/deploy/systemd/vzone-postgresql.service" /etc/systemd/system/vzone-postgresql.service
-  systemctl daemon-reload
-  systemctl enable --now vzone-postgresql.service || true
-  bash "${SCRIPT_DIR}/ensure-nginx.sh" "${VZONE_ROOT}/deploy/nginx/vzone.conf" || true
-  bash "${SCRIPT_DIR}/ensure-vzone-api.sh" || fail "API panel indisponible — voir journalctl -u vzone-api"
+
+  # ------------------------------------------------------------------
+  # Bootstrap complet : tous les modules + agents + réparations jour 0
+  # ------------------------------------------------------------------
+  log "Bootstrap modules + réparations (mail, Roundcube, phpMyAdmin, agents, ACL…)"
+  bash "${SCRIPT_DIR}/post-install-bootstrap.sh" || warn_bootstrap
 
   HOST_IP="$(hostname -I | awk '{print $1}')"
   ADMIN_PORT="${VZONE_ADMIN_PORT:-9086}"
   CLIENT_PORT="${VZONE_CLIENT_PORT:-9082}"
+  WEBMAIL_PORT="${VZONE_WEBMAIL_PORT:-9095}"
   cat > /etc/vzone/install-info.txt <<EOF
 version=${VZONE_VERSION}
 url_admin=http://${HOST_IP}:${ADMIN_PORT}/
 url_client=http://${HOST_IP}:${CLIENT_PORT}/
+url_webmail=http://${HOST_IP}:${WEBMAIL_PORT}/
 admin_user=admin
 admin_email=${ADMIN_EMAIL}
 admin_temp_password=${ADMIN_PASS}
 installed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+bootstrap=post-install-bootstrap.sh
 EOF
   chmod 600 /etc/vzone/install-info.txt
 
   echo
   echo "============================================================"
-  echo " Installation terminée."
+  echo " Installation terminée (modules + réparations inclus)."
   echo "============================================================"
   echo " Admin (WHM)          : http://${HOST_IP}:${ADMIN_PORT}/"
   echo " Client (panel)       : http://${HOST_IP}:${CLIENT_PORT}/"
+  echo " Webmail              : http://${HOST_IP}:${WEBMAIL_PORT}/"
   echo " (Le port 80 sur l'IP publique = Access Denied — normal)"
   echo " Utilisateur admin    : admin"
   echo " Mot de passe temp.   : ${ADMIN_PASS}"
-  echo " Changer le mot de passe :"
-  echo "   sudo DJANGO_SETTINGS_MODULE=vzone.settings.production \\"
-  echo "     ${VZONE_ROOT}/backend/.venv/bin/python \\"
-  echo "     ${VZONE_ROOT}/backend/manage.py changepassword admin"
+  echo " Re-bootstrap / repair:"
+  echo "   sudo bash ${SCRIPT_DIR}/post-install-bootstrap.sh"
+  echo "   sudo bash ${SCRIPT_DIR}/post-install-bootstrap.sh --repair-only"
   echo " Version installée    : ${VZONE_VERSION}"
-  echo " Services actifs      : vzone-api, vzone-worker, vzone-beat, nginx, postgresql, redis"
   echo "============================================================"
+}
+
+warn_bootstrap() {
+  log "Avertissement: bootstrap partiel — relancez: sudo bash ${SCRIPT_DIR}/post-install-bootstrap.sh"
 }
 
 configure_firewall() {

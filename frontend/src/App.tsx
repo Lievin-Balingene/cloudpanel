@@ -36,6 +36,7 @@ import { WhmPanelUpdatePage } from "./pages/whm/WhmPanelUpdatePage";
 import { WhmRepairsPage } from "./pages/whm/WhmRepairsPage";
 import { WhmOlsPage } from "./pages/whm/WhmOlsPage";
 import { WhmTransferPage } from "./pages/whm/WhmTransferPage";
+import { WhmResellerPrivilegesPage } from "./pages/whm/WhmResellerPrivilegesPage";
 import { ClientHomePage } from "./pages/client/ClientHomePage";
 import { ClientDnsPage } from "./pages/client/ClientDnsPage";
 import { ClientPackagePage } from "./pages/client/ClientPackagePage";
@@ -136,6 +137,7 @@ export default function App() {
         <Route path="accounts" element={<WhmAccountsPage />} />
         <Route path="transfer" element={<WhmTransferPage />} />
         <Route path="packages" element={<WhmPackagesPage />} />
+        <Route path="resellers" element={<WhmResellerPrivilegesPage />} />
         <Route path="server-setup" element={<WhmServerSetupPage />} />
         <Route path="panel-update" element={<WhmPanelUpdatePage />} />
         <Route path="repairs" element={<WhmRepairsPage />} />

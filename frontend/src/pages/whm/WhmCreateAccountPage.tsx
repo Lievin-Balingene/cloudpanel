@@ -22,9 +22,10 @@ export type AccountCreatedState = {
 export function WhmCreateAccountPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const [accountKind, setAccountKind] = useState<"client" | "reseller">("client");
   const { data: packages = [] } = useQuery({
-    queryKey: ["packages", "client"],
-    queryFn: () => apiRequest<HostingPackage[]>("/packages/?type=client"),
+    queryKey: ["packages", accountKind],
+    queryFn: () => apiRequest<HostingPackage[]>(`/packages/?type=${accountKind}`),
   });
   const { data: serverSetup } = useQuery({
     queryKey: ["server-setup"],
@@ -64,7 +65,7 @@ export function WhmCreateAccountPage() {
         email: form.email,
         username,
         password: form.password,
-        role: "client",
+        role: accountKind,
         domain,
         create_welcome_index: form.create_welcome_index,
       };
@@ -82,7 +83,9 @@ export function WhmCreateAccountPage() {
               ? "Home + public_html…"
               : ms < 4500
                 ? "Domaine principal + DNS…"
-                : "Vhost nginx…",
+                : accountKind === "reseller"
+                  ? "ACL revendeur…"
+                  : "Vhost nginx…",
         },
       );
       return { user, domain, username, password: form.password };
@@ -156,6 +159,40 @@ export function WhmCreateAccountPage() {
       )}
 
       <form className="overflow-hidden rounded-lg border border-cp-border bg-white shadow-panel dark:border-ink-800 dark:bg-ink-950" onSubmit={onSubmit}>
+        <div className="border-b border-cp-border bg-cp-orange-soft px-4 py-2 text-xs font-bold uppercase tracking-wide text-cp-orange-dark dark:border-ink-800 dark:bg-ink-900 dark:text-cp-orange">
+          Account Type
+        </div>
+        <div className="flex gap-2 border-b border-cp-border p-4">
+          {(
+            [
+              ["client", "cPanel Account (client)"],
+              ["reseller", "Reseller Account"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => {
+                setAccountKind(id);
+                setForm((f) => ({ ...f, package_id: "" }));
+              }}
+              className={`flex-1 rounded-md border px-3 py-2.5 text-sm font-medium transition ${
+                accountKind === id
+                  ? "border-cp-orange bg-cp-orange-soft text-cp-navy shadow-sm"
+                  : "border-cp-border text-cp-muted hover:bg-cp-canvas"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {accountKind === "reseller" && (
+          <p className="border-b border-cp-border bg-amber-50 px-4 py-2 text-xs text-amber-900">
+            Un compte revendeur recoit un package revendeur + une ACL WHM (privileges). Ses futurs
+            clients auront <strong>Owner = ce revendeur</strong>.
+          </p>
+        )}
+
         <div className="border-b border-cp-border bg-cp-orange-soft px-4 py-2 text-xs font-bold uppercase tracking-wide text-cp-orange-dark dark:border-ink-800 dark:bg-ink-900 dark:text-cp-orange">
           Domain Information
         </div>

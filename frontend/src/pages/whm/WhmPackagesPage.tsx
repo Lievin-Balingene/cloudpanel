@@ -131,9 +131,12 @@ export function WhmPackagesPage() {
     queryFn: () => apiRequest<HostingPackage[]>("/packages/"),
   });
 
+  const [tab, setTab] = useState<"client" | "reseller">("client");
   const [form, setForm] = useState<PackageForm>(defaultForm);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const visiblePackages = packages.filter((p) => p.package_type === tab);
 
   useEffect(() => {
     if (editingId == null) return;
@@ -219,7 +222,7 @@ export function WhmPackagesPage() {
 
   function cancelEdit() {
     setEditingId(null);
-    setForm(defaultForm());
+    setForm({ ...defaultForm(), package_type: tab });
   }
 
   const setNum =
@@ -233,12 +236,41 @@ export function WhmPackagesPage() {
         <div>
           <h1 className="text-xl font-semibold text-cp-text">Packages</h1>
           <p className="text-sm text-cp-muted">
-            Plans de ressources (disque, mails, BDD, apps, backups…) assignables aux comptes.
+            Plans client et revendeur (style cPanel Feature List / Package). Les packages
+            revendeur definissent le pool (max comptes, disque, features).
           </p>
         </div>
         <button className="vz-btn-ghost" type="button" onClick={() => seed.mutate()}>
-          Charger packages système
+          Charger packages systeme
         </button>
+      </div>
+
+      <div className="flex gap-1 rounded-lg border border-cp-border bg-white p-1 shadow-sm">
+        {(
+          [
+            ["client", "Client packages"],
+            ["reseller", "Reseller packages"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => {
+              setTab(id);
+              if (editingId == null) setForm({ ...defaultForm(), package_type: id });
+            }}
+            className={`flex-1 rounded-md px-3 py-2 text-sm font-medium transition ${
+              tab === id
+                ? "bg-cp-navy text-white shadow"
+                : "text-cp-muted hover:bg-cp-canvas hover:text-cp-navy"
+            }`}
+          >
+            {label}
+            <span className="ml-2 text-xs opacity-80">
+              ({packages.filter((p) => p.package_type === id).length})
+            </span>
+          </button>
+        ))}
       </div>
 
       <form className="vz-panel space-y-4 p-4" onSubmit={onSubmit}>
@@ -487,7 +519,7 @@ export function WhmPackagesPage() {
                 </td>
               </tr>
             )}
-            {packages.map((pkg) => (
+            {visiblePackages.map((pkg) => (
               <tr key={pkg.id} className="border-t border-cp-border dark:border-ink-800">
                 <td className="px-3 py-2 font-medium">
                   {pkg.name}
@@ -545,7 +577,7 @@ export function WhmPackagesPage() {
                 </td>
               </tr>
             ))}
-            {!isLoading && packages.length === 0 && (
+            {!isLoading && visiblePackages.length === 0 && (
               <tr>
                 <td className="px-3 py-4 text-cp-muted" colSpan={13}>
                   Aucun package.

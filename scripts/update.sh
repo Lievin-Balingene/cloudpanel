@@ -246,6 +246,38 @@ if [[ -x "${VZONE_ROOT}/backend/.venv/bin/python" ]]; then
   ) || echo "[vzone] Avertissement: reconcile_python_apps a échoué"
 fi
 
+# Agents + réparations safe (comme en fin d'install)
+install -m 755 "${REPO_DIR}/scripts/post-install-bootstrap.sh" /usr/local/sbin/vzone-bootstrap 2>/dev/null || true
+if [[ -f "${REPO_DIR}/scripts/install-repair-agent.sh" ]]; then
+  bash "${REPO_DIR}/scripts/install-repair-agent.sh" || true
+fi
+if [[ -f "${REPO_DIR}/scripts/install-update-agent.sh" ]]; then
+  bash "${REPO_DIR}/scripts/install-update-agent.sh" || true
+fi
+if [[ -f "${REPO_DIR}/scripts/post-install-bootstrap.sh" ]]; then
+  echo "[vzone] Bootstrap repairs…"
+  bash "${REPO_DIR}/scripts/post-install-bootstrap.sh" --repair-only || echo "[vzone] Avertissement: bootstrap repair partiel"
+fi
+
+# Seed packages + ACL revendeurs manquants
+if [[ -x "${VZONE_ROOT}/backend/.venv/bin/python" ]]; then
+  (
+    set -a; source /etc/vzone/vzone.env 2>/dev/null || true; set +a
+    export DJANGO_SETTINGS_MODULE=vzone.settings.production
+    cd "${VZONE_ROOT}/backend"
+    .venv/bin/python manage.py shell <<'PY' || true
+from apps.packages.services import seed_default_packages
+from apps.accounts.models import User, ResellerPrivileges
+from apps.accounts.reseller_services import ensure_reseller_privileges
+seed_default_packages()
+for u in User.objects.filter(role="reseller"):
+    if not ResellerPrivileges.objects.filter(user=u).exists():
+        ensure_reseller_privileges(u)
+print("seed+ACL ok")
+PY
+  ) || true
+fi
+
 echo "[vzone] Mise à jour terminée — version ${VERSION}"
 echo "[vzone] Services : $(systemctl is-active vzone-api vzone-worker vzone-beat nginx | tr '\n' ' ')"
 ss -lntp 2>/dev/null | grep ':8000' || echo "[vzone] ALERTE: pas d'écoute :8000"

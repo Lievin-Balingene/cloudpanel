@@ -16,5 +16,12 @@ class CanManageUsers(BasePermission):
         if user.role == User.Role.ADMINISTRATOR:
             return True
         if user.role == User.Role.RESELLER:
-            return True
+            method = request.method.upper()
+            if method == "POST":
+                return user.has_reseller_priv("create-acct")
+            if method in {"PUT", "PATCH"}:
+                return user.has_reseller_priv("edit-account")
+            if method == "DELETE":
+                return user.has_reseller_priv("kill-acct")
+            return user.has_reseller_priv("list-accts")
         return user.has_module_perm("accounts.manage_user")

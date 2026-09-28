@@ -38,6 +38,19 @@ class PackageListCreateView(generics.ListCreateAPIView):
         return Response({"success": True, "data": serializer.data})
 
     def create(self, request: Request, *args, **kwargs) -> Response:
+        if request.user.role == User.Role.RESELLER and not request.user.has_reseller_priv(
+            "create-pkgs"
+        ):
+            return Response(
+                {
+                    "success": False,
+                    "error": {
+                        "code": "reseller_privilege_denied",
+                        "message": "Privilege create-pkgs requis.",
+                    },
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         owner = None if request.user.role == User.Role.ADMINISTRATOR else request.user

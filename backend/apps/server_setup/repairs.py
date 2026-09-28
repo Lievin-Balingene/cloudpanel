@@ -92,6 +92,13 @@ REPAIR_CATALOG: dict[str, dict] = {
         "category": "network",
         "risk": "caution",
     },
+    "full-bootstrap": {
+        "script": "repair-full-bootstrap.sh",
+        "title": "Réparer tout (bootstrap)",
+        "description": "Relance ensure nginx/API + toutes les réparations safe (comme en fin d'install).",
+        "category": "panel",
+        "risk": "caution",
+    },
 }
 
 
