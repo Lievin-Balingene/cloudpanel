@@ -17,8 +17,8 @@ def request_portal(request) -> str:  # type: ignore[no-untyped-def]
 
 def assert_role_allowed_on_portal(user: User, portal: str) -> None:
     """
-    Port Admin  → administrator | reseller uniquement.
-    Port Client → client uniquement.
+    Port Admin  → administrator | reseller (WHM).
+    Port Client → client | reseller (cPanel ; le revendeur a aussi son cPanel).
     Sinon → 403 wrong_portal (rejette l'auth / l'accès API).
     shared → pas de filtre rôle (hostname :80/:443, header explicite nginx).
     vide / inconnu → refusé au niveau middleware (fail-closed).
@@ -46,14 +46,13 @@ def assert_role_allowed_on_portal(user: User, portal: str) -> None:
             status_code=403,
         )
 
-    if portal == "client" and role in {
-        User.Role.ADMINISTRATOR,
-        User.Role.RESELLER,
-    }:
+    # Style cPanel : le revendeur se connecte aussi sur le port Client (son cPanel).
+    # L'administrateur root reste sur le port Admin uniquement.
+    if portal == "client" and role == User.Role.ADMINISTRATOR:
         raise VZoneAPIException(
             detail=(
-                "Authentification refusée : le port Client n’accepte que les comptes "
-                "d’hébergement. Connectez-vous sur le port Admin."
+                "Authentification refusée : le port Client n’accepte pas le compte "
+                "administrateur. Connectez-vous sur le port Admin (WHM)."
             ),
             code="wrong_portal",
             status_code=403,

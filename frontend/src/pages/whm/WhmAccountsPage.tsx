@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, Search, UserPlus } from "lucide-react";
 import { apiRequest } from "@/lib/api";
+import { canCreateResellerAccount } from "@/lib/resellerAcl";
+import { useAuthStore } from "@/stores/auth";
 import type { HostingPackage, User } from "@/types";
 
 type EditForm = {
@@ -17,6 +19,9 @@ type EditForm = {
 
 export function WhmAccountsPage() {
   const qc = useQueryClient();
+  const me = useAuthStore((s) => s.user);
+  const allowResellerType = canCreateResellerAccount(me?.role, me?.reseller_privileges);
+  const isAdmin = me?.role === "administrator";
   const { data: users = [], isLoading } = useQuery({
     queryKey: ["users"],
     queryFn: async () => {
@@ -177,11 +182,12 @@ export function WhmAccountsPage() {
             />
             <select
               className="vz-input"
-              value={editForm.role}
+              value={allowResellerType ? editForm.role : "client"}
+              disabled={!allowResellerType}
               onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}
             >
               <option value="client">Client</option>
-              <option value="reseller">Reseller</option>
+              {allowResellerType && <option value="reseller">Reseller</option>}
             </select>
             <input
               className="vz-input"
@@ -280,7 +286,7 @@ export function WhmAccountsPage() {
                 <td className="px-3 py-2.5 capitalize">{u.role}</td>
                 <td className="px-3 py-2.5 font-mono text-xs text-cp-muted">
                   {u.owner_label || u.parent_username || "root"}
-                  {u.role === "reseller" && (
+                  {isAdmin && u.role === "reseller" && (
                     <Link
                       to={`/whm/resellers?user=${u.id}`}
                       className="ml-2 text-cp-link hover:underline"

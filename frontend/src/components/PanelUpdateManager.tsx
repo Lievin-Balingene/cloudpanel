@@ -11,6 +11,11 @@ interface Overview {
   src_version: string;
   agent_installed: boolean;
   busy: boolean;
+  git_ok?: boolean;
+  git_branch?: string;
+  git_head?: string;
+  git_remote?: string;
+  git_error?: string;
   recent_jobs: Array<{
     job_id: string;
     ok: boolean | null;
@@ -41,9 +46,16 @@ interface JobStatus {
 const STEP_LABELS: Record<string, string> = {
   queued: "En file d’attente…",
   starting: "Démarrage…",
+  git_fetch: "git fetch…",
+  git_fetch_fallback: "git fetch (secours)…",
+  git_checkout: "git checkout…",
+  git_checkout_local: "git checkout (local)…",
+  git_reset: "git reset --hard…",
+  git_clean: "git clean…",
   git_pull: "git pull…",
   git_pull_fallback: "git pull (secours)…",
   update_sh: "scripts/update.sh…",
+  reinstall_agent: "Réinstallation agent…",
   finished: "Terminé",
   failed: "Échec",
 };
@@ -79,7 +91,12 @@ export function PanelUpdateManager({ title }: { title: string }) {
 
   const start = useMutation({
     mutationFn: () =>
-      apiRequest<{ job_id: string; message: string }>("/server-setup/panel-update/start/", {
+      apiRequest<{
+        job_id: string;
+        message: string;
+        agent_kicked?: boolean;
+        kick_error?: string;
+      }>("/server-setup/panel-update/start/", {
         method: "POST",
         body: JSON.stringify({ branch: "main" }),
       }),
@@ -95,7 +112,9 @@ export function PanelUpdateManager({ title }: { title: string }) {
         version_before: overview?.version || "",
         version_after: "",
         step: "queued",
-        log: "",
+        log: data.kick_error
+          ? `[ui] Avertissement démarrage agent: ${data.kick_error}\n(attente path unit systemd…)\n`
+          : "",
       });
       void qc.invalidateQueries({ queryKey: ["panel-update-overview"] });
     },
@@ -169,7 +188,7 @@ export function PanelUpdateManager({ title }: { title: string }) {
     <div className="space-y-3 animate-fade-up">
       <PageHeader
         title={title}
-        subtitle="git pull dans /opt/vzone-src puis scripts/update.sh — sans ouvrir SSH."
+        subtitle="Synchronise /opt/vzone-src (git fetch + reset hard) puis exécute scripts/update.sh — sans SSH."
         actions={
           <button
             type="button"
@@ -228,6 +247,17 @@ export function PanelUpdateManager({ title }: { title: string }) {
                   {overview?.agent_installed ? "Installé" : "Manquant"}
                 </dd>
               </div>
+              {overview?.git_ok && (
+                <div className="flex justify-between gap-2">
+                  <dt className="text-cp-muted">Git HEAD</dt>
+                  <dd className="font-mono text-[11px]">
+                    {overview.git_branch || "?"}@{overview.git_head || "?"}
+                  </dd>
+                </div>
+              )}
+              {overview?.git_error && !overview?.git_ok && (
+                <p className="text-[11px] text-cp-danger">{overview.git_error}</p>
+              )}
             </dl>
           )}
 

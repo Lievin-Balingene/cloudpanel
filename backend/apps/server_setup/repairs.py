@@ -319,14 +319,23 @@ def enqueue_repair(*, script_id: str, requested_by: str = "") -> dict:
 
     try:
         subprocess.run(
-            ["systemctl", "start", "vzone-repair-job.service"],
+            ["sudo", "-n", "systemctl", "start", "vzone-repair-job.service"],
             capture_output=True,
             text=True,
             check=False,
             timeout=15,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        pass
+        try:
+            subprocess.run(
+                ["systemctl", "start", "vzone-repair-job.service"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=15,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            pass
 
     return {
         "job_id": job_id,

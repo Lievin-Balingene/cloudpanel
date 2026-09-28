@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState, type ChangeEvent, type ReactNode } from
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Power, Trash2 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
+import { useAuthStore } from "@/stores/auth";
 import type { HostingPackage } from "@/types";
 
 type PackageForm = {
@@ -126,17 +127,20 @@ function packageToForm(pkg: HostingPackage): PackageForm {
 
 export function WhmPackagesPage() {
   const qc = useQueryClient();
+  const me = useAuthStore((s) => s.user);
+  const isAdmin = me?.role === "administrator";
   const { data: packages = [], isLoading } = useQuery({
     queryKey: ["packages"],
     queryFn: () => apiRequest<HostingPackage[]>("/packages/"),
   });
 
   const [tab, setTab] = useState<"client" | "reseller">("client");
+  const effectiveTab = isAdmin ? tab : "client";
   const [form, setForm] = useState<PackageForm>(defaultForm);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const visiblePackages = packages.filter((p) => p.package_type === tab);
+  const visiblePackages = packages.filter((p) => p.package_type === effectiveTab);
 
   useEffect(() => {
     if (editingId == null) return;
@@ -222,7 +226,7 @@ export function WhmPackagesPage() {
 
   function cancelEdit() {
     setEditingId(null);
-    setForm({ ...defaultForm(), package_type: tab });
+    setForm({ ...defaultForm(), package_type: effectiveTab });
   }
 
   const setNum =
@@ -245,33 +249,41 @@ export function WhmPackagesPage() {
         </button>
       </div>
 
-      <div className="flex gap-1 rounded-lg border border-cp-border bg-white p-1 shadow-sm">
-        {(
-          [
-            ["client", "Client packages"],
-            ["reseller", "Reseller packages"],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => {
-              setTab(id);
-              if (editingId == null) setForm({ ...defaultForm(), package_type: id });
-            }}
-            className={`flex-1 rounded-md px-3 py-2 text-sm font-medium transition ${
-              tab === id
-                ? "bg-cp-navy text-white shadow"
-                : "text-cp-muted hover:bg-cp-canvas hover:text-cp-navy"
-            }`}
-          >
-            {label}
-            <span className="ml-2 text-xs opacity-80">
-              ({packages.filter((p) => p.package_type === id).length})
-            </span>
-          </button>
-        ))}
-      </div>
+      {isAdmin && (
+        <div className="flex gap-1 rounded-lg border border-cp-border bg-white p-1 shadow-sm">
+          {(
+            [
+              ["client", "Client packages"],
+              ["reseller", "Reseller packages"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => {
+                setTab(id);
+                if (editingId == null) setForm({ ...defaultForm(), package_type: id });
+              }}
+              className={`flex-1 rounded-md px-3 py-2 text-sm font-medium transition ${
+                tab === id
+                  ? "bg-cp-navy text-white shadow"
+                  : "text-cp-muted hover:bg-cp-canvas hover:text-cp-navy"
+              }`}
+            >
+              {label}
+              <span className="ml-2 text-xs opacity-80">
+                ({packages.filter((p) => p.package_type === id).length})
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+      {!isAdmin && (
+        <p className="rounded border border-cp-border bg-[#f7fafc] px-3 py-2 text-xs text-cp-muted">
+          Packages <strong className="text-cp-navy">client</strong> uniquement — vous ne pouvez pas
+          creer de package revendeur.
+        </p>
+      )}
 
       <form className="vz-panel space-y-4 p-4" onSubmit={onSubmit}>
         {editingId != null && (
@@ -297,12 +309,13 @@ export function WhmPackagesPage() {
             <select
               className="vz-input w-full"
               value={form.package_type}
+              disabled={!isAdmin}
               onChange={(e) =>
                 setForm({ ...form, package_type: e.target.value as "client" | "reseller" })
               }
             >
               <option value="client">Client</option>
-              <option value="reseller">Revendeur</option>
+              {isAdmin && <option value="reseller">Revendeur</option>}
             </select>
           </Field>
           <Field label="Description" className="md:col-span-3">

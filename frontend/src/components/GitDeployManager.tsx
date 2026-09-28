@@ -184,7 +184,17 @@ export function GitDeployManager({ title }: { title: string }) {
                 <td className="px-4 py-3 font-mono text-xs">
                   {repo.last_commit ? repo.last_commit.slice(0, 8) : "—"}
                 </td>
-                <td className="px-4 py-3"><StatusDot status={repo.status === "ready" ? "ok" : repo.status} label={repo.status === "ready" ? "Prêt" : undefined} /></td>
+                <td className="px-4 py-3">
+                  <StatusDot
+                    status={repo.status === "ready" ? "ok" : repo.status}
+                    label={repo.status === "ready" ? "Prêt" : undefined}
+                  />
+                  {repo.last_error ? (
+                    <p className="mt-1 max-w-xs truncate text-[11px] text-cp-danger" title={repo.last_error}>
+                      {repo.last_error}
+                    </p>
+                  ) : null}
+                </td>
                 <td className="px-4 py-3">
                   <div className="flex justify-end gap-0.5">
                     <IconAction

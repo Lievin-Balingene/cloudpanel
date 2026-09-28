@@ -21,9 +21,12 @@ import {
   KeyRound,
   Activity,
   Search,
+  Server,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { apiRequest } from "@/lib/api";
+import { whmPortalUrl } from "@/lib/portal";
+import { useAuthStore } from "@/stores/auth";
 import type { DashboardOverview } from "@/types";
 
 type Tool = {
@@ -114,6 +117,8 @@ const sections: Section[] = [
 ];
 
 export function ClientHomePage() {
+  const user = useAuthStore((s) => s.user);
+  const isReseller = user?.role === "reseller";
   const [q, setQ] = useState("");
   const { data } = useQuery({
     queryKey: ["dashboard-overview"],
@@ -138,6 +143,24 @@ export function ClientHomePage() {
 
   return (
     <div className="space-y-4 animate-fade-up">
+      {isReseller && (
+        <a
+          href={whmPortalUrl("/whm")}
+          className="vz-panel flex items-center gap-4 border-cp-orange/50 bg-gradient-to-r from-cp-orange-soft to-white p-4 transition hover:shadow-md dark:from-ink-900 dark:to-ink-950"
+        >
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-cp-orange text-white shadow">
+            <Server className="h-6 w-6" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-bold uppercase tracking-wide text-cp-orange-dark">WHM</p>
+            <p className="text-sm text-cp-muted">
+              Gerer vos comptes clients, packages et DNS — comme cPanel → WHM.
+            </p>
+          </div>
+          <span className="hidden text-xs font-semibold text-cp-orange sm:inline">Ouvrir →</span>
+        </a>
+      )}
+
       <div className="vz-panel p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>

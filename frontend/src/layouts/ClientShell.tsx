@@ -27,10 +27,12 @@ import {
   Clock,
   Menu,
   X,
+  Server,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
+import { whmPortalUrl } from "@/lib/portal";
 import { useAuthStore } from "@/stores/auth";
 import { useThemeStore } from "@/stores/theme";
 import { OperationProgressHost } from "@/components/OperationProgressHost";
@@ -426,10 +428,22 @@ export function ClientShell() {
             />
             <div className="min-w-0">
               <p className="text-sm font-semibold tracking-wide">V-zone</p>
-              <p className="truncate text-[11px] text-white/85">Panneau client</p>
+              <p className="truncate text-[11px] text-white/85">
+                {user?.role === "reseller" ? "cPanel · Revendeur" : "Panneau client"}
+              </p>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1 text-sm sm:gap-2">
+            {user?.role === "reseller" && (
+              <a
+                href={whmPortalUrl("/whm")}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-cp-orange px-2.5 text-xs font-bold uppercase tracking-wide text-white shadow hover:brightness-110 sm:px-3"
+                title="Ouvrir WHM (gestion des comptes)"
+              >
+                <Server className="h-3.5 w-3.5" />
+                <span>WHM</span>
+              </a>
+            )}
             <span className="hidden rounded-full bg-white/15 px-2.5 py-1 sm:inline">{user?.username}</span>
             <button
               type="button"

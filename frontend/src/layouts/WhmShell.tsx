@@ -49,6 +49,7 @@ import { OperationProgressHost } from "@/components/OperationProgressHost";
 import { AiDeploymentAssistant } from "@/components/AiDeploymentAssistant";
 import { apiRequest } from "@/lib/api";
 import { canAccessWhmRoute } from "@/lib/resellerAcl";
+import { cpanelPortalUrl } from "@/lib/portal";
 import type { DashboardOverview } from "@/types";
 
 type NavItem = {
@@ -611,6 +612,16 @@ export function WhmShell() {
             </div>
 
             <div className="flex shrink-0 items-center gap-1">
+              {user?.role === "reseller" && (
+                <a
+                  href={cpanelPortalUrl("/panel")}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-full border border-cp-orange/40 bg-cp-orange-soft px-2.5 text-xs font-semibold text-cp-orange-dark hover:brightness-105"
+                  title="Ouvrir mon cPanel"
+                >
+                  <AppWindow className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">cPanel</span>
+                </a>
+              )}
               <button
                 type="button"
                 className="flex h-9 w-9 items-center justify-center rounded-full border border-[#c5d0dc] text-[#5a6f85] hover:bg-[#f0f4f8] dark:border-ink-600 dark:text-ink-300 dark:hover:bg-ink-800"

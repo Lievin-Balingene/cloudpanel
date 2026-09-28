@@ -1,9 +1,12 @@
 [Unit]
 Description=V-zone panel update job agent
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/vzone-update-agent
 Nice=5
-TimeoutStartSec=3600
+TimeoutStartSec=7200
+# Ne pas rester « active » après oneshot — permet un nouveau start immédiat
+RemainAfterExit=no

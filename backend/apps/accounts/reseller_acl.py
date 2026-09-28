@@ -7,6 +7,7 @@ from typing import Iterable
 PRIVILEGE_CATALOG: dict[str, list[tuple[str, str]]] = {
     "Account Functions": [
         ("create-acct", "Create Accounts"),
+        ("create-reseller", "Create Reseller Accounts (root only)"),
         ("kill-acct", "Terminate Accounts"),
         ("suspend-acct", "Suspend / Unsuspend Accounts"),
         ("list-accts", "List Accounts"),
@@ -138,7 +139,17 @@ def catalog_as_list() -> list[dict]:
 
 
 def sanitize_privileges(codes: Iterable[str]) -> list[str]:
-    cleaned = sorted({c for c in codes if c in ALL_PRIVILEGE_CODES})
+    """
+    Nettoie la liste ACL.
+    create-reseller n'est jamais stocke sur un revendeur (reserve root / admin).
+    """
+    cleaned = sorted(
+        {
+            c
+            for c in codes
+            if c in ALL_PRIVILEGE_CODES and c != "create-reseller"
+        }
+    )
     return cleaned
 
 

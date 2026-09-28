@@ -251,7 +251,10 @@ export function WhmResellerPrivilegesPage() {
                     )}
                   </div>
                   <ul className="divide-y divide-cp-border/70">
-                    {group.privileges.map((p) => {
+                    {group.privileges
+                      // create-reseller = root only, jamais assignable à un revendeur
+                      .filter((p) => p.code !== "create-reseller")
+                      .map((p) => {
                       const on = privileges.includes(p.code);
                       return (
                         <li key={p.code}>

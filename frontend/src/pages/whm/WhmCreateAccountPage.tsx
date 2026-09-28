@@ -1,9 +1,11 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, EyeOff, Loader2, UserPlus } from "lucide-react";
 import { apiRequest } from "@/lib/api";
+import { canCreateResellerAccount } from "@/lib/resellerAcl";
 import { runWithProgress } from "@/stores/operations";
+import { useAuthStore } from "@/stores/auth";
 import type { HostingPackage, User } from "@/types";
 
 export type AccountCreatedState = {
@@ -22,10 +24,28 @@ export type AccountCreatedState = {
 export function WhmCreateAccountPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const me = useAuthStore((s) => s.user);
+  const fetchMe = useAuthStore((s) => s.fetchMe);
+
+  // Rafraîchir le profil (role + privileges) pour ne pas se baser sur un cache auth périmé
+  useEffect(() => {
+    void fetchMe().catch(() => undefined);
+  }, [fetchMe]);
+
+  const allowResellerType = canCreateResellerAccount(me?.role, me?.reseller_privileges);
+  // Un revendeur ne crée QUE des clients (permission create-reseller = root only)
   const [accountKind, setAccountKind] = useState<"client" | "reseller">("client");
+  const effectiveKind: "client" | "reseller" = allowResellerType ? accountKind : "client";
+
+  useEffect(() => {
+    if (!allowResellerType && accountKind === "reseller") {
+      setAccountKind("client");
+    }
+  }, [allowResellerType, accountKind]);
+
   const { data: packages = [] } = useQuery({
-    queryKey: ["packages", accountKind],
-    queryFn: () => apiRequest<HostingPackage[]>(`/packages/?type=${accountKind}`),
+    queryKey: ["packages", effectiveKind],
+    queryFn: () => apiRequest<HostingPackage[]>(`/packages/?type=${effectiveKind}`),
   });
   const { data: serverSetup } = useQuery({
     queryKey: ["server-setup"],
@@ -65,7 +85,7 @@ export function WhmCreateAccountPage() {
         email: form.email,
         username,
         password: form.password,
-        role: accountKind,
+        role: effectiveKind,
         domain,
         create_welcome_index: form.create_welcome_index,
       };
@@ -83,7 +103,7 @@ export function WhmCreateAccountPage() {
               ? "Home + public_html…"
               : ms < 4500
                 ? "Domaine principal + DNS…"
-                : accountKind === "reseller"
+                : effectiveKind === "reseller"
                   ? "ACL revendeur…"
                   : "Vhost nginx…",
         },
@@ -159,37 +179,46 @@ export function WhmCreateAccountPage() {
       )}
 
       <form className="overflow-hidden rounded-lg border border-cp-border bg-white shadow-panel dark:border-ink-800 dark:bg-ink-950" onSubmit={onSubmit}>
-        <div className="border-b border-cp-border bg-cp-orange-soft px-4 py-2 text-xs font-bold uppercase tracking-wide text-cp-orange-dark dark:border-ink-800 dark:bg-ink-900 dark:text-cp-orange">
-          Account Type
-        </div>
-        <div className="flex gap-2 border-b border-cp-border p-4">
-          {(
-            [
-              ["client", "cPanel Account (client)"],
-              ["reseller", "Reseller Account"],
-            ] as const
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => {
-                setAccountKind(id);
-                setForm((f) => ({ ...f, package_id: "" }));
-              }}
-              className={`flex-1 rounded-md border px-3 py-2.5 text-sm font-medium transition ${
-                accountKind === id
-                  ? "border-cp-orange bg-cp-orange-soft text-cp-navy shadow-sm"
-                  : "border-cp-border text-cp-muted hover:bg-cp-canvas"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        {accountKind === "reseller" && (
-          <p className="border-b border-cp-border bg-amber-50 px-4 py-2 text-xs text-amber-900">
-            Un compte revendeur recoit un package revendeur + une ACL WHM (privileges). Ses futurs
-            clients auront <strong>Owner = ce revendeur</strong>.
+        {allowResellerType ? (
+          <>
+            <div className="border-b border-cp-border bg-cp-orange-soft px-4 py-2 text-xs font-bold uppercase tracking-wide text-cp-orange-dark dark:border-ink-800 dark:bg-ink-900 dark:text-cp-orange">
+              Account Type
+            </div>
+            <div className="flex gap-2 border-b border-cp-border p-4">
+              {(
+                [
+                  ["client", "cPanel Account (client)"],
+                  ["reseller", "Reseller Account"],
+                ] as const
+              ).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => {
+                    setAccountKind(id);
+                    setForm((f) => ({ ...f, package_id: "" }));
+                  }}
+                  className={`flex-1 rounded-md border px-3 py-2.5 text-sm font-medium transition ${
+                    accountKind === id
+                      ? "border-cp-orange bg-cp-orange-soft text-cp-navy shadow-sm"
+                      : "border-cp-border text-cp-muted hover:bg-cp-canvas"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {accountKind === "reseller" && (
+              <p className="border-b border-cp-border bg-amber-50 px-4 py-2 text-xs text-amber-900">
+                Privilege <code className="font-mono">create-reseller</code> (root). Les futurs
+                clients auront <strong>Owner = ce revendeur</strong>.
+              </p>
+            )}
+          </>
+        ) : (
+          <p className="border-b border-cp-border bg-[#f0f4f8] px-4 py-2 text-xs text-cp-muted">
+            Compte <strong className="text-cp-navy">client</strong> uniquement — privilege{" "}
+            <code className="font-mono">create-reseller</code> reserve a root (comme cPanel).
           </p>
         )}
 

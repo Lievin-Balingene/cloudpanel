@@ -34,6 +34,9 @@ export const ROUTE_PRIVILEGE_MAP: Record<string, string> = {
   "/whm/resellers": "edit-reseller-acls",
 };
 
+/** Privilege root-only : jamais accordé à un revendeur. */
+export const PRIV_CREATE_RESELLER = "create-reseller";
+
 export function canAccessWhmRoute(
   role: string | undefined,
   privileges: string[] | undefined,
@@ -52,7 +55,19 @@ export function hasResellerPriv(
   privileges: string[] | undefined,
   code: string,
 ): boolean {
+  // create-reseller : root uniquement, même si présent par erreur dans l'ACL
+  if (code === PRIV_CREATE_RESELLER) {
+    return role === "administrator";
+  }
   if (role === "administrator") return true;
   if (role !== "reseller") return false;
   return (privileges || []).includes(code);
+}
+
+/** Peut créer un compte revendeur ? (UI Account Type) */
+export function canCreateResellerAccount(
+  role: string | undefined,
+  _privileges?: string[] | undefined,
+): boolean {
+  return hasResellerPriv(role, _privileges, PRIV_CREATE_RESELLER);
 }

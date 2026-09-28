@@ -106,8 +106,44 @@ def git_binary() -> str:
     return shutil.which("git") or "git"
 
 
-def _run_git(args: list[str], *, cwd: Path | None = None, env: dict | None = None) -> subprocess.CompletedProcess:
-    cmd = [git_binary(), *args]
+def _git_error_text(exc: BaseException) -> str:
+    parts: list[str] = []
+    for attr in ("stderr", "stdout"):
+        val = getattr(exc, attr, None)
+        if isinstance(val, bytes):
+            val = val.decode("utf-8", errors="replace")
+        if isinstance(val, str) and val.strip():
+            parts.append(val.strip())
+    if not parts:
+        parts.append(str(exc).strip() or exc.__class__.__name__)
+    text = "\n".join(parts)
+    # Une ligne utile pour l'UI
+    compact = " ".join(text.split())
+    return compact[:500] if compact else "erreur Git inconnue"
+
+
+def _run_git(
+    args: list[str],
+    *,
+    cwd: Path | None = None,
+    env: dict | None = None,
+) -> subprocess.CompletedProcess:
+    """Exécute git avec message d'erreur exploitable + safe.directory."""
+    git = git_binary()
+    cmd = [git, *args]
+
+    if cwd is not None:
+        try:
+            subprocess.run(
+                [git, "config", "--global", "--add", "safe.directory", str(cwd)],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=15,
+            )
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+            pass
+
     try:
         return subprocess.run(
             cmd,
@@ -119,13 +155,20 @@ def _run_git(args: list[str], *, cwd: Path | None = None, env: dict | None = Non
             timeout=300,
         )
     except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        stderr = getattr(exc, "stderr", None) or str(exc)
+        hint = _git_error_text(exc)
         raise VZoneAPIException(
-            detail="Échec commande Git.",
+            detail=f"Échec commande Git : {hint}",
             code="git_cmd_failed",
             status_code=502,
-            extra={"stderr": stderr, "cmd": cmd},
+            extra={"stderr": hint, "cmd": cmd},
         ) from exc
+
+
+def _ensure_key_permissions(key_path: Path) -> None:
+    try:
+        key_path.chmod(0o600)
+    except OSError:
+        pass
 
 
 def _add_log(
@@ -167,13 +210,17 @@ def generate_deploy_key(repo: GitRepository) -> GitRepository:
 
     key_dir = config_root() / "keys" / str(repo.owner_id)
     key_dir.mkdir(parents=True, exist_ok=True)
-    (key_dir / f"{repo.name}").write_text(private_pem, encoding="utf-8")
-    (key_dir / f"{repo.name}.pub").write_text(public_ssh + "\n", encoding="utf-8")
+    priv = key_dir / repo.name
+    pub = key_dir / f"{repo.name}.pub"
+    priv.write_text(private_pem, encoding="utf-8")
+    pub.write_text(public_ssh + "\n", encoding="utf-8")
+    _ensure_key_permissions(priv)
     _add_log(repo, GitDeployLog.Event.KEYGEN, message="Clé deploy générée")
     return repo
 
 
 def _ssh_env(repo: GitRepository) -> dict | None:
+    """Prépare GIT_SSH_COMMAND avec clé en mode 0600 (exigé par OpenSSH)."""
     if not repo.deploy_key_private:
         return None
     import os
@@ -182,9 +229,20 @@ def _ssh_env(repo: GitRepository) -> dict | None:
     if not key_path.exists():
         key_path.parent.mkdir(parents=True, exist_ok=True)
         key_path.write_text(repo.deploy_key_private, encoding="utf-8")
+    _ensure_key_permissions(key_path)
+
     env = os.environ.copy()
-    env["GIT_SSH_COMMAND"] = f'ssh -i "{key_path}" -o StrictHostKeyChecking=accept-new'
+    env["GIT_SSH_COMMAND"] = (
+        f'ssh -i "{key_path}" -o IdentitiesOnly=yes '
+        f"-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null"
+    )
+    env["GIT_TERMINAL_PROMPT"] = "0"
     return env
+
+
+def _needs_ssh(repo: GitRepository) -> bool:
+    url = (repo.remote_url or "").strip().lower()
+    return url.startswith("git@") or url.startswith("ssh://")
 
 
 def _read_head(repo_path: Path) -> tuple[str, str]:
@@ -281,7 +339,13 @@ def clone_repository(repo: GitRepository) -> GitRepository:
             message = f"mock clone {repo.remote_url}@{repo.branch}"
         else:
             repo_path.parent.mkdir(parents=True, exist_ok=True)
-            env = _ssh_env(repo)
+            use_ssh = _needs_ssh(repo)
+            env = _ssh_env(repo) if use_ssh else None
+            if env is None:
+                import os
+
+                env = os.environ.copy()
+                env["GIT_TERMINAL_PROMPT"] = "0"
             branch = validate_git_branch(repo.branch)
             remote = validate_git_remote_url(repo.remote_url)
             _run_git(
@@ -322,13 +386,34 @@ def pull_repository(repo: GitRepository) -> GitRepository:
             (repo_path / ".git" / "MESSAGE").write_text("Mock pull update", encoding="utf-8")
             message = f"mock pull origin/{repo.branch}"
         else:
-            env = _ssh_env(repo)
+            use_ssh = _needs_ssh(repo)
+            env = _ssh_env(repo) if use_ssh else None
+            if env is None:
+                import os
+
+                env = os.environ.copy()
+                env["GIT_TERMINAL_PROMPT"] = "0"
             branch = validate_git_branch(repo.branch)
-            # refs explicites — évite l'injection d'options via le nom de branche
-            _run_git(["fetch", "--", "origin", branch], cwd=repo_path, env=env)
-            _run_git(["checkout", "--", branch], cwd=repo_path, env=env)
-            _run_git(["pull", "--ff-only", "--", "origin", branch], cwd=repo_path, env=env)
-            message = f"pulled origin/{branch}"
+            remote = validate_git_remote_url(repo.remote_url)
+            # Aligner origin (URL peut avoir changé en base)
+            _run_git(
+                ["remote", "set-url", "origin", remote],
+                cwd=repo_path,
+                env=env,
+            )
+            # fetch + checkout -B (PAS « checkout -- branch » = pathspec fichier !)
+            _run_git(
+                ["fetch", "--prune", "origin", branch],
+                cwd=repo_path,
+                env=env,
+            )
+            # Crée/réinitialise la branche locale exactement sur origin/<branch>
+            _run_git(
+                ["checkout", "-B", branch, f"origin/{branch}"],
+                cwd=repo_path,
+                env=env,
+            )
+            message = f"synced origin/{branch}"
             commit, _ = _read_head(repo_path)
 
         commit, msg = _read_head(repo_path)

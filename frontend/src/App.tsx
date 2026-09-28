@@ -85,6 +85,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
 function RequireWhm({ children }: { children: ReactNode }) {
   const role = useAuthStore((s) => s.user?.role);
   const portal = detectPortalSync();
+  // Sur le port Client, tout le monde (y compris reseller) reste en cPanel
   if (portal === "client") return <Navigate to="/panel" replace />;
   if (role === "client") return <Navigate to="/panel" replace />;
   return <>{children}</>;
@@ -93,10 +94,11 @@ function RequireWhm({ children }: { children: ReactNode }) {
 function RequireClient({ children }: { children: ReactNode }) {
   const role = useAuthStore((s) => s.user?.role);
   const portal = detectPortalSync();
+  // Sur le port Admin, rediriger vers WHM
   if (portal === "admin") return <Navigate to="/whm" replace />;
-  if (role === "administrator" || role === "reseller") {
-    return <Navigate to="/whm" replace />;
-  }
+  // Root admin n'utilise pas le cPanel ici
+  if (role === "administrator") return <Navigate to="/whm" replace />;
+  // client + reseller OK (style cPanel)
   return <>{children}</>;
 }
 

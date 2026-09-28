@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Agent root : git pull + update.sh depuis /var/lib/vzone/update/jobs/*.request
+# Agent root : sync git (fetch + reset hard) + update.sh depuis /var/lib/vzone/update/jobs/*.request
 exec /usr/bin/python3 - "$@" <<'PY'
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from pathlib import Path
 JOBS_DIR = Path(os.environ.get("VZONE_UPDATE_JOBS_DIR", "/var/lib/vzone/update/jobs"))
 DEFAULT_SRC = os.environ.get("VZONE_SRC_DIR", "/opt/vzone-src")
 GLOBAL_LOCK = JOBS_DIR.parent / ".lock"
+VZONE_ROOT = Path(os.environ.get("VZONE_ROOT", "/opt/vzone"))
 
 
 def _now() -> str:
@@ -47,11 +48,129 @@ def append_log(log: Path, line: str) -> None:
     _chown_vzone(log)
 
 
-def read_version(src: Path) -> str:
-    vf = src / "VERSION"
-    if vf.is_file():
-        return vf.read_text(encoding="utf-8").strip()
+def read_version(*roots: Path) -> str:
+    for root in roots:
+        vf = root / "VERSION"
+        if vf.is_file():
+            try:
+                return vf.read_text(encoding="utf-8").strip()
+            except OSError:
+                continue
     return ""
+
+
+def ensure_safe_directory(src: Path, log: Path) -> None:
+    """Évite « fatal: detected dubious ownership » quand root lit un dépôt non-root."""
+    path = str(src)
+    for scope in ("--system", "--global"):
+        try:
+            subprocess.run(
+                ["git", "config", scope, "--add", "safe.directory", path],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+            pass
+    try:
+        subprocess.run(
+            ["git", "-C", path, "config", "safe.directory", path],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        pass
+    append_log(log, f"[vzone-update] safe.directory OK pour {path}")
+
+
+def sync_git(src: Path, branch: str, *, run_step, log: Path) -> tuple[bool, str]:
+    """
+    Aligne le dépôt source exactement sur origin/<branch>.
+    Plus fiable que « git pull --ff-only » (arbre sale, commits locaux, detached HEAD).
+    """
+    git = ["git", "-C", str(src)]
+
+    probe = subprocess.run(
+        [*git, "rev-parse", "--is-inside-work-tree"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    if probe.returncode != 0:
+        return False, f"Pas un dépôt git: {src}"
+
+    for unlock_cmd in (
+        [*git, "merge", "--abort"],
+        [*git, "rebase", "--abort"],
+        [*git, "cherry-pick", "--abort"],
+    ):
+        subprocess.run(unlock_cmd, capture_output=True, text=True, check=False, timeout=30)
+
+    rc = run_step("git_fetch", [*git, "fetch", "--prune", "--tags", "origin"])
+    if rc != 0:
+        rc = run_step("git_fetch_fallback", [*git, "fetch", "origin"])
+    if rc != 0:
+        return False, f"git fetch a échoué (exit {rc})"
+
+    remote_ref = f"origin/{branch}"
+    ref_ok = subprocess.run(
+        [*git, "rev-parse", "--verify", remote_ref],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    if ref_ok.returncode != 0:
+        resolved = False
+        for alt in ("main", "master"):
+            if alt == branch:
+                continue
+            alt_ref = f"origin/{alt}"
+            alt_ok = subprocess.run(
+                [*git, "rev-parse", "--verify", alt_ref],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            if alt_ok.returncode == 0:
+                append_log(log, f"[vzone-update] branche {branch} absente → bascule {alt}")
+                remote_ref = alt_ref
+                branch = alt
+                resolved = True
+                break
+        if not resolved:
+            return False, f"Branche distante introuvable: origin/{branch}"
+
+    rc = run_step("git_checkout", [*git, "checkout", "-B", branch, remote_ref])
+    if rc != 0:
+        rc = run_step("git_checkout_local", [*git, "checkout", branch])
+        if rc != 0:
+            return False, f"git checkout {branch} a échoué (exit {rc})"
+
+    rc = run_step("git_reset", [*git, "reset", "--hard", remote_ref])
+    if rc != 0:
+        return False, f"git reset --hard {remote_ref} a échoué (exit {rc})"
+
+    # Nettoyer fichiers non suivis qui peuvent casser rsync/build
+    run_step(
+        "git_clean",
+        [*git, "clean", "-fd", "-e", ".env", "-e", ".data", "-e", ".logs"],
+    )
+
+    head = subprocess.run(
+        [*git, "rev-parse", "--short", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    tip = (head.stdout or "").strip() or "?"
+    return True, f"{remote_ref} @ {tip}"
 
 
 def process(req: Path) -> None:
@@ -98,6 +217,12 @@ def process(req: Path) -> None:
         _chown_vzone(GLOBAL_LOCK)
 
         data = json.loads(req.read_text(encoding="utf-8"))
+        # Consommer la requête tout de suite (évite re-trigger PathExistsGlob / 2e start)
+        try:
+            req.unlink(missing_ok=True)
+        except OSError:
+            pass
+
         src_dir = Path(str(data.get("src_dir") or DEFAULT_SRC)).resolve()
         branch = str(data.get("branch") or "main").strip() or "main"
         skip_pull = bool(data.get("skip_pull", False))
@@ -125,7 +250,7 @@ def process(req: Path) -> None:
             )
             return
 
-        version_before = read_version(src_dir)
+        version_before = read_version(src_dir, VZONE_ROOT)
         write_json(
             status,
             {
@@ -162,6 +287,9 @@ def process(req: Path) -> None:
                 },
             )
             append_log(log, f"[vzone-update] === {step}: {' '.join(cmd)}")
+            env = os.environ.copy()
+            env.setdefault("GIT_TERMINAL_PROMPT", "0")
+            env.setdefault("DEBIAN_FRONTEND", "noninteractive")
             proc = subprocess.Popen(
                 cmd,
                 cwd=str(cwd or src_dir),
@@ -169,38 +297,67 @@ def process(req: Path) -> None:
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
+                env=env,
             )
             assert proc.stdout is not None
             for line in proc.stdout:
                 append_log(log, line.rstrip("\n"))
-            return proc.wait(timeout=3600)
+            return int(proc.wait())
+
+        ensure_safe_directory(src_dir, log)
 
         if not skip_pull:
-            # Fetch + reset soft approach: pull current branch
-            rc = run_step(
-                "git_pull",
-                ["git", "-C", str(src_dir), "pull", "--ff-only", "origin", branch],
-            )
-            if rc != 0:
-                # Fallback without specifying remote/branch
-                rc = run_step("git_pull_fallback", ["git", "-C", str(src_dir), "pull", "--ff-only"])
-            if rc != 0:
+            ok, detail = sync_git(src_dir, branch, run_step=run_step, log=log)
+            append_log(log, f"[vzone-update] sync git: {detail}")
+            if not ok:
                 write_json(
                     result,
                     {
                         "ok": False,
-                        "error": f"git pull a échoué (exit {rc})",
+                        "error": detail,
                         "version_before": version_before,
+                        "finished_at": _now(),
+                    },
+                )
+                write_json(
+                    status,
+                    {
+                        "state": "error",
+                        "step": "failed",
+                        "error": detail,
                         "finished_at": _now(),
                     },
                 )
                 return
 
+        update_sh = src_dir / "scripts" / "update.sh"
+        if not update_sh.is_file():
+            write_json(
+                result,
+                {
+                    "ok": False,
+                    "error": f"scripts/update.sh manquant après sync: {src_dir}",
+                    "version_before": version_before,
+                    "finished_at": _now(),
+                },
+            )
+            return
+
         version_mid = read_version(src_dir)
-        append_log(log, f"[vzone-update] VERSION après pull: {version_mid or '?'}")
+        append_log(log, f"[vzone-update] VERSION après sync: {version_mid or '?'}")
+
+        try:
+            update_sh.chmod(update_sh.stat().st_mode | 0o111)
+        except OSError:
+            pass
 
         rc = run_step("update_sh", ["bash", str(update_sh)], cwd=src_dir)
-        version_after = read_version(src_dir)
+        version_after = read_version(VZONE_ROOT, src_dir)
+
+        install_agent = src_dir / "scripts" / "install-update-agent.sh"
+        if install_agent.is_file():
+            run_step("reinstall_agent", ["bash", str(install_agent)], cwd=src_dir)
+
         if rc != 0:
             write_json(
                 result,
@@ -212,9 +369,32 @@ def process(req: Path) -> None:
                     "finished_at": _now(),
                 },
             )
+            write_json(
+                status,
+                {
+                    "state": "error",
+                    "step": "failed",
+                    "version_before": version_before,
+                    "version_after": version_after,
+                    "finished_at": _now(),
+                },
+            )
             return
 
-        append_log(log, f"[vzone-update] terminé OK version={version_after}")
+        installed = VZONE_ROOT / "VERSION"
+        if version_mid and installed.is_file():
+            try:
+                installed_ver = installed.read_text(encoding="utf-8").strip()
+            except OSError:
+                installed_ver = ""
+            if installed_ver and installed_ver != version_mid:
+                append_log(
+                    log,
+                    f"[vzone-update] ALERTE: VERSION installée ({installed_ver}) "
+                    f"≠ source ({version_mid})",
+                )
+
+        append_log(log, f"[vzone-update] terminé OK {version_before} → {version_after}")
         write_json(
             result,
             {
@@ -243,10 +423,6 @@ def process(req: Path) -> None:
         except OSError:
             pass
     finally:
-        try:
-            req.unlink(missing_ok=True)
-        except OSError:
-            pass
         try:
             lock.rmdir()
         except OSError:

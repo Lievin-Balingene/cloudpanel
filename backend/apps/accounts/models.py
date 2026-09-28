@@ -90,7 +90,12 @@ class User(AbstractBaseUser, PermissionsMixin):
         return codename in (self.module_permissions or [])
 
     def has_reseller_priv(self, code: str) -> bool:
-        """Admin = tout ; revendeur = ACL ; client = non."""
+        """Admin = tout ; revendeur = ACL ; client = non.
+
+        create-reseller est root-only : jamais vrai pour un revendeur.
+        """
+        if code == "create-reseller":
+            return self.is_administrator
         if self.is_administrator:
             return True
         if not self.is_reseller:

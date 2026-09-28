@@ -22,3 +22,13 @@ vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-fix-app-perms, /usr/local/sbin/
 # Terminal admin WHM — UNIQUEMENT avec --ticket (pas d'appel nu → root)
 vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-rootterm --check
 vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-rootterm --ticket *
+
+# Agents jobs WHM (API vzone ne peut pas systemctl sans sudo)
+vzone ALL=(root) NOPASSWD: /bin/systemctl start vzone-update-job.service
+vzone ALL=(root) NOPASSWD: /usr/bin/systemctl start vzone-update-job.service
+vzone ALL=(root) NOPASSWD: /bin/systemctl start vzone-repair-job.service
+vzone ALL=(root) NOPASSWD: /usr/bin/systemctl start vzone-repair-job.service
+vzone ALL=(root) NOPASSWD: /bin/systemctl start vzone-update-job.path
+vzone ALL=(root) NOPASSWD: /usr/bin/systemctl start vzone-update-job.path
+vzone ALL=(root) NOPASSWD: /bin/systemctl start vzone-repair-job.path
+vzone ALL=(root) NOPASSWD: /usr/bin/systemctl start vzone-repair-job.path

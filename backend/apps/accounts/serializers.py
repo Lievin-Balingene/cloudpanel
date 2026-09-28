@@ -149,6 +149,10 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         actor = getattr(request, "user", None)
         if actor is None or not actor.is_authenticated:
             raise serializers.ValidationError("Authentification requise.")
+        if value == User.Role.RESELLER and getattr(actor, "role", None) != User.Role.ADMINISTRATOR:
+            raise serializers.ValidationError(
+                "Seul un administrateur (root) peut assigner le rôle revendeur."
+            )
         if actor.role == User.Role.RESELLER and value != User.Role.CLIENT:
             raise serializers.ValidationError(
                 "Un revendeur ne peut assigner que le rôle client."
@@ -238,9 +242,14 @@ class UserCreateSerializer(serializers.ModelSerializer):
         actor = getattr(request, "user", None)
         if actor is None or not actor.is_authenticated:
             raise serializers.ValidationError("Authentification requise.")
+        # Creation de revendeur = root uniquement (jamais via ACL revendeur)
+        if value == User.Role.RESELLER and getattr(actor, "role", None) != User.Role.ADMINISTRATOR:
+            raise serializers.ValidationError(
+                "Seul un administrateur (root) peut créer un compte revendeur."
+            )
         if actor.role == User.Role.RESELLER and value != User.Role.CLIENT:
             raise serializers.ValidationError(
-                "Un revendeur ne peut créer que des clients."
+                "Un revendeur ne peut créer que des comptes clients (comme cPanel)."
             )
         if actor.role == User.Role.CLIENT:
             raise serializers.ValidationError("Un client ne peut pas créer d'utilisateurs.")
@@ -480,8 +489,14 @@ class MeSerializer(UserSerializer):
     def get_reseller_privileges(self, obj: User) -> list[str]:
         from apps.accounts.reseller_services import get_reseller_privilege_codes
 
-        if obj.is_administrator or obj.is_reseller:
-            return get_reseller_privilege_codes(obj)
+        if obj.is_administrator:
+            # Root : tous les codes, y compris create-reseller (UI)
+            from apps.accounts.reseller_acl import ALL_PRIVILEGE_CODES
+
+            return sorted(ALL_PRIVILEGE_CODES | {"create-reseller"})
+        if obj.is_reseller:
+            # Jamais create-reseller pour un revendeur
+            return [c for c in get_reseller_privilege_codes(obj) if c != "create-reseller"]
         return []
 
     def get_reseller_privilege_catalog(self, obj: User) -> list[dict]:

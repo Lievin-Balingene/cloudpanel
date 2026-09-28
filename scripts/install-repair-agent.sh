@@ -18,6 +18,12 @@ install -m 755 "${REPO_DIR}/scripts/vzone-repair-agent.sh" /usr/local/sbin/vzone
 install -m 644 "${REPO_DIR}/deploy/systemd/vzone-repair-job.service" /etc/systemd/system/vzone-repair-job.service
 install -m 644 "${REPO_DIR}/deploy/systemd/vzone-repair-job.path" /etc/systemd/system/vzone-repair-job.path
 
+# Sudoers systemctl (partagé avec agent update)
+if [[ -f "${REPO_DIR}/deploy/sudoers/vzone-panel" ]]; then
+  install -m 440 "${REPO_DIR}/deploy/sudoers/vzone-panel" /etc/sudoers.d/vzone-panel
+  visudo -cf /etc/sudoers.d/vzone-panel >/dev/null 2>&1 || rm -f /etc/sudoers.d/vzone-panel
+fi
+
 systemctl daemon-reload
 systemctl enable --now vzone-repair-job.path
 echo "[vzone] Agent repair prêt: vzone-repair-job.path"
