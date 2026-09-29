@@ -114,6 +114,11 @@ fi
 if [[ -f "${REPO_DIR}/scripts/install-roundcube.sh" ]]; then
   bash "${REPO_DIR}/scripts/install-roundcube.sh" || echo "[vzone] Avertissement: install-roundcube.sh a échoué"
 fi
+# SSO webmail durable (après install-roundcube ET avant restart API) —
+# empêche un chown global / update d'écraser les droits PHP.
+if [[ -f "${REPO_DIR}/scripts/ensure-roundcube-sso.sh" ]]; then
+  bash "${REPO_DIR}/scripts/ensure-roundcube-sso.sh" || echo "[vzone] Avertissement: ensure-roundcube-sso.sh a échoué"
+fi
 
 # Certbot / Let's Encrypt
 if [[ -f "${REPO_DIR}/scripts/install-certbot.sh" ]]; then
@@ -254,6 +259,12 @@ fi
 if [[ -f "${REPO_DIR}/scripts/post-install-bootstrap.sh" ]]; then
   echo "[vzone] Bootstrap repairs…"
   bash "${REPO_DIR}/scripts/post-install-bootstrap.sh" --repair-only || echo "[vzone] Avertissement: bootstrap repair partiel"
+fi
+
+# Dernière passe SSO (après bootstrap qui ne doit plus écraser les droits)
+if [[ -f "${REPO_DIR}/scripts/ensure-roundcube-sso.sh" ]]; then
+  bash "${REPO_DIR}/scripts/ensure-roundcube-sso.sh" || true
+  systemctl restart vzone-api 2>/dev/null || true
 fi
 
 # Seed packages + ACL revendeurs manquants

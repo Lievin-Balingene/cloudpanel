@@ -78,13 +78,15 @@ echo
 echo "[3] Droits + SSO + nginx"
 mkdir -p "${RC_ROOT}/temp" "${RC_ROOT}/logs"
 chown -R www-data:www-data "${RC_ROOT}/temp" "${RC_ROOT}/logs"
-chmod 770 "${RC_ROOT}/temp" "${RC_ROOT}/logs"
+chmod 770 "${RC_ROOT}/temp" "${RC_ROOT}/logs" 2>/dev/null || true
 
-SSO_DIR="${VZONE_ROUNDCUBE_SSO_DIR:-/var/lib/vzone/roundcube/sso}"
-mkdir -p "$SSO_DIR"
-chown vzone:www-data "$SSO_DIR" 2>/dev/null || chown www-data:www-data "$SSO_DIR"
-chmod 2770 "$SSO_DIR"
-if [[ -f "${REPO_DIR}/deploy/roundcube/vzone-sso.php" ]]; then
+# SSO durable (ne pas remettre /var/lib/vzone non traversable par PHP)
+if [[ -f "${REPO_DIR}/scripts/ensure-roundcube-sso.sh" ]]; then
+  bash "${REPO_DIR}/scripts/ensure-roundcube-sso.sh"
+elif [[ -f "${REPO_DIR}/deploy/roundcube/vzone-sso.php" ]]; then
+  SSO_DIR="${RC_ROOT}/temp/sso"
+  mkdir -p "$SSO_DIR"
+  chmod 1777 "$SSO_DIR"
   install -m 644 "${REPO_DIR}/deploy/roundcube/vzone-sso.php" "${RC_ROOT}/vzone-sso.php"
   sed -i "s|__SSO_DIR__|${SSO_DIR}|g" "${RC_ROOT}/vzone-sso.php"
 fi

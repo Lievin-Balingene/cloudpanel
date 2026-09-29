@@ -901,26 +901,36 @@ def create_webmail_sso(box: Mailbox, *, request=None) -> dict:
     except Exception:  # noqa: BLE001
         logger.exception("write_mail_maps avant SSO a échoué")
 
-    sso_dir = Path(
-        getattr(settings, "VZONE_ROUNDCUBE_SSO_DIR", None)
-        or (Path(settings.VZONE_DATA_ROOT) / "roundcube" / "sso")
+    # Chemin SSO : temp Roundcube (PHP/www-data). Ignore un vieux path /var/lib/vzone
+    # non traversable par PHP (dir_writable=no → path_exists=no).
+    rc_root = Path(
+        getattr(settings, "VZONE_ROUNDCUBE_ROOT", None) or "/opt/vzone/roundcube"
     )
-    sso_dir.mkdir(parents=True, exist_ok=True)
-    # Droits : Django (vzone) écrit, PHP-FPM (www-data) rename/lit
-    try:
-        import grp
-        import pwd
+    configured = Path(
+        getattr(settings, "VZONE_ROUNDCUBE_SSO_DIR", None)
+        or (rc_root / "temp" / "sso")
+    )
+    legacy = Path(settings.VZONE_DATA_ROOT) / "roundcube" / "sso"
+    if str(configured).startswith(str(legacy)) or "var/lib/vzone/roundcube" in str(
+        configured
+    ).replace("\\", "/"):
+        sso_dir = rc_root / "temp" / "sso"
+    else:
+        sso_dir = configured
 
-        uid = pwd.getpwnam("vzone").pw_uid
-        gid = grp.getgrnam("www-data").gr_gid
-        os.chown(sso_dir, uid, gid)
-        os.chmod(sso_dir, 0o2770)
-    except (OSError, KeyError, ImportError):
+    sso_dir.mkdir(parents=True, exist_ok=True)
+    # 1777 sticky : vzone écrit, www-data rename — survit aux chown globaux post-install
+    try:
+        os.chmod(sso_dir, 0o1777)
+    except OSError:
         try:
-            # Sans root : dossier world-sticky pour que PHP puisse rename
-            os.chmod(sso_dir, 0o1777)
+            os.chmod(sso_dir, 0o777)
         except OSError:
             pass
+    try:
+        os.chmod(sso_dir.parent, 0o1777)
+    except OSError:
+        pass
 
     # Nettoyage tokens périmés / .used vieux (> 10 min)
     try:
@@ -945,48 +955,37 @@ def create_webmail_sso(box: Mailbox, *, request=None) -> dict:
         "exp": int(time.time()) + 120,
     }
     token_path = sso_dir / f"{token}.json"
-    # Écriture atomique + droits pour www-data
     payload_json = json.dumps(payload)
     tmp_path = sso_dir / f".{token}.tmp"
     fd = os.open(
         str(tmp_path),
         os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
-        0o660,
+        0o666,
     )
     try:
         os.write(fd, payload_json.encode("utf-8"))
     finally:
         os.close(fd)
     try:
-        import grp
-        import pwd
-
-        uid = pwd.getpwnam("vzone").pw_uid
-        gid = grp.getgrnam("www-data").gr_gid
-        os.chown(tmp_path, uid, gid)
-        os.chmod(tmp_path, 0o660)
-    except (OSError, KeyError, ImportError):
-        try:
-            os.chmod(tmp_path, 0o666)
-        except OSError:
-            pass
+        os.chmod(tmp_path, 0o666)
+    except OSError:
+        pass
     os.replace(str(tmp_path), str(token_path))
     try:
-        os.chmod(token_path, 0o660)
+        os.chmod(token_path, 0o666)
     except OSError:
-        try:
-            os.chmod(token_path, 0o666)
-        except OSError:
-            pass
-    try:
-        import grp
-        import pwd
-
-        uid = pwd.getpwnam("vzone").pw_uid
-        gid = grp.getgrnam("www-data").gr_gid
-        os.chown(token_path, uid, gid)
-    except (OSError, KeyError, ImportError):
         pass
+
+    # Vérifie que le fichier est bien lisible (sinon PHP renverra path_exists=no)
+    if not token_path.is_file():
+        raise VZoneAPIException(
+            detail=(
+                "Impossible d'écrire le token SSO webmail. "
+                "Exécutez: sudo bash /opt/vzone-src/scripts/ensure-roundcube-sso.sh"
+            ),
+            code="sso_write_failed",
+            status_code=500,
+        )
 
     base = webmail_url(request).rstrip("/") + "/"
     return {
@@ -994,4 +993,5 @@ def create_webmail_sso(box: Mailbox, *, request=None) -> dict:
         "expires_in": 120,
         "address": box.address,
         "webmail_base": base,
+        "sso_dir": str(sso_dir),
     }

@@ -11,7 +11,7 @@ VZONE_USER="${VZONE_USER:-vzone}"
 ENV_FILE="${ENV_FILE:-/etc/vzone/vzone.env}"
 DATA_ROOT="${VZONE_DATA_ROOT:-/var/lib/vzone}"
 RC_ROOT="${VZONE_ROUNDCUBE_ROOT:-/opt/vzone/roundcube}"
-SSO_DIR="${DATA_ROOT}/roundcube/sso"
+SSO_DIR="${DATA_ROOT}/roundcube/sso"  # legacy — ensure-roundcube-sso.sh bascule vers temp/sso
 RC_VERSION="${VZONE_ROUNDCUBE_VERSION:-1.6.10}"
 
 echo "[vzone] Installation Roundcube Webmail ${RC_VERSION}"
@@ -132,21 +132,24 @@ sed -i "s|__DES_KEY__|${DES_KEY}|g" "${RC_ROOT}/config/config.inc.php"
 sed -i "s|__TEMP_DIR__|${TEMP_ESC}|g" "${RC_ROOT}/config/config.inc.php"
 
 install -m 644 "${REPO_DIR}/deploy/roundcube/vzone-sso.php" "${RC_ROOT}/vzone-sso.php"
-SSO_ESC="$(printf '%s' "$SSO_DIR" | sed 's|[&/]|\\&|g')"
-sed -i "s|__SSO_DIR__|${SSO_ESC}|g" "${RC_ROOT}/vzone-sso.php"
 
-# Droits
+# Droits Roundcube
 chown -R root:www-data "$RC_ROOT"
 chmod -R a+rX "$RC_ROOT"
 chmod 640 "${RC_ROOT}/config/config.inc.php"
 chown -R www-data:www-data "$TEMP_DIR" "${RC_ROOT}/logs"
-chmod 770 "$TEMP_DIR" "${RC_ROOT}/logs"
+chmod 770 "$TEMP_DIR" "${RC_ROOT}/logs" 2>/dev/null || true
 
-mkdir -p "$SSO_DIR"
-chown -R "${VZONE_USER}:www-data" "$(dirname "$SSO_DIR")"
-chmod 2770 "$SSO_DIR"
-chmod 770 "$(dirname "$SSO_DIR")" 2>/dev/null || true
-# vzone dans www-data pour écrire des tokens lisibles par PHP
+# SSO durable (chemin + droits + env) — ne pas dépendre de /var/lib/vzone
+if [[ -f "${SCRIPT_DIR}/ensure-roundcube-sso.sh" ]]; then
+  bash "${SCRIPT_DIR}/ensure-roundcube-sso.sh"
+else
+  SSO_DIR="${RC_ROOT}/temp/sso"
+  mkdir -p "$SSO_DIR"
+  chmod 1777 "$SSO_DIR"
+  SSO_ESC="$(printf '%s' "$SSO_DIR" | sed 's|[&/]|\\&|g')"
+  sed -i "s|__SSO_DIR__|${SSO_ESC}|g" "${RC_ROOT}/vzone-sso.php"
+fi
 usermod -aG www-data "${VZONE_USER}" 2>/dev/null || true
 
 # Désactiver l'installeur public
@@ -160,14 +163,12 @@ PHP_ESC="$(printf '%s' "$PHP_SOCK" | sed 's|[&/]|\\&|g')"
 sed -i "s|__RC_ROOT__|${RC_ESC}|g" /etc/nginx/snippets/vzone-roundcube.inc
 sed -i "s|__PHP_SOCK__|${PHP_ESC}|g" /etc/nginx/snippets/vzone-roundcube.inc
 
-# Env panel
+# Env panel (DB + webmail URL — SSO_DIR déjà posé par ensure-roundcube-sso)
 if [[ -f "$ENV_FILE" ]]; then
   grep -q '^VZONE_WEBMAIL_URL=' "$ENV_FILE" || echo "VZONE_WEBMAIL_URL=/webmail/" >> "$ENV_FILE"
   sed -i 's|^VZONE_WEBMAIL_URL=.*|VZONE_WEBMAIL_URL=/webmail/|' "$ENV_FILE"
   grep -q '^VZONE_ROUNDCUBE_ROOT=' "$ENV_FILE" || echo "VZONE_ROUNDCUBE_ROOT=${RC_ROOT}" >> "$ENV_FILE"
   sed -i "s|^VZONE_ROUNDCUBE_ROOT=.*|VZONE_ROUNDCUBE_ROOT=${RC_ROOT}|" "$ENV_FILE"
-  grep -q '^VZONE_ROUNDCUBE_SSO_DIR=' "$ENV_FILE" || echo "VZONE_ROUNDCUBE_SSO_DIR=${SSO_DIR}" >> "$ENV_FILE"
-  sed -i "s|^VZONE_ROUNDCUBE_SSO_DIR=.*|VZONE_ROUNDCUBE_SSO_DIR=${SSO_DIR}|" "$ENV_FILE"
   if grep -q '^VZONE_ROUNDCUBE_DB_PASSWORD=' "$ENV_FILE"; then
     sed -i "s|^VZONE_ROUNDCUBE_DB_PASSWORD=.*|VZONE_ROUNDCUBE_DB_PASSWORD=${RC_DB_PASS}|" "$ENV_FILE"
   else

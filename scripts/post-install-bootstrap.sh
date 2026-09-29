@@ -141,7 +141,16 @@ PY
 ensure_core() {
   step "Ensure core (homes, nginx, API, services)"
   mkdir -p "${VZONE_DATA}"/{homes,mail,ssl,acme,repair/jobs,update/jobs,roundcube/sso,phpmyadmin/sso}
-  chown -R "${VZONE_USER}:${VZONE_USER}" "${VZONE_DATA}" 2>/dev/null || true
+  # Ne PAS chown -R tout VZONE_DATA sur vzone:vzone — ça casse le SSO Roundcube
+  # (www-data ne peut plus lire /var/lib/vzone/roundcube/sso → path_exists=no).
+  chown "${VZONE_USER}:${VZONE_USER}" "${VZONE_DATA}" 2>/dev/null || true
+  for d in homes mail ssl acme repair update phpmyadmin; do
+    [[ -d "${VZONE_DATA}/${d}" ]] && chown -R "${VZONE_USER}:${VZONE_USER}" "${VZONE_DATA}/${d}" 2>/dev/null || true
+  done
+  # SSO Roundcube : droits durables (temp/sso sous Roundcube)
+  if [[ -f "${SCRIPT_DIR}/ensure-roundcube-sso.sh" ]]; then
+    run_ok "ensure-roundcube-sso" bash "${SCRIPT_DIR}/ensure-roundcube-sso.sh"
+  fi
 
   [[ -f "${SCRIPT_DIR}/ensure-homes.sh" ]] && run_ok "ensure-homes" bash "${SCRIPT_DIR}/ensure-homes.sh"
   if [[ -f "${SCRIPT_DIR}/ensure-nginx.sh" ]]; then
@@ -174,6 +183,7 @@ repair_all_safe() {
     repair-roundcube.sh
     repair-mail-auth.sh
     repair-smtp.sh
+    ensure-roundcube-sso.sh
   )
 
   local r

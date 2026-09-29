@@ -336,12 +336,13 @@ VZONE_MAIL_HOME_ROOT = env("VZONE_MAIL_HOME_ROOT", "cpanel")  # cpanel → ~/mai
 VZONE_MAIL_STACK = env("VZONE_MAIL_STACK", "auto")  # auto | live | mock
 VZONE_MAIL_PUBLIC_IP = env("VZONE_MAIL_PUBLIC_IP", "")
 VZONE_PUBLIC_IP = env("VZONE_PUBLIC_IP", VZONE_MAIL_PUBLIC_IP)
+VZONE_ROUNDCUBE_ROOT = env("VZONE_ROUNDCUBE_ROOT", "/opt/vzone/roundcube")
+# Tokens SSO : sous temp Roundcube (www-data) — PAS /var/lib/vzone (souvent non traversable par PHP)
 VZONE_ROUNDCUBE_SSO_DIR = env(
     "VZONE_ROUNDCUBE_SSO_DIR",
-    str(VZONE_DATA_ROOT / "roundcube" / "sso"),
+    str(Path(VZONE_ROUNDCUBE_ROOT) / "temp" / "sso"),
 )
 VZONE_ROUNDCUBE_IMAP_HOST = env("VZONE_ROUNDCUBE_IMAP_HOST", "127.0.0.1:143")
-VZONE_ROUNDCUBE_ROOT = env("VZONE_ROUNDCUBE_ROOT", "/opt/vzone/roundcube")
 
 
 # Bases de données hébergées (provisionnement)

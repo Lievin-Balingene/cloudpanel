@@ -50,19 +50,17 @@ chmod 750 "${DATA_ROOT}/mail" "$MAPS_DIR" 2>/dev/null || true
 chmod -R g+rwX "${DATA_ROOT}/mail" 2>/dev/null || true
 
 SSO_DIR="${VZONE_ROUNDCUBE_SSO_DIR:-${DATA_ROOT}/roundcube/sso}"
-mkdir -p "$SSO_DIR"
-# vzone écrit, www-data (PHP-FPM) rename/lit — setgid + sticky absents
-chown vzone:www-data "$SSO_DIR"
-chmod 2770 "$SSO_DIR"
-# Nettoyage tokens orphelins
-find "$SSO_DIR" -type f -name '*.json*' -mmin +10 -delete 2>/dev/null || true
-# Garantir que www-data est dans le groupe et peut écrire
+# Droits SSO durables (chemin temp Roundcube + 1777) — ne pas casser au prochain update
+if [[ -f "${REPO_DIR}/scripts/ensure-roundcube-sso.sh" ]]; then
+  bash "${REPO_DIR}/scripts/ensure-roundcube-sso.sh"
+else
+  mkdir -p "$SSO_DIR"
+  chown vzone:www-data "$SSO_DIR" 2>/dev/null || true
+  chmod 1777 "$SSO_DIR"
+fi
+# Nettoyage tokens orphelins (chemins legacy + canonique)
+find "${DATA_ROOT}/roundcube/sso" /opt/vzone/roundcube/temp/sso -type f -name '*.json*' -mmin +10 -delete 2>/dev/null || true
 usermod -aG www-data vzone 2>/dev/null || true
-# Test écriture PHP-compatible
-touch "${SSO_DIR}/.write-test" 2>/dev/null && chown vzone:www-data "${SSO_DIR}/.write-test" && chmod 660 "${SSO_DIR}/.write-test" && rm -f "${SSO_DIR}/.write-test" || {
-  echo "[warn] SSO dir peu accessible — fallback 1777"
-  chmod 1777 "$SSO_DIR" || true
-}
 
 touch "$ENV_FILE"
 grep -q '^VZONE_MAIL_HOME_ROOT=' "$ENV_FILE" 2>/dev/null \
@@ -96,9 +94,18 @@ if [[ -d "$RC_ROOT" && -f "${REPO_DIR}/deploy/roundcube/vzone-sso.php" ]]; then
         "${RC_ROOT}/config/config.inc.php" || true
     fi
   fi
-  install -m 644 "${REPO_DIR}/deploy/roundcube/vzone-sso.php" "${RC_ROOT}/vzone-sso.php"
-  sed -i "s|__SSO_DIR__|${SSO_DIR}|g" "${RC_ROOT}/vzone-sso.php"
+  # ensure-roundcube-sso.sh pose vzone-sso.php + chemin + droits (ne pas hardcoder /var/lib/vzone)
+  if [[ -f "${REPO_DIR}/scripts/ensure-roundcube-sso.sh" ]]; then
+    bash "${REPO_DIR}/scripts/ensure-roundcube-sso.sh"
+  else
+    install -m 644 "${REPO_DIR}/deploy/roundcube/vzone-sso.php" "${RC_ROOT}/vzone-sso.php"
+    SSO_DIR="${RC_ROOT}/temp/sso"
+    mkdir -p "$SSO_DIR"
+    chmod 1777 "$SSO_DIR"
+    sed -i "s|__SSO_DIR__|${SSO_DIR}|g" "${RC_ROOT}/vzone-sso.php"
+  fi
   chown -R www-data:www-data "${RC_ROOT}/temp" "${RC_ROOT}/logs" 2>/dev/null || true
+  chmod 1777 "${RC_ROOT}/temp/sso" 2>/dev/null || true
 fi
 
 set -a; source "$ENV_FILE"; set +a
