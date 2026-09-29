@@ -2,14 +2,12 @@
 from __future__ import annotations
 
 import re
-
 from datetime import timedelta
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
-
 
 DOMAIN_RE = re.compile(
     r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$"
@@ -57,6 +55,7 @@ class Domain(models.Model):
     document_root = models.CharField(max_length=512, blank=True, default="")
     is_active = models.BooleanField(default=True)
     is_suspended = models.BooleanField(default=False)
+    force_https = models.BooleanField(default=True)
     create_dns_zone = models.BooleanField(default=True)
     dns_zone = models.ForeignKey(
         "dns.DnsZone",

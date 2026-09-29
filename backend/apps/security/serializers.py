@@ -39,6 +39,11 @@ class SecurityPolicyUpdateSerializer(serializers.Serializer):
     force_2fa_admins = serializers.BooleanField(required=False)
 
 
+class SshKeyCreateSerializer(serializers.Serializer):
+    name = serializers.CharField(required=False, allow_blank=True, max_length=255, default="")
+    public_key = serializers.CharField()
+
+
 class IpAccessRuleSerializer(serializers.ModelSerializer):
     created_by_username = serializers.CharField(
         source="created_by.username",

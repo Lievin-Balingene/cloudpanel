@@ -6,7 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.permissions import IsAdministrator
-from apps.dashboard.services import capture_snapshot, history, overview_for
+from apps.dashboard.services import capture_snapshot, history, overview_for, visitors_for
 
 
 class DashboardOverviewView(APIView):
@@ -23,6 +23,19 @@ class DashboardHistoryView(APIView):
         hours = int(request.query_params.get("hours", 24))
         hours = max(1, min(hours, 168))
         return Response({"success": True, "data": history(hours=hours)})
+
+
+class MetricsVisitorsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request) -> Response:
+        try:
+            hours = int(request.query_params.get("hours", 24))
+        except (TypeError, ValueError):
+            hours = 24
+        return Response(
+            {"success": True, "data": visitors_for(request.user, hours=hours)}
+        )
 
 
 class DashboardCaptureView(APIView):

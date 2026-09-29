@@ -1,7 +1,11 @@
 """Services sécurité panel : politique, IP, lockout."""
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
 import ipaddress
+import os
 import re
 from datetime import timedelta
 from typing import Any
@@ -12,7 +16,161 @@ from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.core.exceptions import VZoneAPIException
+from apps.files.services import personal_home, user_home
 from apps.security.models import AccountLockout, IpAccessRule, LoginAttempt, SecurityPolicy
+
+SSH_KEY_TYPE_RE = re.compile(
+    r"^(?:ssh-(?:rsa|dss|ed25519)|ecdsa-sha2-nistp(?:256|384|521)|"
+    r"sk-(?:ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com)$"
+)
+
+
+def _authorized_keys_path(user: User):
+    user_home(user)
+    ssh_dir = personal_home(user) / ".ssh"
+    try:
+        ssh_dir.mkdir(parents=True, exist_ok=True)
+        os.chmod(ssh_dir, 0o700)
+    except OSError as exc:
+        raise VZoneAPIException(
+            detail=f"Répertoire SSH inaccessible: {exc}",
+            code="ssh_unavailable",
+            status_code=500,
+        ) from exc
+    return ssh_dir / "authorized_keys"
+
+
+def _parse_ssh_key_line(line: str, index: int) -> dict | None:
+    parts = line.strip().split()
+    key_pos = next(
+        (pos for pos, value in enumerate(parts) if SSH_KEY_TYPE_RE.fullmatch(value)),
+        None,
+    )
+    if key_pos is None or key_pos + 1 >= len(parts):
+        return None
+    key_type = parts[key_pos]
+    encoded = parts[key_pos + 1]
+    try:
+        raw = base64.b64decode(encoded.encode("ascii"), validate=True)
+    except (ValueError, UnicodeEncodeError, binascii.Error):
+        return None
+    fingerprint = "SHA256:" + base64.b64encode(hashlib.sha256(raw).digest()).decode("ascii").rstrip("=")
+    name = " ".join(parts[key_pos + 2 :])
+    return {
+        "id": index,
+        "index": index,
+        "name": name,
+        "key_type": key_type,
+        "public_key": f"{key_type} {encoded}",
+        "fingerprint": fingerprint,
+    }
+
+
+def list_ssh_keys(user: User) -> list[dict]:
+    path = _authorized_keys_path(user)
+    if not path.is_file():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise VZoneAPIException(
+            detail=f"Lecture des clés SSH impossible: {exc}",
+            code="ssh_read_error",
+            status_code=500,
+        ) from exc
+    return [
+        parsed
+        for index, line in enumerate(lines)
+        if (parsed := _parse_ssh_key_line(line, index)) is not None
+    ]
+
+
+def add_ssh_key(user: User, name: str, public_key: str) -> dict:
+    parsed = _parse_ssh_key_line((public_key or "").strip(), 0)
+    if parsed is None:
+        raise VZoneAPIException(
+            detail="Clé publique SSH invalide.",
+            code="invalid_ssh_key",
+            status_code=400,
+        )
+    clean_name = " ".join((name or parsed["name"] or "").split())
+    if "\n" in clean_name or "\r" in clean_name or len(clean_name) > 255:
+        raise VZoneAPIException(
+            detail="Nom de clé SSH invalide.",
+            code="invalid_key_name",
+            status_code=400,
+        )
+    if any(item["fingerprint"] == parsed["fingerprint"] for item in list_ssh_keys(user)):
+        raise VZoneAPIException(
+            detail="Cette clé SSH est déjà enregistrée.",
+            code="ssh_key_exists",
+            status_code=400,
+        )
+
+    path = _authorized_keys_path(user)
+    line = parsed["public_key"] + (f" {clean_name}" if clean_name else "")
+    try:
+        existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+        content = existing.rstrip("\n")
+        path.write_text(f"{content}\n{line}\n" if content else f"{line}\n", encoding="utf-8")
+        os.chmod(path, 0o600)
+    except OSError as exc:
+        raise VZoneAPIException(
+            detail=f"Écriture de la clé SSH impossible: {exc}",
+            code="ssh_write_error",
+            status_code=500,
+        ) from exc
+    keys = list_ssh_keys(user)
+    return next(item for item in keys if item["fingerprint"] == parsed["fingerprint"])
+
+
+def delete_ssh_key(user: User, fingerprint_or_index: str | int) -> None:
+    path = _authorized_keys_path(user)
+    if not path.is_file():
+        raise VZoneAPIException(
+            detail="Clé SSH introuvable.",
+            code="ssh_key_not_found",
+            status_code=404,
+        )
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise VZoneAPIException(
+            detail=f"Lecture des clés SSH impossible: {exc}",
+            code="ssh_read_error",
+            status_code=500,
+        ) from exc
+
+    target_index: int | None = None
+    if isinstance(fingerprint_or_index, int):
+        target_index = fingerprint_or_index
+    else:
+        for item in list_ssh_keys(user):
+            if item["fingerprint"] == fingerprint_or_index:
+                target_index = item["index"]
+                break
+    if target_index is None or target_index < 0 or target_index >= len(lines):
+        raise VZoneAPIException(
+            detail="Clé SSH introuvable.",
+            code="ssh_key_not_found",
+            status_code=404,
+        )
+    if _parse_ssh_key_line(lines[target_index], target_index) is None:
+        raise VZoneAPIException(
+            detail="Clé SSH introuvable.",
+            code="ssh_key_not_found",
+            status_code=404,
+        )
+    del lines[target_index]
+    try:
+        path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+        os.chmod(path, 0o600)
+    except OSError as exc:
+        raise VZoneAPIException(
+            detail=f"Suppression de la clé SSH impossible: {exc}",
+            code="ssh_write_error",
+            status_code=500,
+        ) from exc
 
 
 def get_policy() -> SecurityPolicy:

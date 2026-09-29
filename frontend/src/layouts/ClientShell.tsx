@@ -26,6 +26,13 @@ import {
   Menu,
   X,
   Server,
+  PieChart,
+  Lock,
+  Ban,
+  Settings,
+  BarChart3,
+  FileLock2,
+  Gauge,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "@/lib/api";
@@ -41,55 +48,81 @@ type NavItem = { to: string; label: string; icon: typeof Home; end?: boolean };
 
 type NavSection = { id: string; label: string; items: NavItem[] };
 
+/** Sections alignées sur cPanel (ordre & regroupement familiers). */
 const sections: NavSection[] = [
-  {
-    id: "sites",
-    label: "Sites web",
-    items: [
-      { to: "/panel/domains", label: "Mes domaines", icon: AppWindow },
-      { to: "/panel/dns", label: "DNS", icon: Globe },
-      { to: "/panel/wordpress", label: "WordPress", icon: LayoutTemplate },
-      { to: "/panel/php", label: "Version PHP", icon: FileCode2 },
-    ],
-  },
   {
     id: "files",
     label: "Fichiers",
     items: [
-      { to: "/panel/files", label: "Mes fichiers", icon: FolderOpen },
-      { to: "/panel/ftp", label: "Accès FTP", icon: Upload },
+      { to: "/panel/files", label: "Gestionnaire de fichiers", icon: FolderOpen },
+      { to: "/panel/disk-usage", label: "Utilisation disque", icon: PieChart },
+      { to: "/panel/directory-privacy", label: "Confidentialité dossiers", icon: FileLock2 },
+      { to: "/panel/ftp", label: "Comptes FTP", icon: Upload },
       { to: "/panel/backups", label: "Sauvegardes", icon: HardDrive },
+    ],
+  },
+  {
+    id: "databases",
+    label: "Bases de données",
+    items: [{ to: "/panel/databases", label: "MySQL / PostgreSQL", icon: Database }],
+  },
+  {
+    id: "domains",
+    label: "Domaines",
+    items: [
+      { to: "/panel/domains", label: "Domaines", icon: AppWindow },
+      { to: "/panel/dns", label: "Éditeur de zone DNS", icon: Globe },
     ],
   },
   {
     id: "email",
     label: "E-mail",
-    items: [{ to: "/panel/email", label: "Boîtes mail", icon: Mail }],
+    items: [{ to: "/panel/email", label: "Comptes e-mail", icon: Mail }],
   },
   {
-    id: "databases",
-    label: "Bases de données",
-    items: [{ to: "/panel/databases", label: "Bases MySQL / PG", icon: Database }],
-  },
-  {
-    id: "apps",
-    label: "Applications",
+    id: "metrics",
+    label: "Statistiques",
     items: [
-      { to: "/panel/python", label: "App Python", icon: Code2 },
-      { to: "/panel/node", label: "App Node.js", icon: Terminal },
-      { to: "/panel/git", label: "Git", icon: GitBranch },
+      { to: "/panel/metrics", label: "Visiteurs & erreurs", icon: BarChart3 },
+      { to: "/panel/package", label: "Ressources & quotas", icon: Gauge },
+    ],
+  },
+  {
+    id: "security",
+    label: "Sécurité",
+    items: [
+      { to: "/panel/security", label: "Mot de passe & 2FA", icon: KeyRound },
+      { to: "/panel/ssh-keys", label: "Clés SSH", icon: Lock },
+      { to: "/panel/ip-blocker", label: "Bloqueur d’IP", icon: Ban },
+      { to: "/panel/domains", label: "SSL / TLS", icon: Shield },
+    ],
+  },
+  {
+    id: "software",
+    label: "Logiciels",
+    items: [
+      { to: "/panel/php", label: "MultiPHP Manager", icon: FileCode2 },
+      { to: "/panel/wordpress", label: "WordPress", icon: LayoutTemplate },
+      { to: "/panel/python", label: "Application Python", icon: Code2 },
+      { to: "/panel/node", label: "Application Node.js", icon: Terminal },
+      { to: "/panel/git", label: "Contrôle de version Git", icon: GitBranch },
       { to: "/panel/docker", label: "Docker", icon: Box },
-      { to: "/panel/cron", label: "Tâches planifiées", icon: Clock },
+    ],
+  },
+  {
+    id: "advanced",
+    label: "Avancé",
+    items: [
+      { to: "/panel/cron", label: "Tâches Cron", icon: Clock },
       { to: "/panel/terminal", label: "Terminal", icon: Terminal },
     ],
   },
   {
-    id: "account",
-    label: "Mon compte",
+    id: "preferences",
+    label: "Préférences",
     items: [
+      { to: "/panel/preferences", label: "Préférences du compte", icon: Settings },
       { to: "/panel/package", label: "Mon forfait", icon: Package },
-      { to: "/panel/security", label: "Sécurité", icon: KeyRound },
-      { to: "/panel/domains", label: "Certificat SSL", icon: Shield },
     ],
   },
 ];
@@ -246,7 +279,7 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 function ToolsNav({ onNavigate }: { onNavigate?: () => void }) {
   const location = useLocation();
   const initiallyOpen = useMemo(() => {
-    const open = new Set<string>(["sites", "files", "email"]);
+    const open = new Set<string>(["files", "domains", "email"]);
     for (const section of sections) {
       if (
         section.items.some(

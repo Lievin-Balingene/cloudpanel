@@ -9,7 +9,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts.models import User
-from apps.email.models import Mailbox, MailDomain, MailFilter, MailForwarder, MailingList
+from apps.email.models import MailFilter, MailForwarder, MailingList
 from apps.email.serializers import (
     AutoresponderSerializer,
     AutoresponderUpdateSerializer,
@@ -20,6 +20,7 @@ from apps.email.serializers import (
     MailboxUpdateSerializer,
     MailDomainCreateSerializer,
     MailDomainSerializer,
+    MailDomainUpdateSerializer,
     MailFilterCreateSerializer,
     MailFilterSerializer,
     MailForwarderCreateSerializer,
@@ -92,6 +93,17 @@ class MailDomainDetailView(APIView):
         data = MailDomainSerializer(md).data
         data["mailbox_count"] = md.mailboxes.count()
         return Response({"success": True, "data": data})
+
+    def patch(self, request: Request, pk: int) -> Response:
+        md = get_object_or_404(mail_domains_qs(request.user), pk=pk)
+        serializer = MailDomainUpdateSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        for field, value in serializer.validated_data.items():
+            setattr(md, field, value)
+        if serializer.validated_data:
+            md.save(update_fields=[*serializer.validated_data.keys(), "updated_at"])
+            write_mail_maps()
+        return Response({"success": True, "data": MailDomainSerializer(md).data})
 
     def delete(self, request: Request, pk: int) -> Response:
         md = get_object_or_404(mail_domains_qs(request.user), pk=pk)

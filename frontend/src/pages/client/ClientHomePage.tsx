@@ -22,6 +22,13 @@ import {
   Server,
   Clock,
   ArrowRight,
+  PieChart,
+  FileLock2,
+  BarChart3,
+  Lock,
+  Ban,
+  Settings,
+  Gauge,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { apiRequest } from "@/lib/api";
@@ -30,57 +37,74 @@ import { whmPortalUrl } from "@/lib/portal";
 import { useAuthStore } from "@/stores/auth";
 import type { DashboardOverview } from "@/types";
 
-type Tool = {
-  to: string;
-  label: string;
-  icon: LucideIcon;
-};
-
+type Tool = { to: string; label: string; icon: LucideIcon };
 type Section = { title: string; tools: Tool[] };
 
 const sections: Section[] = [
   {
-    title: "Sites web",
+    title: "Fichiers",
     tools: [
-      { to: "/panel/domains", label: "Mes domaines", icon: AppWindow },
-      { to: "/panel/dns", label: "DNS", icon: Globe },
-      { to: "/panel/domains", label: "Certificat SSL", icon: Shield },
-      { to: "/panel/wordpress", label: "WordPress", icon: LayoutTemplate },
-      { to: "/panel/php", label: "Version PHP", icon: FileCode2 },
-    ],
-  },
-  {
-    title: "Fichiers & sauvegardes",
-    tools: [
-      { to: "/panel/files", label: "Mes fichiers", icon: Folder },
-      { to: "/panel/ftp", label: "Accès FTP", icon: Upload },
+      { to: "/panel/files", label: "Gestionnaire de fichiers", icon: Folder },
+      { to: "/panel/disk-usage", label: "Utilisation disque", icon: PieChart },
+      { to: "/panel/directory-privacy", label: "Confidentialité dossiers", icon: FileLock2 },
+      { to: "/panel/ftp", label: "Comptes FTP", icon: Upload },
       { to: "/panel/backups", label: "Sauvegardes", icon: HardDrive },
     ],
   },
   {
-    title: "E-mail",
-    tools: [{ to: "/panel/email", label: "Boîtes mail", icon: Mail }],
-  },
-  {
     title: "Bases de données",
-    tools: [{ to: "/panel/databases", label: "Bases de données", icon: Database }],
+    tools: [{ to: "/panel/databases", label: "MySQL / PostgreSQL", icon: Database }],
   },
   {
-    title: "Applications",
+    title: "Domaines",
     tools: [
-      { to: "/panel/python", label: "App Python", icon: Code2 },
-      { to: "/panel/node", label: "App Node.js", icon: Terminal },
-      { to: "/panel/git", label: "Git", icon: GitBranch },
+      { to: "/panel/domains", label: "Domaines", icon: AppWindow },
+      { to: "/panel/dns", label: "Éditeur de zone DNS", icon: Globe },
+    ],
+  },
+  {
+    title: "E-mail",
+    tools: [{ to: "/panel/email", label: "Comptes e-mail", icon: Mail }],
+  },
+  {
+    title: "Statistiques",
+    tools: [
+      { to: "/panel/metrics", label: "Visiteurs & erreurs", icon: BarChart3 },
+      { to: "/panel/package", label: "Ressources & quotas", icon: Gauge },
+    ],
+  },
+  {
+    title: "Sécurité",
+    tools: [
+      { to: "/panel/security", label: "Mot de passe & 2FA", icon: KeyRound },
+      { to: "/panel/ssh-keys", label: "Clés SSH", icon: Lock },
+      { to: "/panel/ip-blocker", label: "Bloqueur d’IP", icon: Ban },
+      { to: "/panel/domains", label: "SSL / TLS", icon: Shield },
+    ],
+  },
+  {
+    title: "Logiciels",
+    tools: [
+      { to: "/panel/php", label: "MultiPHP Manager", icon: FileCode2 },
+      { to: "/panel/wordpress", label: "WordPress", icon: LayoutTemplate },
+      { to: "/panel/python", label: "Application Python", icon: Code2 },
+      { to: "/panel/node", label: "Application Node.js", icon: Terminal },
+      { to: "/panel/git", label: "Contrôle de version Git", icon: GitBranch },
       { to: "/panel/docker", label: "Docker", icon: Box },
-      { to: "/panel/cron", label: "Tâches planifiées", icon: Clock },
+    ],
+  },
+  {
+    title: "Avancé",
+    tools: [
+      { to: "/panel/cron", label: "Tâches Cron", icon: Clock },
       { to: "/panel/terminal", label: "Terminal", icon: Terminal },
     ],
   },
   {
-    title: "Mon compte",
+    title: "Préférences",
     tools: [
+      { to: "/panel/preferences", label: "Préférences du compte", icon: Settings },
       { to: "/panel/package", label: "Mon forfait", icon: Package },
-      { to: "/panel/security", label: "Sécurité", icon: KeyRound },
     ],
   },
 ];
@@ -172,13 +196,15 @@ export function ClientHomePage() {
       <div className="vz-panel overflow-hidden">
         <div className="bg-gradient-to-br from-[#1e3a5f] via-[#243d5c] to-[#2a4a6b] px-4 py-5 text-white sm:px-5 sm:py-6">
           <p className="text-xs font-medium uppercase tracking-wider text-white/70">
-            Tableau de bord
+            Informations générales
           </p>
           <h1 className="mt-1 text-xl font-semibold tracking-tight sm:text-2xl">
             Bonjour, {greetName}
           </h1>
           <p className="mt-1 max-w-xl text-sm text-white/80">
-            Gérez vos sites, e-mails et fichiers depuis un seul endroit.
+            {data?.account?.primary_domain
+              ? `Domaine principal : ${data.account.primary_domain}.`
+              : "Gérez vos sites, e-mails et fichiers."}
             {data?.my_package ? (
               <>
                 {" "}
@@ -199,7 +225,7 @@ export function ClientHomePage() {
         </div>
 
         <div className="grid grid-cols-2 gap-2 p-3 sm:grid-cols-4 sm:gap-3 sm:p-4 xl:hidden">
-          <StatChip label="Disque" value={`${diskUsed} / ${diskQuota}`} to="/panel/package" />
+          <StatChip label="Disque" value={`${diskUsed} / ${diskQuota}`} to="/panel/disk-usage" />
           <StatChip
             label="Domaines"
             value={String(data?.domains_total ?? data?.usage?.domains ?? 0)}

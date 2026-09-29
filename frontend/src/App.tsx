@@ -57,6 +57,12 @@ import { ClientBackupPage } from "./pages/client/ClientBackupPage";
 import { ClientSecurityPage } from "./pages/client/ClientSecurityPage";
 import { ClientWordPressPage } from "./pages/client/ClientWordPressPage";
 import { ClientTerminalPage } from "./pages/client/ClientTerminalPage";
+import { ClientDiskUsagePage } from "./pages/client/ClientDiskUsagePage";
+import { ClientDirectoryPrivacyPage } from "./pages/client/ClientDirectoryPrivacyPage";
+import { ClientSshKeysPage } from "./pages/client/ClientSshKeysPage";
+import { ClientMetricsPage } from "./pages/client/ClientMetricsPage";
+import { ClientIpBlockerPage } from "./pages/client/ClientIpBlockerPage";
+import { ClientPreferencesPage } from "./pages/client/ClientPreferencesPage";
 import { useAuthStore } from "./stores/auth";
 import {
   detectPortalSync,
@@ -196,6 +202,12 @@ export default function App() {
         <Route path="docker" element={<ClientDockerPage />} />
         <Route path="backups" element={<ClientBackupPage />} />
         <Route path="security" element={<ClientSecurityPage />} />
+        <Route path="disk-usage" element={<ClientDiskUsagePage />} />
+        <Route path="directory-privacy" element={<ClientDirectoryPrivacyPage />} />
+        <Route path="ssh-keys" element={<ClientSshKeysPage />} />
+        <Route path="metrics" element={<ClientMetricsPage />} />
+        <Route path="ip-blocker" element={<ClientIpBlockerPage />} />
+        <Route path="preferences" element={<ClientPreferencesPage />} />
         <Route path="dns" element={<ClientDnsPage />} />
         <Route path="package" element={<ClientPackagePage />} />
       </Route>

@@ -9,6 +9,8 @@ from apps.files.views import (
     FileCreateView,
     FileDecompressView,
     FileDeleteView,
+    FileDirectoryPrivacyView,
+    FileDiskUsageView,
     FileDownloadView,
     FileListView,
     FileMkdirView,
@@ -27,6 +29,12 @@ from apps.files.views import (
 
 urlpatterns = [
     path("", FileListView.as_view(), name="files-list"),
+    path("disk-usage/", FileDiskUsageView.as_view(), name="files-disk-usage"),
+    path(
+        "directory-privacy/",
+        FileDirectoryPrivacyView.as_view(),
+        name="files-directory-privacy",
+    ),
     path("mkdir/", FileMkdirView.as_view(), name="files-mkdir"),
     path("create/", FileCreateView.as_view(), name="files-create"),
     path("read/", FileReadView.as_view(), name="files-read"),

@@ -220,6 +220,7 @@ export interface Domain {
   ipv4_address: string | null;
   ipv6_address: string | null;
   web_engine?: "nginx" | "ols" | string;
+  force_https?: boolean;
   ssl: SslInfo | null;
   redirects: DomainRedirect[];
 }

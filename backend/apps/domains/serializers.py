@@ -72,6 +72,7 @@ class DomainSerializer(serializers.ModelSerializer):
             "document_root",
             "is_active",
             "is_suspended",
+            "force_https",
             "create_dns_zone",
             "dns_zone",
             "dns_zone_name",

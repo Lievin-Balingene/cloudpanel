@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import stat as statmod
 import subprocess
-from datetime import timedelta
+from collections import Counter
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +22,12 @@ from apps.core.services import collect_system_metrics
 from apps.dashboard.models import ResourceSnapshot
 
 logger = logging.getLogger(__name__)
+
+NGINX_ACCESS_RE = re.compile(
+    r'^(?P<ip>\S+)\s+\S+\s+\S+\s+\[(?P<time>[^\]]+)\]\s+'
+    r'"(?P<method>[A-Z]+)\s+(?P<path>\S+)(?:\s+HTTP/[^"]+)?"\s+'
+    r"(?P<status>\d{3})\s+"
+)
 
 
 def capture_snapshot() -> ResourceSnapshot:
@@ -66,6 +74,84 @@ def history(hours: int = 24, limit: int = 288) -> list[dict[str, Any]]:
         }
         for s in qs
     ]
+
+
+def _tail_lines(path: Path, max_bytes: int = 2 * 1024 * 1024) -> list[str]:
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        size = handle.tell()
+        handle.seek(max(0, size - max_bytes))
+        data = handle.read()
+    if size > max_bytes:
+        data = data.split(b"\n", 1)[-1]
+    return data.decode("utf-8", errors="replace").splitlines()
+
+
+def visitors_for(user: User, hours: int = 24) -> dict[str, Any]:
+    """Agrège les dernières lignes des journaux Nginx des domaines accessibles."""
+    from apps.domains.services import domains_queryset_for
+    from apps.domains.vhosts import SAFE_NAME_RE
+
+    hours = max(1, min(int(hours), 24 * 31))
+    cutoff = timezone.now() - timedelta(hours=hours)
+    paths: Counter[str] = Counter()
+    ips: Counter[str] = Counter()
+    recent_rows: list[tuple[datetime, dict[str, Any]]] = []
+    error_rows: list[tuple[datetime, dict[str, Any]]] = []
+    readable_logs = 0
+
+    for domain_name in domains_queryset_for(user).values_list("name", flat=True).distinct():
+        safe_domain = SAFE_NAME_RE.sub("_", domain_name.lower())
+        for suffix in (".access.log", ".ssl.access.log"):
+            log_path = Path("/var/log/nginx") / f"{safe_domain}{suffix}"
+            try:
+                lines = _tail_lines(log_path)
+            except OSError:
+                continue
+            readable_logs += 1
+            for line in lines:
+                match = NGINX_ACCESS_RE.match(line)
+                if not match:
+                    continue
+                try:
+                    occurred_at = datetime.strptime(
+                        match.group("time"),
+                        "%d/%b/%Y:%H:%M:%S %z",
+                    )
+                except ValueError:
+                    continue
+                if occurred_at < cutoff:
+                    continue
+                target = match.group("path")
+                clean_path = target.split("?", 1)[0]
+                ip = match.group("ip")
+                status_code = int(match.group("status"))
+                row = {
+                    "ip": ip,
+                    "method": match.group("method"),
+                    "path": target,
+                    "status": status_code,
+                    "time": occurred_at.isoformat(),
+                }
+                paths[clean_path] += 1
+                ips[ip] += 1
+                recent_rows.append((occurred_at, row))
+                if status_code >= 400:
+                    error_rows.append((occurred_at, row))
+
+    recent_rows.sort(key=lambda item: item[0], reverse=True)
+    error_rows.sort(key=lambda item: item[0], reverse=True)
+    result: dict[str, Any] = {
+        "visits": sum(ips.values()),
+        "unique_ips": len(ips),
+        "top_paths": [{"path": path, "hits": hits} for path, hits in paths.most_common(10)],
+        "top_ips": [{"ip": ip, "hits": hits} for ip, hits in ips.most_common(10)],
+        "recent": [row for _, row in recent_rows[:50]],
+        "errors_sample": [row for _, row in error_rows[:20]],
+    }
+    if readable_logs == 0:
+        result["note"] = "Aucun journal Nginx lisible pour les domaines de ce compte."
+    return result
 
 
 def service_statuses() -> list[dict[str, Any]]:

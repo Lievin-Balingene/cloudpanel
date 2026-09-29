@@ -18,16 +18,44 @@ from apps.security.serializers import (
     LoginAttemptSerializer,
     SecurityPolicySerializer,
     SecurityPolicyUpdateSerializer,
+    SshKeyCreateSerializer,
 )
 from apps.security.services import (
+    add_ssh_key,
     create_ip_rule,
     delete_ip_rule,
+    delete_ssh_key,
     get_policy,
+    list_ssh_keys,
     my_security_status,
     overview_for,
     unlock_key,
     update_policy,
 )
+
+
+class SshKeyListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request) -> Response:
+        return Response({"success": True, "data": list_ssh_keys(request.user)})
+
+    def post(self, request: Request) -> Response:
+        serializer = SshKeyCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        key = add_ssh_key(request.user, **serializer.validated_data)
+        return Response(
+            {"success": True, "data": key},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class SshKeyDeleteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request: Request, pk: int) -> Response:
+        delete_ssh_key(request.user, pk)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class SecurityOverviewView(APIView):

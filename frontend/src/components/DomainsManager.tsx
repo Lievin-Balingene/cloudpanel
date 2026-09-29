@@ -104,6 +104,15 @@ export function DomainsManager({ title }: { title: string }) {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["domains"] }),
   });
 
+  const updateForceHttps = useMutation({
+    mutationFn: ({ id, force_https }: { id: number; force_https: boolean }) =>
+      apiRequest(`/domains/${id}/`, {
+        method: "PATCH",
+        body: JSON.stringify({ force_https }),
+      }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["domains"] }),
+  });
+
   const createSub = useMutation({
     mutationFn: () => {
       if (!selected) throw new Error("Sélectionnez un domaine");
@@ -292,6 +301,26 @@ export function DomainsManager({ title }: { title: string }) {
                       </span>
                     )}
                   </div>
+                  <label className="mt-3 flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      className="accent-cp-orange"
+                      checked={selected.force_https !== false}
+                      disabled={updateForceHttps.isPending || selected.ssl?.status !== "active"}
+                      onChange={(e) =>
+                        updateForceHttps.mutate({
+                          id: selected.id,
+                          force_https: e.target.checked,
+                        })
+                      }
+                    />
+                    <span>
+                      Forcer la redirection HTTPS
+                      {selected.ssl?.status !== "active" ? (
+                        <span className="text-xs text-cp-muted"> (nécessite un certificat SSL)</span>
+                      ) : null}
+                    </span>
+                  </label>
                   {selected.domain_type === "subdomain" ? (
                     <p className="mt-1 text-xs text-cp-muted">
                       Placez un <code className="font-mono">index.html</code> ou{" "}

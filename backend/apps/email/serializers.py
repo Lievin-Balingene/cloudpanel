@@ -59,6 +59,11 @@ class MailDomainCreateSerializer(serializers.Serializer):
     enable_dns = serializers.BooleanField(required=False, default=True)
 
 
+class MailDomainUpdateSerializer(serializers.Serializer):
+    catch_all = serializers.EmailField(required=False, allow_blank=True)
+    max_quota_mb = serializers.IntegerField(required=False, min_value=1)
+
+
 class MailboxSerializer(serializers.ModelSerializer):
     address = serializers.CharField(read_only=True)
     status = serializers.CharField(read_only=True)

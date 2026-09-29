@@ -125,8 +125,9 @@ def resolve_domain_backend(domain: Domain) -> DomainBackend:
     docroot = target.document_root or ""
 
     try:
-        from apps.python_apps.models import PythonApp
         from django.db.models import Q
+
+        from apps.python_apps.models import PythonApp
 
         py_q = Q(domain_name__in=names)
         # Matching souple : domain_name stocké sans www
@@ -460,7 +461,7 @@ server {{
         allow all;
     }}
 """
-    if ssl_paths:
+    if ssl_paths and domain.force_https:
         http += """
     location / {
         return 301 https://$host$request_uri;

@@ -12,9 +12,13 @@ from apps.security.views import (
     MySecurityStatusView,
     SecurityOverviewView,
     SecurityPolicyView,
+    SshKeyDeleteView,
+    SshKeyListCreateView,
 )
 
 urlpatterns = [
+    path("ssh-keys/", SshKeyListCreateView.as_view(), name="security-ssh-keys"),
+    path("ssh-keys/<int:pk>/", SshKeyDeleteView.as_view(), name="security-ssh-key-delete"),
     path("overview/", SecurityOverviewView.as_view(), name="security-overview"),
     path("policy/", SecurityPolicyView.as_view(), name="security-policy"),
     path("ip-rules/", IpAccessRuleListCreateView.as_view(), name="security-ip-list"),

@@ -11,12 +11,14 @@ import stat
 import tarfile
 import time
 import zipfile
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import BinaryIO, Iterable
+from typing import BinaryIO
 
 from django.conf import settings
+from passlib.hash import apr_md5_crypt
 
 from apps.accounts.models import User
 from apps.core.exceptions import VZoneAPIException
@@ -54,6 +56,8 @@ TEXT_EXTENSIONS = {
     ".toml",
     ".cfg",
 }
+VZONE_AUTH_START = "# BEGIN VZONE DIRECTORY PRIVACY"
+VZONE_AUTH_END = "# END VZONE DIRECTORY PRIVACY"
 
 
 @dataclass(slots=True)
@@ -248,7 +252,7 @@ def entry_from_path(user: User, path: Path) -> FileEntry:
         path=relative_to_home(user, path),
         is_dir=is_dir,
         size=0 if is_dir else st.st_size,
-        modified_at=datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
+        modified_at=datetime.fromtimestamp(st.st_mtime, tz=UTC).isoformat(),
         permissions=_mode_string(st.st_mode),
         mode=stat.S_IMODE(st.st_mode),
         mime=mime,
@@ -285,7 +289,7 @@ def list_directory(user: User, relative: str | None = None) -> dict:
                         path=rel,
                         is_dir=is_dir,
                         size=0 if is_dir else st.st_size,
-                        modified_at=datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
+                        modified_at=datetime.fromtimestamp(st.st_mtime, tz=UTC).isoformat(),
                         permissions=_mode_string(st.st_mode),
                         mode=stat.S_IMODE(st.st_mode),
                         mime=mime,
@@ -305,6 +309,236 @@ def list_directory(user: User, relative: str | None = None) -> dict:
         "root": str(root),
         "entries": [asdict(e) for e in entries],
     }
+
+
+def disk_usage_tree(
+    user: User,
+    relative: str = "",
+    max_depth: int = 2,
+    limit: int = 80,
+) -> list[dict]:
+    """Retourne une arborescence de tailles sans suivre les liens symboliques."""
+    root = resolve_path(user, relative)
+    if not root.exists():
+        raise VZoneAPIException(detail="Chemin introuvable.", code="not_found", status_code=404)
+    if not root.is_dir():
+        raise VZoneAPIException(
+            detail="Ce chemin n'est pas un dossier.",
+            code="not_directory",
+            status_code=400,
+        )
+
+    depth_limit = max(0, min(int(max_depth), 8))
+    node_limit = max(1, min(int(limit), 500))
+
+    def scan(path: Path, depth: int) -> tuple[int, dict | None]:
+        try:
+            st = path.stat(follow_symlinks=False)
+        except OSError:
+            return 0, None
+
+        is_dir = stat.S_ISDIR(st.st_mode) and not path.is_symlink()
+        size = 0 if is_dir else st.st_size
+        children_with_size: list[tuple[int, dict]] = []
+        if is_dir:
+            try:
+                with os.scandir(path) as entries:
+                    for entry in entries:
+                        child_size, child_node = scan(Path(entry.path), depth + 1)
+                        size += child_size
+                        if child_node is not None:
+                            children_with_size.append((child_size, child_node))
+            except OSError:
+                pass
+
+        node: dict | None = None
+        if depth <= depth_limit:
+            node = {
+                "name": path.name or "/",
+                "path": relative_to_home(user, path),
+                "is_dir": is_dir,
+                "size_bytes": size,
+            }
+            if is_dir and depth < depth_limit:
+                children_with_size.sort(key=lambda item: (-item[0], item[1]["name"].lower()))
+                node["children"] = [child for _, child in children_with_size]
+        return size, node
+
+    nodes: list[tuple[int, dict]] = []
+    try:
+        with os.scandir(root) as entries:
+            for entry in entries:
+                size, node = scan(Path(entry.path), 0)
+                if node is not None:
+                    nodes.append((size, node))
+    except OSError as exc:
+        raise VZoneAPIException(
+            detail=f"Lecture du dossier impossible: {exc}",
+            code="fs_read_error",
+            status_code=500,
+        ) from exc
+    nodes.sort(key=lambda item: (-item[0], item[1]["name"].lower()))
+    remaining = node_limit
+
+    def trim(node: dict) -> dict | None:
+        nonlocal remaining
+        if remaining <= 0:
+            return None
+        remaining -= 1
+        result = {key: value for key, value in node.items() if key != "children"}
+        if "children" in node:
+            children = [trim(child) for child in node["children"]]
+            result["children"] = [child for child in children if child is not None]
+        return result
+
+    result = [trim(node) for _, node in nodes]
+    return [node for node in result if node is not None]
+
+
+def directory_privacy_status(user: User, relative: str) -> dict:
+    directory = resolve_path(user, relative)
+    if not directory.is_dir():
+        raise VZoneAPIException(
+            detail="Dossier introuvable.",
+            code="not_directory",
+            status_code=404,
+        )
+    passwd_path = directory / ".htpasswd"
+    users: list[str] = []
+    if passwd_path.is_file():
+        try:
+            for line in passwd_path.read_text(encoding="utf-8").splitlines():
+                username, separator, _hash = line.partition(":")
+                if separator and username:
+                    users.append(username)
+        except OSError as exc:
+            raise VZoneAPIException(
+                detail=f"Lecture de la protection impossible: {exc}",
+                code="fs_read_error",
+                status_code=500,
+            ) from exc
+    htaccess_path = directory / ".htaccess"
+    try:
+        managed_htaccess = (
+            htaccess_path.is_file()
+            and VZONE_AUTH_START in htaccess_path.read_text(encoding="utf-8")
+        )
+    except OSError:
+        managed_htaccess = False
+    enabled = passwd_path.is_file() and (
+        managed_htaccess or (directory / ".vzone-auth.json").is_file()
+    )
+    return {
+        "path": relative_to_home(user, directory),
+        "enabled": enabled,
+        "users": users,
+    }
+
+
+def enable_directory_privacy(
+    user: User,
+    relative: str,
+    username: str,
+    password: str,
+) -> dict:
+    directory = resolve_path(user, relative)
+    if not directory.is_dir():
+        raise VZoneAPIException(
+            detail="Dossier introuvable.",
+            code="not_directory",
+            status_code=404,
+        )
+    username = (username or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", username):
+        raise VZoneAPIException(
+            detail="Nom d'utilisateur de protection invalide.",
+            code="invalid_username",
+            status_code=400,
+        )
+    if len(password or "") < 8:
+        raise VZoneAPIException(
+            detail="Le mot de passe doit contenir au moins 8 caractères.",
+            code="weak_password",
+            status_code=400,
+        )
+
+    passwd_path = directory / ".htpasswd"
+    entries: dict[str, str] = {}
+    if passwd_path.is_file():
+        try:
+            for line in passwd_path.read_text(encoding="utf-8").splitlines():
+                key, separator, value = line.partition(":")
+                if separator and key:
+                    entries[key] = value
+        except OSError as exc:
+            raise _fs_write_error(exc) from exc
+    entries[username] = apr_md5_crypt.hash(password)
+    auth_block = (
+        f"{VZONE_AUTH_START}\n"
+        "AuthType Basic\n"
+        'AuthName "Zone protégée"\n'
+        f"AuthUserFile {passwd_path}\n"
+        "Require valid-user\n"
+        f"{VZONE_AUTH_END}\n"
+    )
+    marker = {
+        "enabled": True,
+        "htpasswd": str(passwd_path),
+        "note": "Nginx doit inclure auth_basic et auth_basic_user_file pour ce dossier.",
+    }
+    try:
+        passwd_path.write_text(
+            "".join(f"{name}:{value}\n" for name, value in entries.items()),
+            encoding="utf-8",
+        )
+        os.chmod(passwd_path, 0o640)
+        htaccess_path = directory / ".htaccess"
+        existing_htaccess = (
+            htaccess_path.read_text(encoding="utf-8") if htaccess_path.is_file() else ""
+        )
+        existing_htaccess = re.sub(
+            rf"(?ms)^{re.escape(VZONE_AUTH_START)}.*?^{re.escape(VZONE_AUTH_END)}\s*",
+            "",
+            existing_htaccess,
+        ).rstrip()
+        htaccess_path.write_text(
+            f"{existing_htaccess}\n\n{auth_block}" if existing_htaccess else auth_block,
+            encoding="utf-8",
+        )
+        (directory / ".vzone-auth.json").write_text(
+            json.dumps(marker, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        raise _fs_write_error(exc) from exc
+    return directory_privacy_status(user, relative)
+
+
+def disable_directory_privacy(user: User, relative: str) -> dict:
+    directory = resolve_path(user, relative)
+    if not directory.is_dir():
+        raise VZoneAPIException(
+            detail="Dossier introuvable.",
+            code="not_directory",
+            status_code=404,
+        )
+    try:
+        for name in (".htpasswd", ".vzone-auth.json"):
+            (directory / name).unlink(missing_ok=True)
+        htaccess_path = directory / ".htaccess"
+        if htaccess_path.is_file():
+            content = re.sub(
+                rf"(?ms)^{re.escape(VZONE_AUTH_START)}.*?^{re.escape(VZONE_AUTH_END)}\s*",
+                "",
+                htaccess_path.read_text(encoding="utf-8"),
+            ).strip()
+            if content:
+                htaccess_path.write_text(content + "\n", encoding="utf-8")
+            else:
+                htaccess_path.unlink()
+    except OSError as exc:
+        raise _fs_write_error(exc) from exc
+    return directory_privacy_status(user, relative)
 
 
 def mkdir(user: User, relative_parent: str, name: str) -> FileEntry:

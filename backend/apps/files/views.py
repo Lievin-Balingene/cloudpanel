@@ -60,6 +60,46 @@ class FileListView(APIView):
         return Response({"success": True, "data": data})
 
 
+class FileDiskUsageView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request) -> Response:
+        path = request.query_params.get("path", "")
+        try:
+            depth = int(request.query_params.get("depth", 2))
+        except (TypeError, ValueError):
+            depth = 2
+        data = services.disk_usage_tree(request.user, path, max_depth=depth)
+        return Response({"success": True, "data": data})
+
+
+class FileDirectoryPrivacyView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request) -> Response:
+        path = request.query_params.get("path", "")
+        return Response(
+            {"success": True, "data": services.directory_privacy_status(request.user, path)}
+        )
+
+    def post(self, request: Request) -> Response:
+        path = str(request.data.get("path") or "")
+        username = str(request.data.get("username") or "")
+        password = str(request.data.get("password") or "")
+        data = services.enable_directory_privacy(
+            request.user,
+            path,
+            username,
+            password,
+        )
+        return Response({"success": True, "data": data})
+
+    def delete(self, request: Request) -> Response:
+        path = request.query_params.get("path", "")
+        data = services.disable_directory_privacy(request.user, path)
+        return Response({"success": True, "data": data})
+
+
 class FileMkdirView(APIView):
     permission_classes = [IsAuthenticated]
 
