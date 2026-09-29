@@ -338,6 +338,11 @@ def run_assistant_turn(
                         ctx2["pipeline_runtime"] = str(args.get("runtime") or "python")
                     conversation.context = ctx2
                     conversation.save(update_fields=["context", "updated_at"])
+                from apps.ai_assistant.tools.helpers import (
+                    action_command_preview,
+                    action_risk,
+                )
+
                 pending_actions.append(
                     {
                         "token": action.token,
@@ -345,6 +350,10 @@ def run_assistant_turn(
                         "description": action.description,
                         "params": redact_obj(action.params),
                         "expires_at": action.expires_at.isoformat(),
+                        "risk": action_risk(action.tool_name, action.params),
+                        "command_preview": action_command_preview(
+                            action.tool_name, action.params
+                        ),
                     }
                 )
                 payload = {
@@ -651,6 +660,11 @@ def confirm_pending_action(
             "status": action.status,
         }
         if follow_up_pending:
+            from apps.ai_assistant.tools.helpers import (
+                action_command_preview,
+                action_risk,
+            )
+
             out["pending_actions"] = [
                 {
                     "token": follow_up_pending.token,
@@ -658,6 +672,12 @@ def confirm_pending_action(
                     "description": follow_up_pending.description,
                     "params": redact_obj(follow_up_pending.params),
                     "expires_at": follow_up_pending.expires_at.isoformat(),
+                    "risk": action_risk(
+                        follow_up_pending.tool_name, follow_up_pending.params
+                    ),
+                    "command_preview": action_command_preview(
+                        follow_up_pending.tool_name, follow_up_pending.params
+                    ),
                 }
             ]
         return out

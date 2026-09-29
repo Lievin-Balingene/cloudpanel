@@ -135,3 +135,64 @@ def pending_description(tool_name: str, params: dict[str, Any] | None = None) ->
         if params.get(key):
             return f"{base} (id {params[key]})"
     return base
+
+
+CRITICAL_TOOLS = frozenset(
+    {
+        "delete_domain",
+        "delete_database",
+        "delete_db_user",
+        "delete_email_account",
+        "delete_ftp_account",
+        "delete_python_app",
+        "delete_node_app",
+        "delete_php_selector",
+        "delete_file",
+        "restore_backup",
+        "delete_k8s_manifest",
+        "remove_docker_container",
+        "delete_git_repo",
+    }
+)
+HIGH_TOOLS = frozenset(
+    {
+        "restart_application",
+        "stop_application",
+        "run_jail_command",
+        "apply_k8s_manifest",
+        "write_file",
+        "issue_ssl_certificate",
+        "install_wordpress",
+    }
+)
+
+
+def action_risk(tool_name: str, params: dict[str, Any] | None = None) -> str:
+    """Niveau de risque pour l'UI Command Approval : low | medium | high | critical."""
+    params = params or {}
+    name = (tool_name or "").strip()
+    if name in CRITICAL_TOOLS or name.startswith("delete_") or name.startswith("terminate"):
+        return "critical"
+    if name in HIGH_TOOLS or "restart" in name or "stop" in name:
+        return "high"
+    if name == "run_jail_command":
+        cid = str(params.get("command_id") or "")
+        if any(x in cid for x in ("rm", "kill", "chmod", "chown", "restart")):
+            return "high"
+        return "medium"
+    return "medium"
+
+
+def action_command_preview(tool_name: str, params: dict[str, Any] | None = None) -> str:
+    """Aperçu type commande proposée pour l'approbation."""
+    params = params or {}
+    if tool_name == "run_jail_command":
+        return f"jail:{params.get('command_id') or '?'}"
+    if tool_name == "restart_application":
+        return f"systemctl restart app#{params.get('app_id') or '?'}"
+    parts = [tool_name]
+    for key in ("name", "domain_name", "path", "command_id", "address"):
+        if params.get(key):
+            parts.append(str(params[key]))
+            break
+    return " ".join(parts)

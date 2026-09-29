@@ -37,6 +37,8 @@ interface PendingAction {
   description: string;
   params?: Record<string, unknown>;
   expires_at?: string;
+  risk?: string;
+  command_preview?: string;
 }
 
 interface ConversationSummary {
@@ -511,7 +513,7 @@ export function AiDeploymentAssistant() {
         label =
           "**Action exécutée avec succès.**" +
           (followUps.length
-            ? "\n\nProchaine étape prête — confirme **Exécuter** ci-dessous."
+            ? "\n\nProchaine étape prête — **Approuver** ci-dessous."
             : "");
         const result = data.result;
         if (result && typeof result === "object") {
@@ -557,6 +559,25 @@ export function AiDeploymentAssistant() {
       ]);
     }
   }
+
+  useEffect(() => {
+    const handler = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ prompt?: string; autoSend?: boolean }>).detail || {};
+      const prompt = (detail.prompt || "").trim();
+      setOpen(true);
+      if (!prompt) return;
+      if (detail.autoSend) {
+        window.setTimeout(() => {
+          void onSend(prompt);
+        }, 350);
+      } else {
+        setInput(prompt);
+      }
+    };
+    window.addEventListener("vzone-ai-open", handler as EventListener);
+    return () => window.removeEventListener("vzone-ai-open", handler as EventListener);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onSend stable enough for event bridge
+  }, [isBusy, conversationId]);
 
   async function requestJailCommand(cmd: JailCommand) {
     const text =
@@ -980,17 +1001,28 @@ export function AiDeploymentAssistant() {
                       </div>
                     )}
 
-                    {pending.map((p) => (
+                    {pending.map((p) => {
+                      const risk = (p.risk || "medium").toLowerCase();
+                      const riskCls =
+                        risk === "critical"
+                          ? "text-rose-700 dark:text-rose-200"
+                          : risk === "high"
+                            ? "text-amber-700 dark:text-amber-200"
+                            : "text-sky-700 dark:text-sky-200";
+                      return (
                       <div key={p.token} className="vz-ai-confirm mx-1">
                         <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <p className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-200">
-                              Confirmation requise
+                          <div className="min-w-0">
+                            <p className={`text-[10px] font-bold uppercase tracking-wider ${riskCls}`}>
+                              Command Approval · risque {risk}
                             </p>
                             <p className="mt-1 text-sm font-medium">{p.description || p.tool_name}</p>
-                            <p className="mt-0.5 font-mono text-[11px] opacity-70">{p.tool_name}</p>
+                            <pre className="mt-2 overflow-x-auto rounded-md bg-slate-950/85 px-2.5 py-1.5 font-mono text-[11px] text-emerald-300">
+                              {p.command_preview || p.tool_name}
+                            </pre>
+                            <p className="mt-1 font-mono text-[10px] opacity-60">{p.tool_name}</p>
                           </div>
-                          <ChevronRight className="mt-1 h-4 w-4 opacity-40" />
+                          <ChevronRight className="mt-1 h-4 w-4 shrink-0 opacity-40" />
                         </div>
                         <div className="mt-3 flex flex-wrap gap-2">
                           <button
@@ -1000,7 +1032,7 @@ export function AiDeploymentAssistant() {
                             onClick={() => confirmMut.mutate({ token: p.token, confirm: true })}
                           >
                             <Check className="h-3.5 w-3.5" />
-                            Exécuter
+                            Approuver
                           </button>
                           <button
                             type="button"
@@ -1008,11 +1040,12 @@ export function AiDeploymentAssistant() {
                             disabled={confirmMut.isPending}
                             onClick={() => confirmMut.mutate({ token: p.token, confirm: false })}
                           >
-                            Annuler
+                            Refuser
                           </button>
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
 
                     {sendMut.isPending && streamingText === null && (
                       <ThinkingCard pageLabel={pageCtx.label} />

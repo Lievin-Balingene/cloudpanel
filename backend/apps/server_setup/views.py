@@ -6,7 +6,15 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.exceptions import VZoneAPIException
 from apps.core.permissions import IsAdministrator
+from apps.server_setup.ip_functions import (
+    add_extra_ip,
+    change_domain_ip,
+    ip_usage_payload,
+    remove_extra_ip,
+)
+from apps.server_setup.models import ServerSetup
 from apps.server_setup.panel_update import (
     enqueue_panel_update,
     get_job_status,
@@ -17,8 +25,18 @@ from apps.server_setup.repairs import (
     get_repair_job_status,
     repairs_overview,
 )
-from apps.server_setup.serializers import ServerSetupSerializer
+from apps.server_setup.serializers import (
+    ChangeSiteIpSerializer,
+    ExtraIpSerializer,
+    ServerSetupSerializer,
+    TweakSettingsUpdateSerializer,
+)
 from apps.server_setup.services import get_setup_payload, update_setup
+from apps.server_setup.tweak_settings import (
+    merge_tweaks,
+    tweak_payload,
+    validate_tweaks,
+)
 
 
 class ServerSetupView(APIView):
@@ -44,6 +62,72 @@ class ServerSetupView(APIView):
             apply_hostname=data.get("apply_hostname", False),
         )
         return Response({"success": True, "data": payload})
+
+
+class TweakSettingsView(APIView):
+    permission_classes = [IsAuthenticated, IsAdministrator]
+
+    def get(self, request: Request) -> Response:
+        setup = ServerSetup.get_solo()
+        return Response({"success": True, "data": tweak_payload(setup.tweak_settings)})
+
+    def put(self, request: Request) -> Response:
+        serializer = TweakSettingsUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            cleaned = validate_tweaks(serializer.validated_data["values"])
+        except ValueError as exc:
+            raise VZoneAPIException(
+                detail=str(exc),
+                code="invalid_tweak",
+                status_code=400,
+            ) from exc
+        setup = ServerSetup.get_solo()
+        merged = merge_tweaks(setup.tweak_settings)
+        merged.update(cleaned)
+        setup.tweak_settings = merged
+        setup.save(update_fields=["tweak_settings", "updated_at"])
+        return Response({"success": True, "data": tweak_payload(setup.tweak_settings)})
+
+
+class IpFunctionsView(APIView):
+    permission_classes = [IsAuthenticated, IsAdministrator]
+
+    def get(self, request: Request) -> Response:
+        return Response({"success": True, "data": ip_usage_payload()})
+
+
+class ExtraIpView(APIView):
+    permission_classes = [IsAuthenticated, IsAdministrator]
+
+    def post(self, request: Request) -> Response:
+        serializer = ExtraIpSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return Response(
+            {"success": True, "data": add_extra_ip(serializer.validated_data["ip"])}
+        )
+
+    def delete(self, request: Request) -> Response:
+        serializer = ExtraIpSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return Response(
+            {"success": True, "data": remove_extra_ip(serializer.validated_data["ip"])}
+        )
+
+
+class ChangeSiteIpView(APIView):
+    permission_classes = [IsAuthenticated, IsAdministrator]
+
+    def post(self, request: Request) -> Response:
+        serializer = ChangeSiteIpSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        result = change_domain_ip(
+            domain_id=data["domain_id"],
+            ipv4=data.get("ipv4_address"),
+            actor=request.user,
+        )
+        return Response({"success": True, "data": result})
 
 
 class PanelUpdateOverviewView(APIView):

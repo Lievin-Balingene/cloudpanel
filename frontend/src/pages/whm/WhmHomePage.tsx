@@ -63,9 +63,24 @@ const hubs: HubSection[] = [
     icon: Server,
     links: [
       { to: "/whm/server-setup", label: "Basic Setup" },
+      { to: "/whm/tweak-settings", label: "Tweak Settings" },
       { to: "/whm/panel-update", label: "Update Preferences" },
       { to: "/whm/cron", label: "Cron Jobs" },
       { to: "/whm/repairs", label: "Réparations" },
+    ],
+  },
+  {
+    title: "IP Functions",
+    icon: Globe,
+    links: [
+      { to: "/whm/ip-functions", label: "IP Usage / Change / Deny" },
+    ],
+  },
+  {
+    title: "AI Operations",
+    icon: Activity,
+    links: [
+      { to: "/whm/ai-ops", label: "AI Assistant / Command Approval" },
     ],
   },
   {
@@ -124,6 +139,9 @@ const quick = [
   { to: "/whm/accounts/create", label: "Create Account", icon: UserPlus },
   { to: "/whm/packages", label: "Packages", icon: Package },
   { to: "/whm/dns", label: "DNS", icon: Globe },
+  { to: "/whm/ip-functions", label: "IP Functions", icon: Server },
+  { to: "/whm/ai-ops", label: "AI Ops", icon: Activity },
+  { to: "/whm/tweak-settings", label: "Tweaks", icon: KeyRound },
   { to: "/whm/monitoring", label: "Services", icon: Bell },
   { to: "/whm/security", label: "Security", icon: KeyRound },
   { to: "/whm/transfer", label: "Transfers", icon: ArrowRightLeft },

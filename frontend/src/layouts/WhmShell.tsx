@@ -35,6 +35,8 @@ import {
   X,
   Zap,
   Wrench,
+  Bot,
+  SlidersHorizontal,
   ChevronRight,
   ChevronDown,
   ChevronsDown,
@@ -98,6 +100,12 @@ const navSections: NavSection[] = [
         keywords: ["hostname", "nameserver", "contact"],
       },
       {
+        to: "/whm/tweak-settings",
+        label: "Tweak Settings",
+        icon: SlidersHorizontal,
+        keywords: ["tweak", "features", "php", "security", "limits"],
+      },
+      {
         to: "/whm/panel-update",
         label: "Update Preferences",
         icon: Rocket,
@@ -114,6 +122,30 @@ const navSections: NavSection[] = [
         label: "Réparations système",
         icon: Wrench,
         keywords: ["repair", "smtp", "dkim", "nginx"],
+      },
+    ],
+  },
+  {
+    id: "ip-functions",
+    title: "IP Functions",
+    items: [
+      {
+        to: "/whm/ip-functions",
+        label: "IP Address Usage / Deny / Change Site IP",
+        icon: Network,
+        keywords: ["ip", "deny", "migration", "shared"],
+      },
+    ],
+  },
+  {
+    id: "ai-ops",
+    title: "AI Operations",
+    items: [
+      {
+        to: "/whm/ai-ops",
+        label: "AI Assistant / Command Approval",
+        icon: Bot,
+        keywords: ["ia", "diagnostic", "approuver", "commande"],
       },
     ],
   },

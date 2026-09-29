@@ -14,3 +14,16 @@ class ServerSetupSerializer(serializers.Serializer):
     contact_email = serializers.EmailField(required=False, allow_blank=True)
     apply_hostname_to_mail = serializers.BooleanField(required=False)
     apply_hostname = serializers.BooleanField(required=False, default=False)
+
+
+class TweakSettingsUpdateSerializer(serializers.Serializer):
+    values = serializers.DictField(child=serializers.JSONField(), required=True)
+
+
+class ExtraIpSerializer(serializers.Serializer):
+    ip = serializers.IPAddressField()
+
+
+class ChangeSiteIpSerializer(serializers.Serializer):
+    domain_id = serializers.IntegerField(min_value=1)
+    ipv4_address = serializers.IPAddressField(protocol="IPv4", required=False, allow_null=True)

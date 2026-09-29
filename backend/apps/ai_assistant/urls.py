@@ -9,6 +9,7 @@ from apps.ai_assistant.views import (
     ConversationDetailView,
     ConversationListCreateView,
     ConversationMessageView,
+    PendingActionsListView,
 )
 
 urlpatterns = [
@@ -25,5 +26,6 @@ urlpatterns = [
         ConversationMessageView.as_view(),
         name="ai-conversation-message",
     ),
+    path("actions/pending/", PendingActionsListView.as_view(), name="ai-actions-pending"),
     path("actions/confirm/", ConfirmActionView.as_view(), name="ai-action-confirm"),
 ]

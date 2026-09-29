@@ -3,6 +3,9 @@ from __future__ import annotations
 from django.urls import path
 
 from apps.server_setup.views import (
+    ChangeSiteIpView,
+    ExtraIpView,
+    IpFunctionsView,
     OlsAdoptView,
     OlsOverviewView,
     OlsReloadView,
@@ -13,10 +16,15 @@ from apps.server_setup.views import (
     RepairStartView,
     RepairsOverviewView,
     ServerSetupView,
+    TweakSettingsView,
 )
 
 urlpatterns = [
     path("", ServerSetupView.as_view(), name="server-setup"),
+    path("tweak-settings/", TweakSettingsView.as_view(), name="tweak-settings"),
+    path("ip-functions/", IpFunctionsView.as_view(), name="ip-functions"),
+    path("ip-functions/extra/", ExtraIpView.as_view(), name="ip-functions-extra"),
+    path("ip-functions/change-site/", ChangeSiteIpView.as_view(), name="ip-functions-change-site"),
     path("panel-update/", PanelUpdateOverviewView.as_view(), name="panel-update-overview"),
     path("panel-update/start/", PanelUpdateStartView.as_view(), name="panel-update-start"),
     path("panel-update/jobs/<str:job_id>/", PanelUpdateJobView.as_view(), name="panel-update-job"),

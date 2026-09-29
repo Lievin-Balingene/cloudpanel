@@ -18,6 +18,16 @@ class ServerSetup(models.Model):
     apply_hostname_to_mail = models.BooleanField(default=True)
     last_hostname_error = models.TextField(blank=True, default="")
     hostname_applied_at = models.DateTimeField(null=True, blank=True)
+    tweak_settings = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Tweak Settings WHM (catégories security, email, dns, …).",
+    )
+    extra_ips = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Liste d'IP additionnelles du serveur (hors IP publique principale).",
+    )
     updated_at = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

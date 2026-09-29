@@ -160,3 +160,41 @@ class ConfirmActionView(APIView):
             {"success": ok, "data": result},
             status=status.HTTP_200_OK if ok else status.HTTP_400_BAD_REQUEST,
         )
+
+
+class PendingActionsListView(APIView):
+    """File d'attente Command Approval (actions IA en attente)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request) -> Response:
+        from django.utils import timezone
+
+        from apps.ai_assistant.models import PendingAction
+        from apps.ai_assistant.services.redaction import redact_obj
+        from apps.ai_assistant.tools.helpers import (
+            action_command_preview,
+            action_risk,
+        )
+
+        now = timezone.now()
+        qs = PendingAction.objects.filter(
+            owner=request.user,
+            status=PendingAction.Status.PENDING,
+            expires_at__gt=now,
+        ).order_by("-created_at")[:50]
+        items = [
+            {
+                "token": a.token,
+                "tool_name": a.tool_name,
+                "description": a.description,
+                "params": redact_obj(a.params),
+                "expires_at": a.expires_at.isoformat(),
+                "created_at": a.created_at.isoformat(),
+                "conversation_id": a.conversation_id,
+                "risk": action_risk(a.tool_name, a.params),
+                "command_preview": action_command_preview(a.tool_name, a.params),
+            }
+            for a in qs
+        ]
+        return Response({"success": True, "data": {"pending_actions": items, "count": len(items)}})

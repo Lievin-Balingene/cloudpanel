@@ -37,6 +37,9 @@ import { WhmRepairsPage } from "./pages/whm/WhmRepairsPage";
 import { WhmOlsPage } from "./pages/whm/WhmOlsPage";
 import { WhmTransferPage } from "./pages/whm/WhmTransferPage";
 import { WhmResellerPrivilegesPage } from "./pages/whm/WhmResellerPrivilegesPage";
+import { WhmAiOpsPage } from "./pages/whm/WhmAiOpsPage";
+import { WhmIpFunctionsPage } from "./pages/whm/WhmIpFunctionsPage";
+import { WhmTweakSettingsPage } from "./pages/whm/WhmTweakSettingsPage";
 import { ClientHomePage } from "./pages/client/ClientHomePage";
 import { ClientDnsPage } from "./pages/client/ClientDnsPage";
 import { ClientPackagePage } from "./pages/client/ClientPackagePage";
@@ -146,6 +149,9 @@ export default function App() {
         <Route path="packages" element={<WhmPackagesPage />} />
         <Route path="resellers" element={<WhmResellerPrivilegesPage />} />
         <Route path="server-setup" element={<WhmServerSetupPage />} />
+        <Route path="tweak-settings" element={<WhmTweakSettingsPage />} />
+        <Route path="ip-functions" element={<WhmIpFunctionsPage />} />
+        <Route path="ai-ops" element={<WhmAiOpsPage />} />
         <Route path="panel-update" element={<WhmPanelUpdatePage />} />
         <Route path="repairs" element={<WhmRepairsPage />} />
         <Route path="ols" element={<WhmOlsPage />} />
