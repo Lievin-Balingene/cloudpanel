@@ -12,6 +12,18 @@ from apps.docker_mgmt.views import (
     DockerStartView,
     DockerStopView,
 )
+from apps.docker_mgmt.views_build import (
+    DockerBuildDetailView,
+    DockerBuildListCreateView,
+    DockerComposeDetailView,
+    DockerComposeDownView,
+    DockerComposeListCreateView,
+    DockerComposeUpView,
+    DockerDockerfileTemplateView,
+    DockerImageListView,
+    DockerImagePullView,
+    DockerImageRemoveView,
+)
 
 urlpatterns = [
     path("overview/", DockerOverviewView.as_view(), name="docker-overview"),
@@ -22,4 +34,14 @@ urlpatterns = [
     path("containers/<int:pk>/restart/", DockerRestartView.as_view(), name="docker-container-restart"),
     path("containers/<int:pk>/logs/", DockerLogsView.as_view(), name="docker-container-logs"),
     path("events/", DockerEventLogListView.as_view(), name="docker-event-list"),
+    path("images/", DockerImageListView.as_view(), name="docker-image-list"),
+    path("images/pull/", DockerImagePullView.as_view(), name="docker-image-pull"),
+    path("images/remove/", DockerImageRemoveView.as_view(), name="docker-image-remove"),
+    path("builds/", DockerBuildListCreateView.as_view(), name="docker-build-list"),
+    path("builds/<int:pk>/", DockerBuildDetailView.as_view(), name="docker-build-detail"),
+    path("compose/", DockerComposeListCreateView.as_view(), name="docker-compose-list"),
+    path("compose/<int:pk>/", DockerComposeDetailView.as_view(), name="docker-compose-detail"),
+    path("compose/<int:pk>/up/", DockerComposeUpView.as_view(), name="docker-compose-up"),
+    path("compose/<int:pk>/down/", DockerComposeDownView.as_view(), name="docker-compose-down"),
+    path("dockerfile-template/", DockerDockerfileTemplateView.as_view(), name="docker-dockerfile-template"),
 ]

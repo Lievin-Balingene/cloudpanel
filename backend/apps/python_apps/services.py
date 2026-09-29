@@ -36,21 +36,41 @@ def _refresh_domain_routing(domain_name: str = "") -> None:
             from apps.domains.models import Domain
             from apps.domains.vhosts import sync_domain_vhost
 
-            domain = Domain.objects.filter(name__iexact=name).select_related("owner", "parent").first()
-            if domain is None and not name.startswith("www."):
-                domain = (
-                    Domain.objects.filter(name__iexact=f"www.{name}")
-                    .select_related("owner", "parent")
-                    .first()
+            domains = list(
+                Domain.objects.filter(name__iexact=name).select_related("owner", "parent")
+            )
+            if not domains:
+                domains = list(
+                    Domain.objects.filter(name__iexact=f"www.{name}").select_related(
+                        "owner", "parent"
+                    )
                 )
-            if domain is not None:
-                sync_domain_vhost(domain)
+            # Aussi le www./bare jumeau
+            extra_names = {name, f"www.{name}"}
+            for d in list(domains):
+                for alt in extra_names:
+                    if d.name.lower() != alt:
+                        twin = (
+                            Domain.objects.filter(name__iexact=alt)
+                            .select_related("owner", "parent")
+                            .first()
+                        )
+                        if twin and twin not in domains:
+                            domains.append(twin)
+
+            if domains:
+                for domain in domains:
+                    sync_domain_vhost(domain)
                 return
+            logger.warning(
+                "Aucun Domain panel pour %s — sync global (proxy Python peut manquer)",
+                name,
+            )
         from apps.domains.services import refresh_web_routing
 
         refresh_web_routing()
     except Exception:  # noqa: BLE001
-        logger.debug("refresh_web_routing skip", exc_info=True)
+        logger.exception("refresh_web_routing / sync_domain_vhost a échoué")
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{1,47}$")
 
@@ -66,11 +86,30 @@ APP_ROOT = os.path.dirname(os.path.abspath(__file__))
 if APP_ROOT not in sys.path:
     sys.path.insert(0, APP_ROOT)
 
-os.environ["DJANGO_SETTINGS_MODULE"] = "{settings_module}"
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "{settings_module}")
+
+# Domaines autorisés injectés par le panel au Start (évite DisallowedHost)
+_vzone_hosts = (
+    os.environ.get("VZONE_ALLOWED_HOSTS")
+    or os.environ.get("DJANGO_ALLOWED_HOSTS")
+    or os.environ.get("ALLOWED_HOSTS")
+    or ""
+)
 
 try:
     from django.core.wsgi import get_wsgi_application
     application = get_wsgi_application()
+    if _vzone_hosts:
+        from django.conf import settings as _dj_settings
+        _parsed = [h.strip() for h in _vzone_hosts.split(",") if h.strip()]
+        if _parsed:
+            # Étendre (ne pas écraser * si déjà présent)
+            current = list(getattr(_dj_settings, "ALLOWED_HOSTS", []) or [])
+            if "*" not in current:
+                for h in _parsed:
+                    if h not in current:
+                        current.append(h)
+                _dj_settings.ALLOWED_HOSTS = current
 except Exception:
     def application(environ, start_response):
         start_response("200 OK", [("Content-Type", "text/plain; charset=utf-8")])
@@ -662,6 +701,9 @@ def create_python_app(
         notes=notes,
         status=PythonApp.Status.STOPPED,
     )
+    if app.domain_name:
+        _claim_app_domain(app, app.domain_name)
+        app.refresh_from_db()
     write_app_config(app)
     deploy_info(app)
     _refresh_domain_routing(app.domain_name)
@@ -693,6 +735,8 @@ def update_python_app(
     if is_active is not None:
         app.is_active = is_active
     app.save()
+    if domain_name is not None and app.domain_name:
+        _claim_app_domain(app, app.domain_name)
     write_app_config(app)
     # Re-proxifier l'ancien domaine (retour public_html) + le nouveau (vers l'app).
     if domain_name is not None and old_domain and old_domain != app.domain_name:
@@ -1557,6 +1601,25 @@ def _clear_app_pid_file(owner: User, pid_file: Path) -> None:
     _try_unlink()
 
 
+def _claim_app_domain(app: PythonApp, domain_name: str) -> None:
+    """Un domaine = une app Python (priorité Django/proxy sur public_html)."""
+    name = normalize_app_domain(domain_name)
+    if not name:
+        return
+    # Libérer le domaine sur les autres apps du même owner (et globalement même hostname)
+    PythonApp.objects.filter(domain_name__iexact=name).exclude(pk=app.pk).update(domain_name="")
+    PythonApp.objects.filter(domain_name__iexact=f"www.{name}").exclude(pk=app.pk).update(
+        domain_name=""
+    )
+    try:
+        from apps.node_apps.models import NodeApp
+
+        NodeApp.objects.filter(domain_name__iexact=name).update(domain_name="")
+        NodeApp.objects.filter(domain_name__iexact=f"www.{name}").update(domain_name="")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def normalize_app_domain(value: str) -> str:
     """Normalise Application URL (sans schéma / chemin / www)."""
     v = (value or "").strip().lower()
@@ -1604,6 +1667,17 @@ def _child_process_env(app: PythonApp, app_root: Path, venv_dir: Path) -> dict[s
     if app.framework == PythonApp.Framework.DJANGO:
         pkg = detect_django_project_package(app_root)
         env["DJANGO_SETTINGS_MODULE"] = f"{pkg}.settings"
+
+    # Domaine → ALLOWED_HOSTS (Django / apps qui lisent ces vars)
+    domain = normalize_app_domain(app.domain_name or "")
+    hosts = ["*", "localhost", "127.0.0.1"]
+    if domain:
+        hosts.extend([domain, f"www.{domain}"])
+        env["VIRTUAL_HOST"] = domain
+    host_csv = ",".join(dict.fromkeys(hosts))
+    env["VZONE_ALLOWED_HOSTS"] = host_csv
+    env["DJANGO_ALLOWED_HOSTS"] = host_csv
+    env["ALLOWED_HOSTS"] = host_csv
 
     for key, value in (app.env_vars or {}).items():
         env[str(key)] = str(value)
@@ -1680,16 +1754,25 @@ def _grant_jail_write(path: Path, username: str, *, is_dir: bool = False) -> Non
 
 
 def _iter_sqlite_files(app_root: Path) -> list[Path]:
-    """db.sqlite3 et cousins à la racine + 1 niveau (évite scan massif)."""
+    """db.sqlite3 et cousins à la racine + sous-dossiers courants (+ 1 niveau)."""
     found: list[Path] = []
     patterns = ("*.sqlite3", "*.sqlite", "*.db")
+    if not app_root.exists():
+        return found
     for pat in patterns:
         found.extend(app_root.glob(pat))
-    for sub in ("data", "var", "db", "database", "databases"):
+    for sub in ("data", "var", "db", "database", "databases", "config", "project"):
         d = app_root / sub
         if d.is_dir():
             for pat in patterns:
                 found.extend(d.glob(pat))
+                # Un niveau de plus (ex. project/data/db.sqlite3)
+                try:
+                    for child in d.iterdir():
+                        if child.is_dir():
+                            found.extend(child.glob(pat))
+                except OSError:
+                    pass
     # Déduplique
     out: list[Path] = []
     seen: set[str] = set()
@@ -1725,6 +1808,8 @@ def fix_client_paths(
 
     À appeler après toute écriture panel (scaffold, pip, logs) pour éviter
     « attempt to write a readonly database » / PermissionError sous gunicorn runas.
+
+    SQLite exige aussi le DOSSIER parent en écriture (fichiers -wal/-shm).
     """
     if provision_mode() == "mock":
         return
@@ -1750,6 +1835,20 @@ def fix_client_paths(
         seen.add(key)
         unique.append(p)
 
+    # Toujours inclure le root app à vérifier + chaque sqlite trouvé
+    if verify_sqlite_in is not None:
+        vr = Path(verify_sqlite_in)
+        if vr.exists():
+            key = str(vr.resolve()) if vr.exists() else str(vr)
+            if key not in seen:
+                seen.add(key)
+                unique.append(vr)
+            for db in _iter_sqlite_files(vr):
+                dk = str(db.resolve()) if db.exists() else str(db)
+                if dk not in seen:
+                    seen.add(dk)
+                    unique.append(db)
+
     if not unique and verify_sqlite_in is None:
         return
 
@@ -1768,11 +1867,11 @@ def fix_client_paths(
                     ["sudo", "-n", str(FIX_APP_PERMS), jail, str(path)],
                     capture_output=True,
                     text=True,
-                    timeout=120,
+                    timeout=180,
                     check=False,
                 )
                 if proc.returncode != 0:
-                    err = (proc.stderr or proc.stdout or "")[:400]
+                    err = (proc.stderr or proc.stdout or "")[:600]
                     logger.warning("fix-app-perms %s %s → %s %s", jail, path, proc.returncode, err)
                     if required:
                         raise VZoneAPIException(
@@ -1804,41 +1903,66 @@ def fix_client_paths(
         if path.is_dir():
             for db in _iter_sqlite_files(path):
                 _grant_jail_write(db, jail, is_dir=False)
+                _grant_jail_write(db.parent, jail, is_dir=True)
 
     check_root = verify_sqlite_in
     if check_root is None:
         return
-    db_main = Path(check_root) / "db.sqlite3"
-    if not db_main.exists():
+    check_root = Path(check_root)
+    if not check_root.exists():
         return
+
+    # Le helper root vérifie déjà l'écriture (runuser). Un 2ᵉ probe via Pulse/runas
+    # produisait des faux « readonly » → Start bloqué → nginx reste sur public_html.
+    # Soft only : --force si besoin, jamais d'exception sqlite_readonly ici.
     try:
-        from apps.security.runas import build_runas_cmd, runas_available
         import shlex
 
-        if not runas_available():
-            return
-        probe = build_runas_cmd(
-            jail,
-            [
-                "bash",
-                "-c",
-                f"test -w {shlex.quote(str(db_main))} && test -w {shlex.quote(str(check_root))}",
-            ],
+        probe_file = check_root / f".vzone_wprobe_{os.getpid()}"
+        db_main = check_root / "db.sqlite3"
+        script = (
+            f"touch {shlex.quote(str(probe_file))} && rm -f {shlex.quote(str(probe_file))}"
         )
-        proc = subprocess.run(probe, capture_output=True, text=True, timeout=30, check=False)
-        if proc.returncode != 0:
-            raise VZoneAPIException(
-                detail=(
-                    f"SQLite toujours en lecture seule pour `{jail}` ({db_main}). "
-                    f"Exécutez: sudo {FIX_APP_PERMS} {jail} {check_root} "
-                    f"puis redémarrez l'application."
-                ),
-                code="sqlite_readonly",
-                status_code=400,
-                extra={"path": str(db_main), "jail": jail},
+        if db_main.exists():
+            script += f" && test -w {shlex.quote(str(db_main))}"
+
+        ok = False
+        for runuser_bin in ("/usr/sbin/runuser", "/sbin/runuser"):
+            if not Path(runuser_bin).is_file():
+                continue
+            proc = subprocess.run(
+                ["sudo", "-n", runuser_bin, "-u", jail, "--", "/bin/bash", "-c", script],
+                capture_output=True,
+                text=True,
+                timeout=45,
+                check=False,
             )
-    except VZoneAPIException:
-        raise
+            if proc.returncode == 0:
+                ok = True
+            break
+        if ok:
+            return
+
+        if FIX_APP_PERMS.is_file():
+            force = subprocess.run(
+                ["sudo", "-n", str(FIX_APP_PERMS), jail, str(check_root), "--force"],
+                capture_output=True,
+                text=True,
+                timeout=180,
+                check=False,
+            )
+            if force.returncode == 0:
+                logger.warning(
+                    "SQLite/app: --force appliqué pour %s (%s)",
+                    jail,
+                    check_root,
+                )
+                return
+        logger.warning(
+            "SQLite probe soft échoué pour %s @ %s — Start continué (perms déjà fixés)",
+            jail,
+            check_root,
+        )
     except Exception:  # noqa: BLE001
         logger.debug("sqlite writable probe skip", exc_info=True)
 
@@ -1880,6 +2004,60 @@ def _run_as_owner(
             status_code=502,
             extra={"stderr": stderr[-2000:] if stderr else str(exc), "cmd": full},
         ) from exc
+
+
+def _ensure_django_hosts_patch(app: PythonApp, app_root: Path) -> None:
+    """
+    Garantit que Django accepte le domaine panel.
+    - Si passenger_wsgi.py est encore l'ancien template, on y injecte le patch ALLOWED_HOSTS.
+    - Sinon on étend ALLOWED_HOSTS dans settings.py si trop restrictif (localhost only).
+    """
+    if app.framework != PythonApp.Framework.DJANGO and app.mode != PythonApp.Mode.WSGI:
+        return
+    domain = normalize_app_domain(app.domain_name or "")
+    wsgi = app_root / "passenger_wsgi.py"
+    marker = "VZONE_ALLOWED_HOSTS"
+    try:
+        if wsgi.is_file():
+            text = wsgi.read_text(encoding="utf-8", errors="replace")
+            if marker not in text and "get_wsgi_application" in text:
+                # Patch post-application : ajouter à la fin du fichier
+                append = (
+                    "\n# --- V-zone: étendre ALLOWED_HOSTS depuis l'env panel ---\n"
+                    "try:\n"
+                    f"    _vh = os.environ.get({marker!r}) or os.environ.get('DJANGO_ALLOWED_HOSTS') or ''\n"
+                    "    if _vh:\n"
+                    "        from django.conf import settings as _s\n"
+                    "        _hosts = [h.strip() for h in _vh.split(',') if h.strip()]\n"
+                    "        _cur = list(getattr(_s, 'ALLOWED_HOSTS', []) or [])\n"
+                    "        if '*' not in _cur:\n"
+                    "            for _h in _hosts:\n"
+                    "                if _h not in _cur:\n"
+                    "                    _cur.append(_h)\n"
+                    "            _s.ALLOWED_HOSTS = _cur\n"
+                    "except Exception:\n"
+                    "    pass\n"
+                )
+                if append.strip() not in text:
+                    wsgi.write_text(text.rstrip() + "\n" + append, encoding="utf-8")
+        # settings.py : si ALLOWED_HOSTS = [] ou localhost only, élargir
+        pkg = detect_django_project_package(app_root)
+        settings_py = app_root / pkg / "settings.py"
+        if settings_py.is_file() and domain:
+            st = settings_py.read_text(encoding="utf-8", errors="replace")
+            if "VZONE_HOSTS_PATCH" not in st:
+                patch = (
+                    "\n# VZONE_HOSTS_PATCH — domaines panel (ne pas supprimer)\n"
+                    "import os as _vzone_os\n"
+                    "_vzone_extra = _vzone_os.environ.get('VZONE_ALLOWED_HOSTS', '')\n"
+                    "if _vzone_extra:\n"
+                    "    ALLOWED_HOSTS = list(dict.fromkeys(\n"
+                    "        list(ALLOWED_HOSTS) + [h.strip() for h in _vzone_extra.split(',') if h.strip()]\n"
+                    "    ))\n"
+                )
+                settings_py.write_text(st.rstrip() + "\n" + patch, encoding="utf-8")
+    except OSError as exc:
+        logger.debug("django hosts patch skip: %s", exc)
 
 
 def _ensure_app_data_writable(owner: User, app_root: Path, *extra: Path) -> None:
@@ -1968,6 +2146,7 @@ def start_python_app(app: PythonApp) -> PythonApp:
     refresh_enter_scripts(app)
     access_log, error_log = _prepare_app_logs(app.owner, app_root)
     _ensure_app_data_writable(app.owner, app_root, venv_dir)
+    _ensure_django_hosts_patch(app, app_root)
     pid_file = app_root / "logs" / "app.pid"
 
     env = _child_process_env(app, app_root, venv_dir)
@@ -2006,6 +2185,8 @@ def start_python_app(app: PythonApp) -> PythonApp:
     ensure_runtime_deps(app, app_root, py)
     _preflight_runtime_module(app, py)
     _preflight_app_import(app, app_root, py, env, venv_dir=venv_dir)
+    # Préflight / pip peuvent recréer des fichiers owned par le panel → re-fix
+    _ensure_app_data_writable(app.owner, app_root, venv_dir)
 
     if app.mode == PythonApp.Mode.WSGI and not (app_root / "passenger_wsgi.py").exists():
         raise VZoneAPIException(

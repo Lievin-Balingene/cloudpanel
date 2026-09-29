@@ -6,11 +6,14 @@ set -euo pipefail
 
 export KUBECONFIG="${KUBECONFIG:-/etc/rancher/k3s/k3s.yaml}"
 HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+ADMIN_PORT="${VZONE_ADMIN_PORT:-9086}"
+CLIENT_PORT="${VZONE_CLIENT_PORT:-9082}"
+WEBMAIL_PORT="${VZONE_WEBMAIL_PORT:-9095}"
 
-echo "=== repair-external-access (ports 80/443/53) ==="
+echo "=== repair-external-access (80/443/53 + panel ${ADMIN_PORT}/${CLIENT_PORT}/${WEBMAIL_PORT}) ==="
 
 echo "[1] Écoute locale"
-ss -tlnp | grep -E ':80\s|:443\s|:53\s' || true
+ss -tlnp | grep -E ":(80|443|53|${ADMIN_PORT}|${CLIENT_PORT}|${WEBMAIL_PORT})\\b" || true
 ss -ulnp | grep -E ':53\s' || true
 
 echo "[2] UFW"
@@ -18,12 +21,15 @@ if command -v ufw >/dev/null 2>&1; then
   ufw allow OpenSSH || ufw allow 22/tcp || true
   ufw allow 80/tcp || true
   ufw allow 443/tcp || true
+  ufw allow "${ADMIN_PORT}/tcp" || true
+  ufw allow "${CLIENT_PORT}/tcp" || true
+  ufw allow "${WEBMAIL_PORT}/tcp" || true
   ufw allow 53/tcp || true
   ufw allow 53/udp || true
   ufw status verbose || true
   ufw --force enable || true
   ufw reload || true
-  echo "  UFW: 80/443/53 autorisés"
+  echo "  UFW: 80/443/53 + ${ADMIN_PORT}/${CLIENT_PORT}/${WEBMAIL_PORT} autorisés"
 else
   echo "  UFW absent"
 fi
@@ -34,8 +40,11 @@ if command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewa
   firewall-cmd --permanent --add-service=https || true
   firewall-cmd --permanent --add-service=ssh || true
   firewall-cmd --permanent --add-service=dns || true
+  firewall-cmd --permanent --add-port="${ADMIN_PORT}/tcp" || true
+  firewall-cmd --permanent --add-port="${CLIENT_PORT}/tcp" || true
+  firewall-cmd --permanent --add-port="${WEBMAIL_PORT}/tcp" || true
   firewall-cmd --reload || true
-  echo "  firewalld: http/https/dns OK"
+  echo "  firewalld: http/https/dns + panel OK"
 fi
 
 echo "[4] k3s : désactiver Traefik/ServiceLB + supprimer services LB sur 80/443"
@@ -93,11 +102,11 @@ if command -v nft >/dev/null 2>&1 && [[ -n "${HOST_IP:-}" ]]; then
     || echo "  (aucun match grep — OK si déjà nettoyé)"
 fi
 
-echo "[6] iptables INPUT (accepter 80/443/53 en tête, avant chaînes KUBE)"
+echo "[6] iptables INPUT (accepter 80/443/53 + panel en tête, avant chaînes KUBE)"
 accept_ports_input() {
   local proto="$1"
   command -v "$proto" >/dev/null 2>&1 || return 0
-  for port in 80 443; do
+  for port in 80 443 "$ADMIN_PORT" "$CLIENT_PORT" "$WEBMAIL_PORT"; do
     while $proto -C INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null; do
       $proto -D INPUT -p tcp --dport "$port" -j ACCEPT || break
     done
@@ -110,20 +119,25 @@ accept_ports_input() {
       $proto -D INPUT -p udp --dport "$port" -j ACCEPT || break
     done
   done
+  # Ordre : ESTABLISHED puis ports critiques (panel inclus)
   if $proto -C INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null \
      || $proto -C INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null; then
-    $proto -I INPUT 2 -p tcp --dport 443 -j ACCEPT
-    $proto -I INPUT 3 -p tcp --dport 80 -j ACCEPT
-    $proto -I INPUT 4 -p udp --dport 53 -j ACCEPT
-    $proto -I INPUT 5 -p tcp --dport 53 -j ACCEPT
+    local idx=2
+    for port in 443 80 "$ADMIN_PORT" "$CLIENT_PORT" "$WEBMAIL_PORT"; do
+      $proto -I INPUT "$idx" -p tcp --dport "$port" -j ACCEPT
+      idx=$((idx + 1))
+    done
+    $proto -I INPUT "$idx" -p udp --dport 53 -j ACCEPT
+    idx=$((idx + 1))
+    $proto -I INPUT "$idx" -p tcp --dport 53 -j ACCEPT
   else
-    $proto -I INPUT 1 -p tcp --dport 443 -j ACCEPT
-    $proto -I INPUT 1 -p tcp --dport 80 -j ACCEPT
+    for port in 443 80 "$ADMIN_PORT" "$CLIENT_PORT" "$WEBMAIL_PORT" 53; do
+      $proto -I INPUT 1 -p tcp --dport "$port" -j ACCEPT
+    done
     $proto -I INPUT 1 -p udp --dport 53 -j ACCEPT
-    $proto -I INPUT 1 -p tcp --dport 53 -j ACCEPT
     $proto -I INPUT 1 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
   fi
-  echo "  $proto: ACCEPT tcp/80,443 + udp/tcp/53 avant KUBE-*"
+  echo "  $proto: ACCEPT tcp/80,443,${ADMIN_PORT},${CLIENT_PORT},${WEBMAIL_PORT} + udp/tcp/53 avant KUBE-*"
 }
 accept_ports_input iptables
 accept_ports_input ip6tables
@@ -154,12 +168,19 @@ if command -v nft >/dev/null 2>&1 && [[ -n "${HOST_IP:-}" ]]; then
 fi
 
 echo "[9] Tests"
-echo "  local http : $(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 3 http://127.0.0.1/login || echo fail)"
+echo "  local :80     : $(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 3 http://127.0.0.1/login || echo fail)"
+echo "  local :${ADMIN_PORT} : $(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 3 "http://127.0.0.1:${ADMIN_PORT}/" || echo fail)"
+echo "  local :${CLIENT_PORT} : $(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 3 "http://127.0.0.1:${CLIENT_PORT}/" || echo fail)"
 if [[ -n "$HOST_IP" ]]; then
-  echo "  via IP ($HOST_IP) : $(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 3 "http://${HOST_IP}/login" 2>/dev/null || echo fail)"
+  echo "  via IP :80     : $(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 3 "http://${HOST_IP}/login" 2>/dev/null || echo fail)"
+  echo "  via IP :${ADMIN_PORT} : $(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 3 "http://${HOST_IP}:${ADMIN_PORT}/" 2>/dev/null || echo fail)"
   if command -v dig >/dev/null 2>&1; then
     echo "  dig @$HOST_IP 7une.info A : $(dig @"$HOST_IP" 7une.info A +short +time=2 +tries=1 2>/dev/null || echo '(timeout/vide — lancer ensure-dns.sh)')"
   fi
+fi
+if command -v ss >/dev/null 2>&1; then
+  echo "  écoute nginx :"
+  ss -tlnp | grep -E ":(80|443|${ADMIN_PORT}|${CLIENT_PORT}|${WEBMAIL_PORT})\\b" || echo "  (rien — lancer ensure-nginx.sh)"
 fi
 if command -v kubectl >/dev/null 2>&1; then
   echo "  LoadBalancer restants :"
@@ -168,7 +189,8 @@ fi
 
 echo
 echo "=== Suite ==="
-echo "1) Depuis VOTRE PC : https://${HOST_IP}/login"
-echo "2) Pare-feu Contabo : ouvrir TCP 80, 443 et UDP/TCP 53."
-echo "3) DNS : dig @${HOST_IP} votredomaine.com A +short"
-echo "4) Puis réessayer Let's Encrypt dans le panel."
+echo "1) Admin WHM  : http://${HOST_IP:-IP}:${ADMIN_PORT}/  ou  http://votredomaine:${ADMIN_PORT}/"
+echo "2) Client     : http://${HOST_IP:-IP}:${CLIENT_PORT}/"
+echo "3) Sites web  : https://${HOST_IP:-IP}/login"
+echo "4) Pare-feu Contabo/Cloud : ouvrir TCP 80, 443, ${ADMIN_PORT}, ${CLIENT_PORT}, ${WEBMAIL_PORT} + UDP/TCP 53."
+echo "5) DNS : dig @${HOST_IP:-IP} votredomaine.com A +short"

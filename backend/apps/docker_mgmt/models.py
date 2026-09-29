@@ -93,3 +93,94 @@ class DockerContainerLog(models.Model):
 
     def __str__(self) -> str:
         return f"{self.container_id}:{self.event_type}"
+
+
+class DockerBuildJob(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "En attente"
+        RUNNING = "running", "Build en cours"
+        COMPLETED = "completed", "Terminé"
+        FAILED = "failed", "Échec"
+        CANCELLED = "cancelled", "Annulé"
+
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="docker_build_jobs",
+    )
+    name = models.CharField(max_length=64, db_index=True)
+    context_path = models.CharField(
+        max_length=512,
+        help_text="Dossier relatif au home (contexte docker build).",
+    )
+    dockerfile = models.CharField(max_length=255, default="Dockerfile")
+    image_name = models.CharField(max_length=120, help_text="Nom local sans préfixe utilisateur.")
+    tag = models.CharField(max_length=64, default="latest")
+    built_image_ref = models.CharField(max_length=255, blank=True, default="")
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    progress = models.PositiveSmallIntegerField(default=0)
+    log = models.TextField(blank=True, default="")
+    last_error = models.TextField(blank=True, default="")
+    celery_task_id = models.CharField(max_length=64, blank=True, default="")
+    no_cache = models.BooleanField(default=False)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        unique_together = ("owner", "name")
+        indexes = [models.Index(fields=["owner", "status"])]
+
+    def __str__(self) -> str:
+        return f"{self.owner.username}/build:{self.name}"
+
+    def append_log(self, line: str) -> None:
+        from django.utils import timezone
+
+        stamp = timezone.now().strftime("%H:%M:%S")
+        chunk = f"[{stamp}] {line}".rstrip()
+        self.log = ((self.log or "") + chunk + "\n")[-50000:]
+
+
+class DockerComposeProject(models.Model):
+    class Status(models.TextChoices):
+        CREATED = "created", "Créé"
+        RUNNING = "running", "En cours"
+        STOPPED = "stopped", "Arrêté"
+        ERROR = "error", "Erreur"
+
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="docker_compose_projects",
+    )
+    name = models.CharField(max_length=64, db_index=True)
+    project_path = models.CharField(
+        max_length=512,
+        help_text="Dossier relatif contenant le fichier compose.",
+    )
+    compose_file = models.CharField(max_length=255, default="docker-compose.yml")
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.CREATED)
+    log = models.TextField(blank=True, default="")
+    last_error = models.TextField(blank=True, default="")
+    celery_task_id = models.CharField(max_length=64, blank=True, default="")
+    last_deployed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("name",)
+        unique_together = ("owner", "name")
+        indexes = [models.Index(fields=["owner", "status"])]
+
+    def __str__(self) -> str:
+        return f"{self.owner.username}/compose:{self.name}"
+
+    def append_log(self, line: str) -> None:
+        from django.utils import timezone
+
+        stamp = timezone.now().strftime("%H:%M:%S")
+        chunk = f"[{stamp}] {line}".rstrip()
+        self.log = ((self.log or "") + chunk + "\n")[-50000:]

@@ -135,6 +135,7 @@ def resolve_domain_backend(domain: Domain) -> DomainBackend:
             bare = n[4:] if n.startswith("www.") else n
             py_q |= Q(domain_name__iexact=bare) | Q(domain_name__iexact=n)
 
+        # 1) App RUNNING → prioritaire sur public_html / PHP
         py = (
             PythonApp.objects.filter(
                 py_q,
@@ -145,6 +146,22 @@ def resolve_domain_backend(domain: Domain) -> DomainBackend:
             .order_by("-updated_at")
             .first()
         )
+        # 2) Fallback : app active avec port, même si stoppée récemment mais
+        #    le process écoute encore (évite flash public_html après restart)
+        if py is None:
+            candidates = (
+                PythonApp.objects.filter(py_q, is_active=True, port__gt=0)
+                .order_by("-updated_at")[:5]
+            )
+            import socket
+
+            for cand in candidates:
+                try:
+                    with socket.create_connection(("127.0.0.1", int(cand.port)), timeout=0.3):
+                        py = cand
+                        break
+                except OSError:
+                    continue
         if py:
             return DomainBackend(
                 mode="proxy",

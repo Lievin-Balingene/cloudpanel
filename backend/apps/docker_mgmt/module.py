@@ -7,7 +7,7 @@ registry.register(
         name="docker_mgmt",
         label="Docker",
         version="0.12.0",
-        description="Conteneurs Docker : création, start/stop, logs, quotas.",
+        description="Panel Docker : conteneurs, images, build Dockerfile, Compose.",
         dependencies=("core", "accounts"),
         api_prefix="docker",
         permissions=("docker.view", "docker.manage"),

@@ -95,6 +95,7 @@ install_all_modules() {
   # Agents nginx reload / sudoers homes / terminal
   [[ -f "${SCRIPT_DIR}/ensure-nginx-reload-agent.sh" ]] && run_ok "nginx-reload-agent" bash "${SCRIPT_DIR}/ensure-nginx-reload-agent.sh"
   [[ -f "${SCRIPT_DIR}/ensure-mkhome-sudoers.sh" ]] && run_ok "mkhome-sudoers" bash "${SCRIPT_DIR}/ensure-mkhome-sudoers.sh"
+  [[ -f "${SCRIPT_DIR}/repair-python-apps.sh" ]] && run_ok "repair-python-apps" bash "${SCRIPT_DIR}/repair-python-apps.sh"
   [[ -f "${SCRIPT_DIR}/ensure-terminal-sudoers.sh" ]] && run_ok "terminal-sudoers" bash "${SCRIPT_DIR}/ensure-terminal-sudoers.sh"
   [[ -f "${SCRIPT_DIR}/ensure-dns.sh" ]] && run_ok "ensure-dns" bash "${SCRIPT_DIR}/ensure-dns.sh"
 }

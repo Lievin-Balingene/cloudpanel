@@ -212,11 +212,15 @@ def _is_host_port_free(port: int, *, exclude_id: int | None = None) -> bool:
         return False
 
 
+DOCKER_HOST_PORT_START = 12000
+DOCKER_HOST_PORT_END = 18999
+
+
 def allocate_host_port(
     *,
     preferred: int | None = None,
-    start: int = 12000,
-    end: int = 18999,
+    start: int = DOCKER_HOST_PORT_START,
+    end: int = DOCKER_HOST_PORT_END,
     exclude_id: int | None = None,
 ) -> int:
     """
@@ -235,6 +239,61 @@ def allocate_host_port(
     )
 
 
+def open_docker_host_ports(ports: dict | None) -> None:
+    """
+    Ouvre les ports hôte Docker dans UFW / iptables (accès public).
+    Les images type nginx:alpine n'écoutent qu'en HTTP — pas de TLS sur ces ports.
+    """
+    if provision_mode() == "mock":
+        return
+    host_ports: list[int] = []
+    for key in (ports or {}):
+        try:
+            host_ports.append(int(str(key).split(":")[-1]))
+        except (TypeError, ValueError):
+            continue
+    for port in host_ports:
+        if not (1 <= port <= 65535):
+            continue
+        try:
+            if shutil.which("ufw"):
+                subprocess.run(
+                    ["ufw", "allow", f"{port}/tcp", "comment", f"vzone-docker-{port}"],
+                    check=False,
+                    capture_output=True,
+                    timeout=15,
+                )
+            if shutil.which("firewall-cmd"):
+                subprocess.run(
+                    ["firewall-cmd", "--permanent", f"--add-port={port}/tcp"],
+                    check=False,
+                    capture_output=True,
+                    timeout=15,
+                )
+                subprocess.run(
+                    ["firewall-cmd", "--reload"],
+                    check=False,
+                    capture_output=True,
+                    timeout=30,
+                )
+            if shutil.which("iptables"):
+                check = subprocess.run(
+                    ["iptables", "-C", "INPUT", "-p", "tcp", "--dport", str(port), "-j", "ACCEPT"],
+                    check=False,
+                    capture_output=True,
+                    timeout=10,
+                )
+                if check.returncode != 0:
+                    subprocess.run(
+                        ["iptables", "-I", "INPUT", "-p", "tcp", "--dport", str(port), "-j", "ACCEPT"],
+                        check=False,
+                        capture_output=True,
+                        timeout=10,
+                    )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            logger.warning("Impossible d'ouvrir le port Docker %s: %s", port, exc)
+
+
 def resolve_ports(
     owner: User,
     ports: dict | None,
@@ -250,7 +309,9 @@ def resolve_ports(
     cleaned = _sanitize_ports(owner, ports)
     if not cleaned:
         host = allocate_host_port(exclude_id=exclude_id)
-        return {str(host): container_default}
+        resolved = {str(host): container_default}
+        open_docker_host_ports(resolved)
+        return resolved
 
     resolved: dict[str, int] = {}
     for host_s, container_p in cleaned.items():
@@ -267,6 +328,7 @@ def resolve_ports(
                 free,
                 container_p,
             )
+    open_docker_host_ports(resolved)
     return resolved
 
 
@@ -397,7 +459,8 @@ def _build_run_args(container: DockerContainer) -> list[str]:
         f"vzone.name={container.name}",
     ]
     for host_port, container_port in (container.ports or {}).items():
-        args.extend(["-p", f"{host_port}:{container_port}"])
+        # Bind explicite 0.0.0.0 pour accès public (pas seulement localhost)
+        args.extend(["-p", f"0.0.0.0:{host_port}:{container_port}"])
     for key, value in (container.env_vars or {}).items():
         args.extend(["-e", f"{key}={value}"])
     for vol in _resolve_volumes(container.owner, container.volumes or []):
@@ -503,6 +566,7 @@ def start_container(container: DockerContainer) -> DockerContainer:
                     free = allocate_host_port(exclude_id=container.pk)
                     container.ports = {str(free): old_cp}
                     container.save(update_fields=["ports", "updated_at"])
+                    open_docker_host_ports(container.ports)
                     write_meta(container)
                     logger.warning(
                         "Docker port conflict for %s — retry on %s→%s",
@@ -634,11 +698,13 @@ def update_container(
 
 
 def overview_for(user: User) -> dict:
+    from apps.docker_mgmt.build_compose import overview_build_compose
+
     qs = containers_qs(user).exclude(status=DockerContainer.Status.REMOVED)
     available, availability_hint = (True, "")
     if provision_mode() != "mock":
         available, availability_hint = docker_available()
-    return {
+    data = {
         "containers": qs.count(),
         "running": qs.filter(status=DockerContainer.Status.RUNNING).count(),
         "stopped": qs.filter(status=DockerContainer.Status.STOPPED).count(),
@@ -647,3 +713,5 @@ def overview_for(user: User) -> dict:
         "docker_available": available,
         "docker_hint": availability_hint,
     }
+    data.update(overview_build_compose(user))
+    return data

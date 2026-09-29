@@ -13,15 +13,32 @@
 ## Permissions (jail / SQLite)
 
 Les apps démarrent sous l’UID client (`vzone-runas`). Le panel exécute
-`vzone-fix-app-perms` (sudo) à la **création**, après **pip**, et avant chaque
-**start** pour que `db.sqlite3`, `logs/`, `media/` appartiennent au compte jail.
+`vzone-fix-app-perms` (sudo) à la **création**, après **pip**, et **avant/après**
+chaque **start** pour que `db.sqlite3`, son **dossier parent**, `logs/`, `media/`
+appartiennent au compte jail (SQLite doit pouvoir créer `-wal`/`-shm`).
 
 Sans ce helper : `sudo bash scripts/ensure-mkhome-sudoers.sh`
 
-Réparation manuelle :
+Réparation manuelle (un compte) :
 ```bash
-sudo /usr/local/sbin/vzone-fix-app-perms <user> /home/<user>/<app_root>
+sudo /usr/local/sbin/vzone-fix-app-perms une /home/une/vzone
 ```
+
+Réparation complète serveur (perms + vhosts nginx) :
+```bash
+sudo bash /opt/vzone-src/scripts/repair-python-apps.sh
+# ou un seul user :
+sudo bash /opt/vzone-src/scripts/repair-python-apps.sh une
+```
+
+Puis **Restart** l’app dans le panel. Le domaine (http/https) est re-proxifié
+vers le port gunicorn automatiquement (`ALLOWED_HOSTS` injecté).
+
+## Domaine / proxy
+
+Au Start : vhost nginx `proxy_pass http://127.0.0.1:<port>` + variables
+`VZONE_ALLOWED_HOSTS` / patch `passenger_wsgi.py` pour éviter `DisallowedHost`.
+L’app doit être **RUNNING** et le domaine renseigné dans l’app + créé dans Domaines.
 
 ## Déploiement Django (identique cPanel)
 

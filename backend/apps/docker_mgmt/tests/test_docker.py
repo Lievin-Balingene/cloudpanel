@@ -136,6 +136,37 @@ def test_helpers(docker_root):
     assert DockerContainerLog.objects.filter(container=c).count() >= 2
 
 
+@pytest.mark.integration
+@pytest.mark.django_db
+def test_docker_build_mock(api: APIClient, docker_root, tmp_path, settings):
+    user = UserFactory(username="dockbuild")
+    _enable_docker(user)
+    home = settings.VZONE_HOME_ROOT / user.username
+    home.mkdir(parents=True)
+    app = home / "app"
+    app.mkdir()
+    (app / "Dockerfile").write_text("FROM alpine\n", encoding="utf-8")
+    api.force_authenticate(user=user)
+    resp = api.post(
+        reverse("docker-build-list"),
+        {
+            "name": "mybuild",
+            "context_path": "app",
+            "dockerfile": "Dockerfile",
+            "tag": "v1",
+        },
+        format="json",
+    )
+    assert resp.status_code == 201
+    data = resp.json()["data"]
+    assert data["status"] == "completed"
+    assert "vz_dockbuild" in data["built_image_ref"]
+
+    images = api.get(reverse("docker-image-list"))
+    assert images.status_code == 200
+    assert len(images.json()["data"]) >= 1
+
+
 @pytest.mark.unit
 @pytest.mark.django_db
 def test_humanize_permission_denied(docker_root):

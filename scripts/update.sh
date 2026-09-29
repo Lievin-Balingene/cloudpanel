@@ -269,6 +269,12 @@ if [[ -x "${VZONE_ROOT}/backend/.venv/bin/python" ]]; then
   ) || echo "[vzone] Avertissement: reconcile_python_apps a échoué"
 fi
 
+# Permissions SQLite / vhosts Python (définitif après update)
+if [[ -f "${REPO_DIR}/scripts/repair-python-apps.sh" ]]; then
+  echo "[vzone] Réparation perms Python + vhosts…"
+  bash "${REPO_DIR}/scripts/repair-python-apps.sh" || echo "[vzone] Avertissement: repair-python-apps.sh a échoué"
+fi
+
 # Agents + réparations safe (comme en fin d'install)
 install -m 755 "${REPO_DIR}/scripts/post-install-bootstrap.sh" /usr/local/sbin/vzone-bootstrap 2>/dev/null || true
 if [[ -f "${REPO_DIR}/scripts/install-repair-agent.sh" ]]; then

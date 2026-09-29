@@ -2,12 +2,11 @@
 
 ## Fonctions
 
-- Création de conteneurs (image, tag, ports, env, volumes jailés)
-- Start / stop / restart / remove
-- Limites mémoire / CPU
-- Restart policy
-- Logs conteneur
-- Journaux d'événements
+- **Conteneurs** : création, start/stop/restart/remove, ports auto (12k–18k), volumes jailés
+- **Images** : liste locale, pull Docker Hub, suppression images `vz_*`
+- **Build** : `docker build` depuis un dossier du home (Dockerfile), logs + job async Celery
+- **Compose** : projets `docker-compose.yml`, up/down avec `--build`
+- Templates Dockerfile (node / nginx / python)
 - Quotas package (`docker_containers`, 0 = désactivé)
 
 ## Modes
@@ -29,6 +28,15 @@
 | POST | `/api/v1/docker/containers/{id}/restart/` |
 | GET | `/api/v1/docker/containers/{id}/logs/` |
 | GET | `/api/v1/docker/events/` |
+| GET | `/api/v1/docker/images/` |
+| POST | `/api/v1/docker/images/pull/` |
+| POST | `/api/v1/docker/images/remove/` |
+| GET/POST | `/api/v1/docker/builds/` |
+| GET | `/api/v1/docker/builds/{id}/` |
+| GET/POST | `/api/v1/docker/compose/` |
+| POST | `/api/v1/docker/compose/{id}/up/` |
+| POST | `/api/v1/docker/compose/{id}/down/` |
+| POST | `/api/v1/docker/dockerfile-template/` |
 
 ## Configuration
 

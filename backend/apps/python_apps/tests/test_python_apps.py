@@ -244,6 +244,28 @@ def test_is_runas_infra_error_detects_missing_runuser():
 
 @pytest.mark.unit
 @pytest.mark.django_db
+def test_child_env_injects_allowed_hosts(settings, py_root):
+    from apps.python_apps.services import _child_process_env, create_python_app
+
+    settings.VZONE_PYTHON_PROVISION_MODE = "mock"
+    user = UserFactory(username="hostuser")
+    app = create_python_app(
+        owner=user,
+        name="site",
+        relative_root="site",
+        domain_name="exemple.test",
+        framework="django",
+    )
+    root = Path(settings.VZONE_HOME_ROOT) / user.username / "site"
+    venv = Path(app.venv_path)
+    env = _child_process_env(app, root, venv)
+    assert "exemple.test" in env.get("VZONE_ALLOWED_HOSTS", "")
+    assert "www.exemple.test" in env["VZONE_ALLOWED_HOSTS"]
+    assert env.get("VIRTUAL_HOST") == "exemple.test"
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
 def test_fix_client_paths_noop_in_mock(settings, tmp_path):
     from apps.python_apps.services import fix_client_paths
 

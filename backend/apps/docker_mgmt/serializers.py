@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
-from apps.docker_mgmt.models import DockerContainer, DockerContainerLog
+from apps.docker_mgmt.models import (
+    DockerBuildJob,
+    DockerComposeProject,
+    DockerContainer,
+    DockerContainerLog,
+)
 
 
 class DockerContainerSerializer(serializers.ModelSerializer):
@@ -98,3 +103,98 @@ class DockerContainerLogSerializer(serializers.ModelSerializer):
             "created_at",
         )
         read_only_fields = fields
+
+
+class DockerBuildJobSerializer(serializers.ModelSerializer):
+    owner_username = serializers.CharField(source="owner.username", read_only=True)
+
+    class Meta:
+        model = DockerBuildJob
+        fields = (
+            "id",
+            "owner",
+            "owner_username",
+            "name",
+            "context_path",
+            "dockerfile",
+            "image_name",
+            "tag",
+            "built_image_ref",
+            "status",
+            "progress",
+            "log",
+            "last_error",
+            "no_cache",
+            "started_at",
+            "completed_at",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = (
+            "id",
+            "owner",
+            "owner_username",
+            "built_image_ref",
+            "status",
+            "progress",
+            "log",
+            "last_error",
+            "started_at",
+            "completed_at",
+            "created_at",
+            "updated_at",
+        )
+
+
+class DockerBuildCreateSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=48)
+    context_path = serializers.CharField(max_length=512)
+    dockerfile = serializers.CharField(required=False, default="Dockerfile")
+    image_name = serializers.CharField(required=False, allow_blank=True, default="")
+    tag = serializers.CharField(required=False, default="latest")
+    no_cache = serializers.BooleanField(required=False, default=False)
+    owner_id = serializers.IntegerField(required=False)
+
+
+class DockerComposeProjectSerializer(serializers.ModelSerializer):
+    owner_username = serializers.CharField(source="owner.username", read_only=True)
+
+    class Meta:
+        model = DockerComposeProject
+        fields = (
+            "id",
+            "owner",
+            "owner_username",
+            "name",
+            "project_path",
+            "compose_file",
+            "status",
+            "log",
+            "last_error",
+            "last_deployed_at",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = fields
+
+
+class DockerComposeCreateSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=48)
+    project_path = serializers.CharField(max_length=512)
+    compose_file = serializers.CharField(required=False, allow_blank=True, default="")
+    owner_id = serializers.IntegerField(required=False)
+
+
+class DockerImagePullSerializer(serializers.Serializer):
+    image = serializers.CharField(max_length=255)
+    tag = serializers.CharField(required=False, default="latest")
+
+
+class DockerImageRemoveSerializer(serializers.Serializer):
+    repository = serializers.CharField(max_length=255)
+    tag = serializers.CharField(required=False, default="latest")
+
+
+class DockerDockerfileTemplateSerializer(serializers.Serializer):
+    context_path = serializers.CharField(max_length=512)
+    kind = serializers.ChoiceField(choices=["node", "nginx", "python"], default="node")

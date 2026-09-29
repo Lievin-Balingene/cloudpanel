@@ -18,6 +18,20 @@ fi
 systemctl enable docker 2>/dev/null || true
 systemctl start docker 2>/dev/null || true
 
+# Plage ports publiés (host→container) — accès public style cPanel
+DOCKER_PORT_START="${VZONE_DOCKER_PORT_START:-12000}"
+DOCKER_PORT_END="${VZONE_DOCKER_PORT_END:-18999}"
+if command -v ufw >/dev/null 2>&1; then
+  ufw allow "${DOCKER_PORT_START}:${DOCKER_PORT_END}/tcp" comment "vzone-docker" 2>/dev/null \
+    || ufw allow "${DOCKER_PORT_START}:${DOCKER_PORT_END}/tcp" || true
+  log "UFW: TCP ${DOCKER_PORT_START}-${DOCKER_PORT_END} autorisé"
+fi
+if command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld 2>/dev/null; then
+  firewall-cmd --permanent --add-port="${DOCKER_PORT_START}-${DOCKER_PORT_END}/tcp" 2>/dev/null || true
+  firewall-cmd --reload 2>/dev/null || true
+  log "firewalld: TCP ${DOCKER_PORT_START}-${DOCKER_PORT_END} autorisé"
+fi
+
 if ! getent group docker >/dev/null 2>&1; then
   groupadd --system docker
   log "Groupe docker créé"
