@@ -103,7 +103,6 @@ export function FileManager({ title }: { title: string }) {
   const location = useLocation();
   const panelBase = resolvePanelBase(location.pathname);
   const token = useAuthStore((s) => s.accessToken);
-  const role = useAuthStore((s) => s.user?.role);
   const [cwd, setCwd] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [clipboard, setClipboard] = useState<{ mode: ClipMode; paths: string[] }>({
