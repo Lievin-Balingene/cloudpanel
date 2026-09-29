@@ -186,7 +186,7 @@ const navSections: NavSection[] = [
         to: "/whm/packages/create",
         label: "Add a Package",
         icon: Package,
-        keywords: ["créer", "quota", "plan", "feature"],
+        keywords: ["créer", "quota", "plan", "feature", "pulse", "cpu", "ram"],
       },
       {
         to: "/whm/packages",
@@ -194,6 +194,12 @@ const navSections: NavSection[] = [
         label: "List Packages",
         icon: Package,
         keywords: ["edit", "quota", "plan"],
+      },
+      {
+        to: "/whm/pulse",
+        label: "V-zone Pulse",
+        icon: Zap,
+        keywords: ["cgroups", "lve", "cpu", "ram", "resource", "governor"],
       },
     ],
   },

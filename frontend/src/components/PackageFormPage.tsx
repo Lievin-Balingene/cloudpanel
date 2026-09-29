@@ -11,6 +11,12 @@ export type PackageForm = {
   bandwidth_mb: number;
   unlimited_disk: boolean;
   unlimited_bandwidth: boolean;
+  cpu_millicores: number;
+  ram_mb: number;
+  unlimited_cpu: boolean;
+  unlimited_ram: boolean;
+  inode_limit: number;
+  max_processes: number;
   domains: number;
   emails: number;
   databases: number;
@@ -39,6 +45,12 @@ export function defaultPackageForm(
     bandwidth_mb: 102400,
     unlimited_disk: false,
     unlimited_bandwidth: false,
+    cpu_millicores: 1000,
+    ram_mb: 1024,
+    unlimited_cpu: false,
+    unlimited_ram: false,
+    inode_limit: 200000,
+    max_processes: 100,
     domains: 1,
     emails: 10,
     databases: 5,
@@ -66,6 +78,12 @@ export function packageToForm(pkg: HostingPackage): PackageForm {
     bandwidth_mb: pkg.bandwidth_mb,
     unlimited_disk: Boolean(pkg.unlimited_disk),
     unlimited_bandwidth: Boolean(pkg.unlimited_bandwidth),
+    cpu_millicores: pkg.cpu_millicores ?? 1000,
+    ram_mb: pkg.ram_mb ?? 1024,
+    unlimited_cpu: Boolean(pkg.unlimited_cpu),
+    unlimited_ram: Boolean(pkg.unlimited_ram),
+    inode_limit: pkg.inode_limit ?? 200000,
+    max_processes: pkg.max_processes ?? 100,
     domains: pkg.domains,
     emails: pkg.emails,
     databases: pkg.databases,
@@ -248,6 +266,69 @@ export function PackageFormPage({
             />
             BP illimitée
           </label>
+        </div>
+
+        <div className="border-y border-cp-border bg-cp-canvas/60 px-4 py-2 text-xs font-bold uppercase tracking-wide text-cp-muted dark:border-ink-800 dark:bg-ink-900">
+          V-zone Pulse (CPU / RAM / processus / inodes)
+        </div>
+        <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Field label="CPU (millicores, 1000 = 1 cœur)">
+            <input
+              className="vz-input w-full"
+              type="number"
+              min={0}
+              disabled={form.unlimited_cpu}
+              value={form.cpu_millicores}
+              onChange={setNum("cpu_millicores")}
+            />
+          </Field>
+          <Field label="RAM (Mo)">
+            <input
+              className="vz-input w-full"
+              type="number"
+              min={0}
+              disabled={form.unlimited_ram}
+              value={form.ram_mb}
+              onChange={setNum("ram_mb")}
+            />
+          </Field>
+          <Field label="Processus max (TasksMax)">
+            <input
+              className="vz-input w-full"
+              type="number"
+              min={1}
+              value={form.max_processes}
+              onChange={setNum("max_processes")}
+            />
+          </Field>
+          <Field label="Inodes max">
+            <input
+              className="vz-input w-full"
+              type="number"
+              min={0}
+              value={form.inode_limit}
+              onChange={setNum("inode_limit")}
+            />
+          </Field>
+          <label className="flex items-end gap-2 pb-2 text-sm">
+            <input
+              type="checkbox"
+              checked={form.unlimited_cpu}
+              onChange={(e) => setForm({ ...form, unlimited_cpu: e.target.checked })}
+            />
+            CPU illimité
+          </label>
+          <label className="flex items-end gap-2 pb-2 text-sm">
+            <input
+              type="checkbox"
+              checked={form.unlimited_ram}
+              onChange={(e) => setForm({ ...form, unlimited_ram: e.target.checked })}
+            />
+            RAM illimitée
+          </label>
+          <p className="sm:col-span-2 lg:col-span-4 text-[11px] text-cp-muted">
+            Appliqué via cgroups v2 / slices systemd (Pulse) — pas de noyau propriétaire.
+          </p>
         </div>
 
         <div className="border-y border-cp-border bg-cp-canvas/60 px-4 py-2 text-xs font-bold uppercase tracking-wide text-cp-muted dark:border-ink-800 dark:bg-ink-900">

@@ -33,6 +33,8 @@ import {
   BarChart3,
   FileLock2,
   Gauge,
+  Activity,
+  Zap,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "@/lib/api";
@@ -85,6 +87,7 @@ const sections: NavSection[] = [
     items: [
       { to: "/panel/metrics", label: "Visiteurs & erreurs", icon: BarChart3 },
       { to: "/panel/package", label: "Ressources & quotas", icon: Gauge },
+      { to: "/panel/pulse", label: "V-zone Pulse", icon: Zap },
     ],
   },
   {

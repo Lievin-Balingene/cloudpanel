@@ -127,6 +127,8 @@ class ResourceQuota(models.Model):
     python_apps = models.PositiveIntegerField(default=2)
     node_apps = models.PositiveIntegerField(default=2)
     docker_containers = models.PositiveIntegerField(default=0)
+    inode_limit = models.PositiveIntegerField(default=200000)
+    max_processes = models.PositiveIntegerField(default=100)
     # 0 = illimité pour les compteurs d'usage
     unlimited_disk = models.BooleanField(default=False)
     unlimited_cpu = models.BooleanField(default=False)
@@ -154,6 +156,8 @@ class ResourceQuota(models.Model):
             "python_apps": self.python_apps,
             "node_apps": self.node_apps,
             "docker_containers": self.docker_containers,
+            "inode_limit": self.inode_limit,
+            "max_processes": self.max_processes,
         }
 
 

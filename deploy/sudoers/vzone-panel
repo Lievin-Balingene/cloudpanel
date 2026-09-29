@@ -38,3 +38,6 @@ vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-smtp-restrictions --status
 vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-smtp-restrictions --enable
 vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-smtp-restrictions --disable
 vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-smtp-restrictions --check
+
+# V-zone Pulse — Resource Governor (cgroups / systemd slices)
+vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-resourcectl *

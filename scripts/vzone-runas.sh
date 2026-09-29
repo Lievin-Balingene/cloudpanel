@@ -85,6 +85,22 @@ unset LD_PRELOAD LD_LIBRARY_PATH
 
 cd "$HOME_DIR" 2>/dev/null || cd /tmp
 
+# V-zone Pulse : exécuter dans le slice cgroups du compte si disponible
+SLICE="vz-pulse-${USERNAME}.slice"
+SYSTEMD_RUN_BIN="$(_find_bin systemd-run || true)"
+
+if [[ -n "$SYSTEMD_RUN_BIN" ]] && systemctl cat "${SLICE}" >/dev/null 2>&1; then
+  exec "$SYSTEMD_RUN_BIN" --quiet --collect \
+    --uid="$USERNAME" --gid="$USERNAME" \
+    --slice="$SLICE" \
+    --working-directory="$HOME_DIR" \
+    --setenv=HOME="$HOME_DIR" \
+    --setenv=USER="$USERNAME" \
+    --setenv=LOGNAME="$USERNAME" \
+    --setenv=PATH="/usr/local/bin:/usr/bin:/bin" \
+    --scope -- "$@"
+fi
+
 if [[ -n "$RUNUSER_BIN" ]]; then
   exec "$RUNUSER_BIN" -u "$USERNAME" -- "$@"
 fi

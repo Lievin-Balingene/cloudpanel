@@ -148,23 +148,36 @@ def write_user_ini(selector: PhpSelector, app_root: Path) -> Path:
 
 
 def write_fpm_pool(selector: PhpSelector) -> Path:
+    from apps.packages.pulse import _limits_from_user
+
     pool_name = re.sub(
         r"[^a-zA-Z0-9_.-]",
         "_",
         f"{selector.owner.username}_{selector.relative_path.replace('/', '_')}",
     )
     sock = selector.php_version.fpm_socket or f"/run/php/php{selector.php_version.version}-fpm.sock"
-    content = f"""; V-zone PHP-FPM pool — {selector.owner.username}
+    limits = _limits_from_user(selector.owner)
+    # max_children ≈ entry processes (plan) — plancher 2, plafond 64
+    max_children = max(2, min(64, int(limits.get("tasks") or 20) // 5 or 10))
+    # Préférer l'UID Linux du compte si provisionné
+    from apps.accounts.linux_users import jail_username_for, linux_user_exists
+
+    jail = jail_username_for(selector.owner)
+    run_user = jail if linux_user_exists(jail) else "nobody"
+    run_group = jail if linux_user_exists(jail) else "nobody"
+    home = user_home(selector.owner)
+    content = f"""; V-zone PHP-FPM pool — Pulse-aware ({selector.owner.username})
 [{pool_name}]
-user = nobody
-group = nobody
+user = {run_user}
+group = {run_group}
 listen = {sock}
 pm = ondemand
-pm.max_children = 10
+pm.max_children = {max_children}
 pm.process_idle_timeout = 10s
-chdir = {user_home(selector.owner) / selector.relative_path}
-php_admin_value[open_basedir] = {user_home(selector.owner)}:/tmp
+chdir = {home / selector.relative_path}
+php_admin_value[open_basedir] = {home}:/tmp
 php_admin_value[disable_functions] = exec,passthru,shell_exec,system
+php_admin_value[memory_limit] = {max(64, int(limits.get('memory_mb') or 256))}M
 """
     path = config_root() / "pools" / f"{pool_name}.conf"
     path.write_text(content, encoding="utf-8")

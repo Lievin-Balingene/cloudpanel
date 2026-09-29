@@ -88,6 +88,13 @@ def apply_package_to_user(
             sync_privileges_from_package(
                 user, can_create_packages=package.can_create_packages
             )
+    # V-zone Pulse : appliquer cgroups / systemd slice (best-effort)
+    try:
+        from apps.packages.pulse import apply_pulse_for_user
+
+        apply_pulse_for_user(user)
+    except Exception:  # noqa: BLE001
+        pass
     return assignment
 
 

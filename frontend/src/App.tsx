@@ -8,6 +8,7 @@ import { WhmHomePage } from "./pages/whm/WhmHomePage";
 import { WhmPackagesPage } from "./pages/whm/WhmPackagesPage";
 import { WhmPackageCreatePage } from "./pages/whm/WhmPackageCreatePage";
 import { WhmPackageEditPage } from "./pages/whm/WhmPackageEditPage";
+import { WhmPulsePage } from "./pages/whm/WhmPulsePage";
 import { WhmDnsPage } from "./pages/whm/WhmDnsPage";
 import { WhmResourcesPage } from "./pages/whm/WhmResourcesPage";
 import { WhmAccountsPage } from "./pages/whm/WhmAccountsPage";
@@ -46,6 +47,7 @@ import { WhmTweakSettingsPage } from "./pages/whm/WhmTweakSettingsPage";
 import { ClientHomePage } from "./pages/client/ClientHomePage";
 import { ClientDnsPage } from "./pages/client/ClientDnsPage";
 import { ClientPackagePage } from "./pages/client/ClientPackagePage";
+import { ClientPulsePage } from "./pages/client/ClientPulsePage";
 import { ClientDomainsPage } from "./pages/client/ClientDomainsPage";
 import { ClientFilesPage } from "./pages/client/ClientFilesPage";
 import { ClientFilesUploadPage } from "./pages/client/ClientFilesUploadPage";
@@ -152,6 +154,7 @@ export default function App() {
         <Route path="packages/create" element={<WhmPackageCreatePage />} />
         <Route path="packages/:id/edit" element={<WhmPackageEditPage />} />
         <Route path="packages" element={<WhmPackagesPage />} />
+        <Route path="pulse" element={<WhmPulsePage />} />
         <Route path="resellers" element={<WhmResellerPrivilegesPage />} />
         <Route path="server-setup" element={<WhmServerSetupPage />} />
         <Route path="tweak-settings" element={<WhmTweakSettingsPage />} />
@@ -222,6 +225,7 @@ export default function App() {
         <Route path="preferences" element={<ClientPreferencesPage />} />
         <Route path="dns" element={<ClientDnsPage />} />
         <Route path="package" element={<ClientPackagePage />} />
+        <Route path="pulse" element={<ClientPulsePage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

@@ -54,6 +54,7 @@ const hubs: HubSection[] = [
     links: [
       { to: "/whm/packages/create", label: "Add a Package" },
       { to: "/whm/packages", label: "List Packages" },
+      { to: "/whm/pulse", label: "V-zone Pulse" },
     ],
   },
   {

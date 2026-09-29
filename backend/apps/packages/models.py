@@ -129,6 +129,8 @@ class HostingPackage(models.Model):
             "unlimited_disk": self.unlimited_disk,
             "unlimited_cpu": self.unlimited_cpu,
             "unlimited_ram": self.unlimited_ram,
+            "inode_limit": self.inode_limit,
+            "max_processes": self.max_processes,
         }
 
 

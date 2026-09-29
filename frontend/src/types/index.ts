@@ -87,6 +87,10 @@ export interface HostingPackage {
   unlimited_bandwidth: boolean;
   cpu_millicores: number;
   ram_mb: number;
+  unlimited_cpu?: boolean;
+  unlimited_ram?: boolean;
+  inode_limit?: number;
+  max_processes?: number;
   domains: number;
   subdomains: number;
   emails: number;

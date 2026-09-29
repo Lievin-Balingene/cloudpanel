@@ -17,6 +17,8 @@ from apps.packages.serializers import (
     PackageAssignmentSerializer,
 )
 from apps.packages.services import apply_package_to_user, seed_default_packages
+from apps.packages.pulse import overview as pulse_overview
+from apps.packages.pulse import status_for_user as pulse_status_for_user
 
 
 class PackageListCreateView(generics.ListCreateAPIView):
@@ -106,7 +108,15 @@ class PackageDetailView(generics.RetrieveUpdateDestroyAPIView):
             return Response(status=status.HTTP_403_FORBIDDEN)
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        pkg = serializer.save()
+        # Réappliquer Pulse sur les comptes assignés
+        try:
+            from apps.packages.pulse import apply_pulse_for_user
+
+            for assignment in pkg.assignments.select_related("user").all()[:500]:
+                apply_pulse_for_user(assignment.user)
+        except Exception:  # noqa: BLE001
+            pass
         return Response({"success": True, "data": serializer.data})
 
     def destroy(self, request: Request, *args, **kwargs) -> Response:
@@ -193,3 +203,47 @@ class MyPackageView(APIView):
         if not assignment:
             return Response({"success": True, "data": None})
         return Response({"success": True, "data": PackageAssignmentSerializer(assignment).data})
+
+
+class PulseOverviewView(APIView):
+    """WHM — vue d'ensemble V-zone Pulse (Resource Governor)."""
+
+    permission_classes = [IsAuthenticated, IsAdministrator]
+
+    def get(self, request: Request) -> Response:
+        return Response({"success": True, "data": pulse_overview()})
+
+
+class PulseMineView(APIView):
+    """Usage Pulse du compte connecté (client / revendeur)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request) -> Response:
+        return Response({"success": True, "data": pulse_status_for_user(request.user)})
+
+
+class PulseAccountView(APIView):
+    """WHM — détail Pulse d'un compte."""
+
+    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+
+    def get(self, request: Request, user_id: int) -> Response:
+        user = User.objects.filter(pk=user_id).first()
+        if not user:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        if request.user.role == User.Role.RESELLER and user.parent_id != request.user.pk:
+            return Response(status=status.HTTP_403_FORBIDDEN)
+        return Response({"success": True, "data": pulse_status_for_user(user)})
+
+    def post(self, request: Request, user_id: int) -> Response:
+        """Réapplique le slice Pulse depuis le package courant."""
+        from apps.packages.pulse import apply_pulse_for_user
+
+        user = User.objects.filter(pk=user_id).first()
+        if not user:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        if request.user.role == User.Role.RESELLER and user.parent_id != request.user.pk:
+            return Response(status=status.HTTP_403_FORBIDDEN)
+        data = apply_pulse_for_user(user)
+        return Response({"success": True, "data": data})
