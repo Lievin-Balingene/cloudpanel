@@ -171,6 +171,11 @@ if [[ -f "${REPO_DIR}/scripts/ensure-mkhome-sudoers.sh" ]]; then
   bash "${REPO_DIR}/scripts/ensure-mkhome-sudoers.sh" || echo "[vzone] Avertissement: ensure-mkhome-sudoers.sh a échoué"
 fi
 
+# Accès Docker pour vzone (permission docker.sock)
+if [[ -f "${REPO_DIR}/scripts/ensure-docker-access.sh" ]]; then
+  bash "${REPO_DIR}/scripts/ensure-docker-access.sh" || echo "[vzone] Avertissement: ensure-docker-access.sh a échoué"
+fi
+
 if [[ -f "${REPO_DIR}/scripts/ensure-nginx-reload-agent.sh" ]]; then
   bash "${REPO_DIR}/scripts/ensure-nginx-reload-agent.sh" || echo "[vzone] Avertissement: ensure-nginx-reload-agent.sh a échoué"
 fi

@@ -57,6 +57,80 @@ def docker_binary() -> str:
     return shutil.which("docker") or "docker"
 
 
+def docker_available() -> tuple[bool, str]:
+    """Vérifie que le CLI Docker parle au démon (permission socket incluse)."""
+    binary = docker_binary()
+    if not shutil.which(binary) and not Path(binary).is_file():
+        return False, (
+            "Binaire Docker introuvable. Installez Docker "
+            "(scripts/ensure-docker-access.sh) ou définissez VZONE_DOCKER_BIN."
+        )
+    try:
+        proc = subprocess.run(
+            [binary, "info"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except FileNotFoundError:
+        return False, (
+            "Binaire Docker introuvable. Installez Docker "
+            "ou définissez VZONE_DOCKER_BIN."
+        )
+    except subprocess.TimeoutExpired:
+        return False, "Le démon Docker ne répond pas (timeout sur `docker info`)."
+    if proc.returncode == 0:
+        return True, ""
+    hint = _humanize_docker_stderr((proc.stderr or proc.stdout or "").strip())
+    return False, hint or "Docker indisponible (docker info a échoué)."
+
+
+def _humanize_docker_stderr(stderr: str) -> str:
+    lower = (stderr or "").lower()
+    if not stderr:
+        return "Échec commande Docker (sans détail)."
+    if "permission denied" in lower and ("docker.sock" in lower or "connect" in lower):
+        return (
+            "Permission refusée sur le socket Docker. "
+            "Ajoutez l'utilisateur API au groupe docker puis redémarrez : "
+            "sudo bash /opt/vzone/scripts/ensure-docker-access.sh"
+        )
+    if (
+        "cannot connect to the docker daemon" in lower
+        or "is the docker daemon running" in lower
+        or "connection refused" in lower
+    ):
+        return (
+            "Le démon Docker n'est pas démarré ou inaccessible. "
+            "Exécutez : sudo systemctl start docker "
+            "puis sudo bash /opt/vzone/scripts/ensure-docker-access.sh"
+        )
+    if "port is already allocated" in lower or "address already in use" in lower:
+        return f"Port hôte déjà utilisé. {stderr[:280]}"
+    if "conflict" in lower or "is already in use by container" in lower:
+        return f"Nom de conteneur déjà utilisé côté Docker. {stderr[:280]}"
+    if "pull access denied" in lower or ("not found" in lower and "manifest" in lower):
+        return f"Image introuvable ou accès refusé. {stderr[:280]}"
+    if "no space left" in lower:
+        return "Espace disque insuffisant pour Docker."
+    return f"Échec commande Docker : {stderr[:400]}"
+
+
+def _assert_docker_ready() -> None:
+    """En mode live/auto : refuse tôt si Docker n'est pas utilisable."""
+    if provision_mode() == "mock":
+        return
+    ok, hint = docker_available()
+    if not ok:
+        raise VZoneAPIException(
+            detail=hint,
+            code="docker_unavailable",
+            status_code=503,
+            extra={"hint": hint},
+        )
+
+
 def _assert_docker_quota(owner: User) -> None:
     quota = getattr(owner, "quota", None)
     limit = int(getattr(quota, "docker_containers", 0) or 0) if quota is not None else 0
@@ -144,14 +218,56 @@ def _run_docker(args: list[str], *, timeout: int = 120) -> subprocess.CompletedP
     cmd = [docker_binary(), *args]
     try:
         return subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=timeout)
-    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        stderr = getattr(exc, "stderr", None) or str(exc)
+    except FileNotFoundError as exc:
         raise VZoneAPIException(
-            detail="Échec commande Docker.",
+            detail="Binaire Docker introuvable. Installez Docker ou définissez VZONE_DOCKER_BIN.",
+            code="docker_not_found",
+            status_code=503,
+            extra={"stderr": str(exc), "cmd": cmd},
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise VZoneAPIException(
+            detail="Commande Docker expirée (pull d'image trop long ?).",
+            code="docker_timeout",
+            status_code=504,
+            extra={"stderr": (exc.stderr or "") if isinstance(exc.stderr, str) else "", "cmd": cmd},
+        ) from exc
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or exc.stdout or "").strip() or str(exc)
+        raise VZoneAPIException(
+            detail=_humanize_docker_stderr(stderr),
             code="docker_cmd_failed",
             status_code=502,
-            extra={"stderr": stderr, "cmd": cmd},
+            extra={"stderr": stderr[:2000], "cmd": cmd, "returncode": exc.returncode},
         ) from exc
+
+
+def _container_runtime_name(container: DockerContainer) -> str:
+    return f"vz_{container.owner.username}_{container.name}"
+
+
+def _cleanup_orphan_runtime(container: DockerContainer) -> None:
+    """Supprime un conteneur Docker orphelin du même nom (échec précédent)."""
+    if provision_mode() == "mock" or container.container_id:
+        return
+    name = _container_runtime_name(container)
+    try:
+        subprocess.run(
+            [docker_binary(), "rm", "-f", name],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+
+def _pull_image(image_ref: str) -> None:
+    """Pré-télécharge l'image (timeout long) pour des erreurs plus claires."""
+    if provision_mode() == "mock":
+        return
+    _run_docker(["pull", image_ref], timeout=300)
 
 
 def _resolve_volumes(owner: User, volumes: list) -> list[str]:
@@ -176,7 +292,7 @@ def _resolve_volumes(owner: User, volumes: list) -> list[str]:
 
 
 def _build_run_args(container: DockerContainer) -> list[str]:
-    full_name = f"vz_{container.owner.username}_{container.name}"
+    full_name = _container_runtime_name(container)
     args = [
         "run",
         "-d",
@@ -274,12 +390,21 @@ def start_container(container: DockerContainer) -> DockerContainer:
             log_path.write_text(f"mock start {container.image_ref}\n", encoding="utf-8")
             message = f"mock started {container.container_id[:12]}"
         else:
+            _assert_docker_ready()
             if container.container_id:
                 _run_docker(["start", container.container_id])
                 cid = container.container_id
             else:
-                result = _run_docker(_build_run_args(container))
-                cid = result.stdout.strip()
+                _pull_image(container.image_ref)
+                _cleanup_orphan_runtime(container)
+                result = _run_docker(_build_run_args(container), timeout=180)
+                cid = (result.stdout or "").strip()
+                if not cid:
+                    raise VZoneAPIException(
+                        detail="Docker n'a pas renvoyé d'identifiant de conteneur.",
+                        code="docker_empty_id",
+                        status_code=502,
+                    )
                 container.container_id = cid
             container.status = DockerContainer.Status.RUNNING
             container.last_error = ""
@@ -397,10 +522,15 @@ def update_container(
 
 def overview_for(user: User) -> dict:
     qs = containers_qs(user).exclude(status=DockerContainer.Status.REMOVED)
+    available, availability_hint = (True, "")
+    if provision_mode() != "mock":
+        available, availability_hint = docker_available()
     return {
         "containers": qs.count(),
         "running": qs.filter(status=DockerContainer.Status.RUNNING).count(),
         "stopped": qs.filter(status=DockerContainer.Status.STOPPED).count(),
         "error": qs.filter(status=DockerContainer.Status.ERROR).count(),
         "provision_mode": provision_mode(),
+        "docker_available": available,
+        "docker_hint": availability_hint,
     }

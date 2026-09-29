@@ -206,6 +206,10 @@ PY
   install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-beat.service" /etc/systemd/system/
   bash "${SCRIPT_DIR}/ensure-homes.sh"
   bash "${SCRIPT_DIR}/ensure-nginx.sh" "${VZONE_ROOT}/deploy/nginx/vzone.conf"
+  # Accès Docker pour l'utilisateur API (évite permission denied sur docker.sock)
+  if [[ -f "${SCRIPT_DIR}/ensure-docker-access.sh" ]]; then
+    bash "${SCRIPT_DIR}/ensure-docker-access.sh" || log "Avertissement: ensure-docker-access.sh a échoué"
+  fi
   systemctl daemon-reload
   systemctl enable --now redis-server 2>/dev/null || systemctl enable --now redis
   systemctl enable vzone-worker vzone-beat nginx

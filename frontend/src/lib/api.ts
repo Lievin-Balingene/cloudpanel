@@ -110,10 +110,24 @@ async function apiRequestOnce<T>(
         window.location.assign("/change-password");
       }
     }
+    const messageFromApi = err?.error?.message || "";
+    const stderrExtra =
+      typeof err?.error?.extra?.stderr === "string" ? err.error.extra.stderr.trim() : "";
+    const errorExtra =
+      typeof err?.error?.extra?.error === "string" ? err.error.extra.error.trim() : "";
+    const hintExtra =
+      typeof err?.error?.extra?.hint === "string" ? err.error.extra.hint.trim() : "";
+    const genericDocker =
+      /^échec commande docker\.?$/i.test(messageFromApi.trim()) ||
+      messageFromApi.trim() === "Échec commande Docker.";
     const messageRaw =
-      err?.error?.message ||
-      (typeof err?.error?.extra?.stderr === "string" ? err.error.extra.stderr : "") ||
-      (typeof err?.error?.extra?.error === "string" ? err.error.extra.error : "") ||
+      (genericDocker && (stderrExtra || hintExtra)
+        ? stderrExtra || hintExtra
+        : "") ||
+      messageFromApi ||
+      stderrExtra ||
+      errorExtra ||
+      hintExtra ||
       (typeof err?.raw === "string" ? err.raw : "") ||
       `Erreur HTTP ${response.status}`;
     let message = messageRaw

@@ -115,3 +115,19 @@ def test_helpers(docker_root):
     c = stop_container(c)
     assert c.status == DockerContainer.Status.STOPPED
     assert DockerContainerLog.objects.filter(container=c).count() >= 2
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_humanize_permission_denied(docker_root):
+    from apps.docker_mgmt.services import _humanize_docker_stderr, overview_for
+
+    msg = _humanize_docker_stderr(
+        "permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock"
+    )
+    assert "ensure-docker-access" in msg or "groupe docker" in msg
+
+    user = UserFactory(username="dockov")
+    data = overview_for(user)
+    assert data["provision_mode"] == "mock"
+    assert data["docker_available"] is True

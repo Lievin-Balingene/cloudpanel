@@ -13,6 +13,8 @@ interface DockerOverview {
   stopped: number;
   error: number;
   provision_mode: string;
+  docker_available?: boolean;
+  docker_hint?: string;
 }
 
 interface DockerContainerItem {
@@ -51,6 +53,8 @@ export function DockerManager({ title }: { title: string }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const dockerBlocked = overview?.provision_mode !== "mock" && overview?.docker_available === false;
+
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["docker-overview"] });
     void qc.invalidateQueries({ queryKey: ["docker-containers"] });
@@ -75,11 +79,18 @@ export function DockerManager({ title }: { title: string }) {
         {
           detail: `${form.image}:${form.tag}`,
           tickDetail: (ms) =>
-            ms < 4000 ? "Pull de l'image…" : "Démarrage du conteneur…",
+            ms < 8000 ? "Pull de l'image…" : "Démarrage du conteneur…",
         },
       ),
     onSuccess: () => {
-      setForm({ name: "", image: "nginx", tag: "alpine", host_port: "8080", container_port: "80", memory_mb: 512 });
+      setForm({
+        name: "",
+        image: "nginx",
+        tag: "alpine",
+        host_port: "8080",
+        container_port: "80",
+        memory_mb: 512,
+      });
       setError(null);
       setCreateOpen(false);
       invalidate();
@@ -124,108 +135,229 @@ export function DockerManager({ title }: { title: string }) {
           { label: "Arrêtés", value: overview?.stopped ?? "—" },
           { label: "Erreurs", value: overview?.error ?? "—" },
         ]}
-        actions={<button type="button" className="vz-btn-primary" onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />Créer</button>}
+        actions={
+          <button
+            type="button"
+            className="vz-btn-primary"
+            onClick={() => setCreateOpen(true)}
+            disabled={dockerBlocked}
+          >
+            <Plus className="h-4 w-4" />
+            Créer
+          </button>
+        }
       />
 
+      {dockerBlocked && (
+        <p
+          role="status"
+          className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100"
+        >
+          {overview?.docker_hint ||
+            "Docker est indisponible sur ce serveur. Sur le VPS : sudo bash /opt/vzone/scripts/ensure-docker-access.sh"}
+        </p>
+      )}
+
       {error && (
-        <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-cp-danger dark:border-red-900 dark:bg-red-950/30">{error}</p>
+        <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-cp-danger dark:border-red-900 dark:bg-red-950/30">
+          {error}
+        </p>
       )}
 
       <div className="vz-panel overflow-hidden">
-        <div className="border-b border-cp-border px-4 py-3 dark:border-ink-800"><h2 className="text-sm font-semibold">Conteneurs</h2></div>
+        <div className="border-b border-cp-border px-4 py-3 dark:border-ink-800">
+          <h2 className="text-sm font-semibold">Conteneurs</h2>
+        </div>
         {isLoading ? (
           <p className="px-4 py-8 text-sm text-cp-muted">Chargement…</p>
         ) : containers.length === 0 ? (
-          <EmptyState icon={<Box className="h-8 w-8" />} message="Aucun conteneur Docker." action={<button type="button" className="vz-btn-primary" onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />Créer un conteneur</button>} />
+          <EmptyState
+            icon={<Box className="h-8 w-8" />}
+            message="Aucun conteneur Docker."
+            action={
+              <button
+                type="button"
+                className="vz-btn-primary"
+                onClick={() => setCreateOpen(true)}
+                disabled={dockerBlocked}
+              >
+                <Plus className="h-4 w-4" />
+                Créer un conteneur
+              </button>
+            }
+          />
         ) : (
-        <div className="overflow-x-auto">
-        <table className="min-w-full text-left text-sm">
-          <thead className="bg-cp-canvas text-xs uppercase text-cp-muted dark:bg-ink-900">
-            <tr>
-              <th className="px-4 py-2.5 font-semibold">Nom</th>
-              <th className="px-4 py-2.5 font-semibold">Image</th>
-              <th className="px-4 py-2.5 font-semibold">Ports</th>
-              <th className="px-4 py-2.5 font-semibold">État</th>
-              <th className="px-4 py-2.5 text-right font-semibold">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {containers.map((c) => (
-              <tr key={c.id} className="border-t border-cp-border/80 transition hover:bg-cp-canvas/50 dark:border-ink-800 dark:hover:bg-ink-900/40">
-                <td className="px-4 py-3 font-medium">{c.name}</td>
-                <td className="px-4 py-3 font-mono text-xs">{c.image_ref}</td>
-                <td className="px-4 py-3 text-xs">
-                  {Object.entries(c.ports || {})
-                    .map(([h, ct]) => `${h}→${ct}`)
-                    .join(", ") || "—"}
-                </td>
-                <td className="px-4 py-3"><StatusDot status={c.status} /></td>
-                <td className="px-4 py-3">
-                  <div className="flex justify-end gap-0.5">
-                    {c.status !== "running" ? (
-                      <IconAction label={`Démarrer ${c.name}`} disabled={action.isPending}
-                        onClick={() => action.mutate({ id: c.id, op: "start", name: c.name })}
-                      >
-                        <Play className="h-4 w-4" />
-                      </IconAction>
-                    ) : (
-                      <IconAction label={`Arrêter ${c.name}`} disabled={action.isPending}
-                        onClick={() => action.mutate({ id: c.id, op: "stop", name: c.name })}
-                      >
-                        <Square className="h-4 w-4" />
-                      </IconAction>
-                    )}
-                    <IconAction label={`Redémarrer ${c.name}`} disabled={action.isPending}
-                      onClick={() => action.mutate({ id: c.id, op: "restart", name: c.name })}
-                    >
-                      <RefreshCw className="h-4 w-4" />
-                    </IconAction>
-                    <IconAction label={`Ouvrir les journaux de ${c.name}`} disabled={loadLogs.isPending}
-                      onClick={() => loadLogs.mutate(c.id)}
-                    >
-                      <FileText className="h-4 w-4" />
-                    </IconAction>
-                    <IconAction label={`Supprimer ${c.name}`} danger
-                      onClick={() => {
-                        if (window.confirm(`Supprimer ${c.name} ?`)) remove.mutate(c.id);
-                      }}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </IconAction>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-sm">
+              <thead className="bg-cp-canvas text-xs uppercase text-cp-muted dark:bg-ink-900">
+                <tr>
+                  <th className="px-4 py-2.5 font-semibold">Nom</th>
+                  <th className="px-4 py-2.5 font-semibold">Image</th>
+                  <th className="px-4 py-2.5 font-semibold">Ports</th>
+                  <th className="px-4 py-2.5 font-semibold">État</th>
+                  <th className="px-4 py-2.5 text-right font-semibold">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {containers.map((c) => (
+                  <tr
+                    key={c.id}
+                    className="border-t border-cp-border/80 transition hover:bg-cp-canvas/50 dark:border-ink-800 dark:hover:bg-ink-900/40"
+                  >
+                    <td className="px-4 py-3 font-medium">
+                      {c.name}
+                      {c.last_error && c.status === "error" && (
+                        <p
+                          className="mt-1 max-w-xs text-[11px] font-normal text-cp-danger"
+                          title={c.last_error}
+                        >
+                          {c.last_error.slice(0, 120)}
+                          {c.last_error.length > 120 ? "…" : ""}
+                        </p>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs">{c.image_ref}</td>
+                    <td className="px-4 py-3 text-xs">
+                      {Object.entries(c.ports || {})
+                        .map(([h, ct]) => `${h}→${ct}`)
+                        .join(", ") || "—"}
+                    </td>
+                    <td className="px-4 py-3">
+                      <StatusDot status={c.status} />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end gap-0.5">
+                        {c.status !== "running" ? (
+                          <IconAction
+                            label={`Démarrer ${c.name}`}
+                            disabled={action.isPending || dockerBlocked}
+                            onClick={() =>
+                              action.mutate({ id: c.id, op: "start", name: c.name })
+                            }
+                          >
+                            <Play className="h-4 w-4" />
+                          </IconAction>
+                        ) : (
+                          <IconAction
+                            label={`Arrêter ${c.name}`}
+                            disabled={action.isPending}
+                            onClick={() =>
+                              action.mutate({ id: c.id, op: "stop", name: c.name })
+                            }
+                          >
+                            <Square className="h-4 w-4" />
+                          </IconAction>
+                        )}
+                        <IconAction
+                          label={`Redémarrer ${c.name}`}
+                          disabled={action.isPending || dockerBlocked}
+                          onClick={() =>
+                            action.mutate({ id: c.id, op: "restart", name: c.name })
+                          }
+                        >
+                          <RefreshCw className="h-4 w-4" />
+                        </IconAction>
+                        <IconAction
+                          label={`Ouvrir les journaux de ${c.name}`}
+                          disabled={loadLogs.isPending}
+                          onClick={() => loadLogs.mutate(c.id)}
+                        >
+                          <FileText className="h-4 w-4" />
+                        </IconAction>
+                        <IconAction
+                          label={`Supprimer ${c.name}`}
+                          danger
+                          onClick={() => {
+                            if (window.confirm(`Supprimer ${c.name} ?`)) remove.mutate(c.id);
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </IconAction>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
       {createOpen && (
-        <Modal title="Nouveau conteneur Docker" subtitle="L'image sera téléchargée puis démarrée automatiquement." onClose={() => setCreateOpen(false)}>
+        <Modal
+          title="Nouveau conteneur Docker"
+          subtitle="L'image sera téléchargée puis démarrée automatiquement."
+          onClose={() => setCreateOpen(false)}
+        >
           <form className="space-y-3" onSubmit={onCreate}>
-            <label className="block text-xs font-medium text-cp-muted">Nom
-              <input className="mt-1 vz-input" placeholder="proxy" required autoFocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            <label className="block text-xs font-medium text-cp-muted">
+              Nom
+              <input
+                className="mt-1 vz-input"
+                placeholder="proxy"
+                required
+                autoFocus
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+              />
             </label>
             <div className="grid grid-cols-2 gap-3">
-              <label className="block text-xs font-medium text-cp-muted">Image
-                <input className="mt-1 vz-input" required value={form.image} onChange={(e) => setForm({ ...form, image: e.target.value })} />
+              <label className="block text-xs font-medium text-cp-muted">
+                Image
+                <input
+                  className="mt-1 vz-input"
+                  required
+                  value={form.image}
+                  onChange={(e) => setForm({ ...form, image: e.target.value })}
+                />
               </label>
-              <label className="block text-xs font-medium text-cp-muted">Tag
-                <input className="mt-1 vz-input" value={form.tag} onChange={(e) => setForm({ ...form, tag: e.target.value })} />
+              <label className="block text-xs font-medium text-cp-muted">
+                Tag
+                <input
+                  className="mt-1 vz-input"
+                  value={form.tag}
+                  onChange={(e) => setForm({ ...form, tag: e.target.value })}
+                />
               </label>
-              <label className="block text-xs font-medium text-cp-muted">Port hôte
-                <input className="mt-1 vz-input" value={form.host_port} onChange={(e) => setForm({ ...form, host_port: e.target.value })} />
+              <label className="block text-xs font-medium text-cp-muted">
+                Port hôte
+                <input
+                  className="mt-1 vz-input"
+                  value={form.host_port}
+                  onChange={(e) => setForm({ ...form, host_port: e.target.value })}
+                />
               </label>
-              <label className="block text-xs font-medium text-cp-muted">Port conteneur
-                <input className="mt-1 vz-input" value={form.container_port} onChange={(e) => setForm({ ...form, container_port: e.target.value })} />
+              <label className="block text-xs font-medium text-cp-muted">
+                Port conteneur
+                <input
+                  className="mt-1 vz-input"
+                  value={form.container_port}
+                  onChange={(e) => setForm({ ...form, container_port: e.target.value })}
+                />
               </label>
             </div>
-            <label className="block text-xs font-medium text-cp-muted">Mémoire (Mo)
-              <input className="mt-1 vz-input" type="number" min={64} value={form.memory_mb} onChange={(e) => setForm({ ...form, memory_mb: Number(e.target.value) })} />
+            <label className="block text-xs font-medium text-cp-muted">
+              Mémoire (Mo)
+              <input
+                className="mt-1 vz-input"
+                type="number"
+                min={64}
+                value={form.memory_mb}
+                onChange={(e) => setForm({ ...form, memory_mb: Number(e.target.value) })}
+              />
             </label>
-            <div className="flex justify-end gap-2 pt-1"><button type="button" className="vz-btn-ghost" onClick={() => setCreateOpen(false)}>Annuler</button><button className="vz-btn-primary" type="submit" disabled={create.isPending}>{create.isPending ? "Création…" : "Créer"}</button></div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button type="button" className="vz-btn-ghost" onClick={() => setCreateOpen(false)}>
+                Annuler
+              </button>
+              <button
+                className="vz-btn-primary"
+                type="submit"
+                disabled={create.isPending || dockerBlocked}
+              >
+                {create.isPending ? "Création…" : "Créer"}
+              </button>
+            </div>
           </form>
         </Modal>
       )}
