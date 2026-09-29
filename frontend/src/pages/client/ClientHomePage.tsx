@@ -33,155 +33,54 @@ import type { DashboardOverview } from "@/types";
 type Tool = {
   to: string;
   label: string;
-  desc: string;
   icon: LucideIcon;
 };
 
-type Section = { title: string; hint?: string; tools: Tool[] };
+type Section = { title: string; tools: Tool[] };
 
 const sections: Section[] = [
   {
     title: "Sites web",
-    hint: "Domaines, certificat HTTPS et contenu de vos sites",
     tools: [
-      {
-        to: "/panel/domains",
-        label: "Mes domaines",
-        desc: "Ajouter un site, un sous-domaine ou un alias",
-        icon: AppWindow,
-      },
-      {
-        to: "/panel/dns",
-        label: "DNS",
-        desc: "Pointer votre nom de domaine (A, MX, TXT…)",
-        icon: Globe,
-      },
-      {
-        to: "/panel/domains",
-        label: "Certificat SSL",
-        desc: "Sécuriser le site en HTTPS (Let’s Encrypt)",
-        icon: Shield,
-      },
-      {
-        to: "/panel/wordpress",
-        label: "WordPress",
-        desc: "Installer ou gérer un site WordPress",
-        icon: LayoutTemplate,
-      },
-      {
-        to: "/panel/php",
-        label: "Version PHP",
-        desc: "Choisir la version PHP de votre site",
-        icon: FileCode2,
-      },
+      { to: "/panel/domains", label: "Mes domaines", icon: AppWindow },
+      { to: "/panel/dns", label: "DNS", icon: Globe },
+      { to: "/panel/domains", label: "Certificat SSL", icon: Shield },
+      { to: "/panel/wordpress", label: "WordPress", icon: LayoutTemplate },
+      { to: "/panel/php", label: "Version PHP", icon: FileCode2 },
     ],
   },
   {
     title: "Fichiers & sauvegardes",
-    hint: "Gérer le contenu et protéger vos données",
     tools: [
-      {
-        to: "/panel/files",
-        label: "Mes fichiers",
-        desc: "Parcourir, envoyer et modifier vos fichiers",
-        icon: Folder,
-      },
-      {
-        to: "/panel/ftp",
-        label: "Accès FTP",
-        desc: "Créer un accès pour un développeur ou un outil",
-        icon: Upload,
-      },
-      {
-        to: "/panel/backups",
-        label: "Sauvegardes",
-        desc: "Créer ou restaurer une sauvegarde",
-        icon: HardDrive,
-      },
+      { to: "/panel/files", label: "Mes fichiers", icon: Folder },
+      { to: "/panel/ftp", label: "Accès FTP", icon: Upload },
+      { to: "/panel/backups", label: "Sauvegardes", icon: HardDrive },
     ],
   },
   {
     title: "E-mail",
-    hint: "Boîtes mail liées à votre domaine",
-    tools: [
-      {
-        to: "/panel/email",
-        label: "Boîtes mail",
-        desc: "Créer une adresse et ouvrir le webmail",
-        icon: Mail,
-      },
-    ],
+    tools: [{ to: "/panel/email", label: "Boîtes mail", icon: Mail }],
   },
   {
     title: "Bases de données",
-    hint: "MySQL et PostgreSQL pour vos applications",
-    tools: [
-      {
-        to: "/panel/databases",
-        label: "Bases de données",
-        desc: "Créer une base, un utilisateur et ouvrir phpMyAdmin",
-        icon: Database,
-      },
-    ],
+    tools: [{ to: "/panel/databases", label: "Bases de données", icon: Database }],
   },
   {
     title: "Applications",
-    hint: "Déployer une app sans quitter le panneau",
     tools: [
-      {
-        to: "/panel/python",
-        label: "App Python",
-        desc: "Héberger une application Python",
-        icon: Code2,
-      },
-      {
-        to: "/panel/node",
-        label: "App Node.js",
-        desc: "Héberger une application Node.js",
-        icon: Terminal,
-      },
-      {
-        to: "/panel/git",
-        label: "Git",
-        desc: "Cloner un dépôt et déployer automatiquement",
-        icon: GitBranch,
-      },
-      {
-        to: "/panel/docker",
-        label: "Docker",
-        desc: "Lancer un conteneur (si inclus dans le forfait)",
-        icon: Box,
-      },
-      {
-        to: "/panel/cron",
-        label: "Tâches planifiées",
-        desc: "Lancer une commande automatiquement (cron)",
-        icon: Clock,
-      },
-      {
-        to: "/panel/terminal",
-        label: "Terminal",
-        desc: "Ligne de commande dans votre compte (si SSH activé)",
-        icon: Terminal,
-      },
+      { to: "/panel/python", label: "App Python", icon: Code2 },
+      { to: "/panel/node", label: "App Node.js", icon: Terminal },
+      { to: "/panel/git", label: "Git", icon: GitBranch },
+      { to: "/panel/docker", label: "Docker", icon: Box },
+      { to: "/panel/cron", label: "Tâches planifiées", icon: Clock },
+      { to: "/panel/terminal", label: "Terminal", icon: Terminal },
     ],
   },
   {
     title: "Mon compte",
-    hint: "Forfait, sécurité et mot de passe",
     tools: [
-      {
-        to: "/panel/package",
-        label: "Mon forfait",
-        desc: "Voir les limites et l’utilisation",
-        icon: Package,
-      },
-      {
-        to: "/panel/security",
-        label: "Sécurité",
-        desc: "Mot de passe et double authentification",
-        icon: KeyRound,
-      },
+      { to: "/panel/package", label: "Mon forfait", icon: Package },
+      { to: "/panel/security", label: "Sécurité", icon: KeyRound },
     ],
   },
 ];
@@ -244,7 +143,6 @@ export function ClientHomePage() {
         tools: section.tools.filter(
           (t) =>
             t.label.toLowerCase().includes(needle) ||
-            t.desc.toLowerCase().includes(needle) ||
             section.title.toLowerCase().includes(needle),
         ),
       }))
@@ -342,25 +240,19 @@ export function ClientHomePage() {
         <section key={section.title} className="vz-panel overflow-hidden">
           <div className="border-b border-cp-border bg-[#f0f4f8] px-3 py-2.5 sm:px-4 dark:border-ink-700 dark:bg-ink-900">
             <h2 className="text-sm font-semibold text-cp-text">{section.title}</h2>
-            {section.hint ? (
-              <p className="mt-0.5 text-xs text-cp-muted">{section.hint}</p>
-            ) : null}
           </div>
-          <div className="grid grid-cols-1 gap-2 p-3 sm:grid-cols-2 sm:p-4 lg:grid-cols-3">
+          <div className="grid grid-cols-2 gap-2 p-3 sm:grid-cols-3 sm:p-4 lg:grid-cols-4">
             {section.tools.map((tool) => (
               <Link
                 key={`${section.title}-${tool.label}`}
                 to={tool.to}
-                className="group flex items-start gap-3 rounded-xl border border-cp-border/70 bg-[#f7f9fc] p-3 transition hover:border-cp-orange/45 hover:bg-white hover:shadow-sm dark:border-ink-700 dark:bg-ink-900/70 dark:hover:bg-ink-900"
+                className="group flex items-center gap-2.5 rounded-lg border border-cp-border/70 bg-[#f7f9fc] px-2.5 py-2 transition hover:border-cp-orange/45 hover:bg-white hover:shadow-sm dark:border-ink-700 dark:bg-ink-900/70 dark:hover:bg-ink-900"
               >
-                <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-cp-orange shadow-sm ring-1 ring-cp-border/60 transition group-hover:ring-cp-orange/30 dark:bg-ink-950 dark:ring-ink-700">
-                  <tool.icon className="h-5 w-5" />
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-cp-orange shadow-sm ring-1 ring-cp-border/60 transition group-hover:ring-cp-orange/30 dark:bg-ink-950 dark:ring-ink-700">
+                  <tool.icon className="h-4 w-4" />
                 </span>
-                <span className="min-w-0">
-                  <span className="block text-sm font-semibold text-cp-text">{tool.label}</span>
-                  <span className="mt-0.5 block text-xs leading-relaxed text-cp-muted">
-                    {tool.desc}
-                  </span>
+                <span className="min-w-0 truncate text-sm font-medium text-cp-text">
+                  {tool.label}
                 </span>
               </Link>
             ))}
