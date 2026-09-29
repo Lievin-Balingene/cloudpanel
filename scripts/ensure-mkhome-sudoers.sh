@@ -34,6 +34,10 @@ install -m 755 "${REPO_DIR}/scripts/vzone-jailterm.sh" /usr/local/sbin/vzone-jai
 install -m 755 "${REPO_DIR}/scripts/vzone-rootterm.sh" /usr/local/sbin/vzone-rootterm
 install -m 755 "${REPO_DIR}/scripts/vzone-runas.sh" /usr/local/sbin/vzone-runas
 install -m 755 "${REPO_DIR}/scripts/vzone-fix-app-perms.sh" /usr/local/sbin/vzone-fix-app-perms
+install -m 755 "${REPO_DIR}/scripts/vzone-smtp-restrictions.sh" /usr/local/sbin/vzone-smtp-restrictions
+
+mkdir -p /var/lib/vzone/smtp-restrictions
+chmod 755 /var/lib/vzone/smtp-restrictions
 
 # runuser est requis (souvent /usr/sbin) — avertir tôt si absent
 if ! command -v runuser >/dev/null 2>&1 && [[ ! -x /usr/sbin/runuser && ! -x /sbin/runuser ]]; then

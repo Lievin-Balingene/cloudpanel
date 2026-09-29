@@ -30,6 +30,7 @@ import { WhmBackupPage } from "./pages/whm/WhmBackupPage";
 import { WhmMonitoringPage } from "./pages/whm/WhmMonitoringPage";
 import { WhmFirewallPage } from "./pages/whm/WhmFirewallPage";
 import { WhmSecurityPage } from "./pages/whm/WhmSecurityPage";
+import { WhmSmtpRestrictionsPage } from "./pages/whm/WhmSmtpRestrictionsPage";
 import { WhmWordPressPage } from "./pages/whm/WhmWordPressPage";
 import { WhmKubernetesPage } from "./pages/whm/WhmKubernetesPage";
 import { WhmTerminalPage } from "./pages/whm/WhmTerminalPage";
@@ -179,6 +180,7 @@ export default function App() {
         <Route path="monitoring" element={<WhmMonitoringPage />} />
         <Route path="firewall" element={<WhmFirewallPage />} />
         <Route path="security" element={<WhmSecurityPage />} />
+        <Route path="smtp-restrictions" element={<WhmSmtpRestrictionsPage />} />
         <Route path="account-security" element={<ClientSecurityPage />} />
         <Route path="dns" element={<WhmDnsPage />} />
         <Route path="resources" element={<WhmResourcesPage />} />

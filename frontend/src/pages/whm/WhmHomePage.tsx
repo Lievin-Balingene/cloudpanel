@@ -113,6 +113,7 @@ const hubs: HubSection[] = [
     icon: Shield,
     links: [
       { to: "/whm/security", label: "Security Policy" },
+      { to: "/whm/smtp-restrictions", label: "SMTP Restrictions" },
       { to: "/whm/firewall", label: "Firewall & Fail2Ban" },
       { to: "/whm/account-security", label: "Two-Factor Auth" },
       { to: "/whm/domains", label: "SSL / TLS" },

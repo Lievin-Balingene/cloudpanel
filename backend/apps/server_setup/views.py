@@ -84,10 +84,21 @@ class TweakSettingsView(APIView):
                 status_code=400,
             ) from exc
         setup = ServerSetup.get_solo()
-        merged = merge_tweaks(setup.tweak_settings)
+        previous = merge_tweaks(setup.tweak_settings)
+        merged = dict(previous)
         merged.update(cleaned)
         setup.tweak_settings = merged
         setup.save(update_fields=["tweak_settings", "updated_at"])
+        # Appliquer SMTP Restrictions si la valeur a changé
+        if "smtp_restrictions" in cleaned and cleaned["smtp_restrictions"] != previous.get(
+            "smtp_restrictions"
+        ):
+            try:
+                from apps.security.smtp_restrictions import apply_from_tweak
+
+                apply_from_tweak(bool(cleaned["smtp_restrictions"]))
+            except Exception:  # noqa: BLE001
+                pass
         return Response({"success": True, "data": tweak_payload(setup.tweak_settings)})
 
 

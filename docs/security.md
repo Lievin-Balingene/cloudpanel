@@ -27,7 +27,18 @@ Durcit l’accès **au panel** (auth applicative), sans remplacer Firewall / Fai
 | POST | `/api/v1/security/unlock/` |
 | POST | `/api/v1/security/users/{id}/force-password/` |
 | GET | `/api/v1/security/me/` |
+| GET/POST | `/api/v1/security/smtp-restrictions/` |
 | GET/POST/DELETE | `/api/v1/auth/2fa/` |
+
+## SMTP Restrictions (WHM)
+
+Empêche les utilisateurs de by-passer le MTA pour envoyer du mail (anti-spam).
+Seuls root, postfix/exim et mailman peuvent ouvrir des connexions TCP sortantes
+vers le port 25 distant (iptables chaîne `VZONE_SMTP`).
+
+- UI : `/whm/smtp-restrictions`
+- Tweak Settings : clé `smtp_restrictions`
+- Helper : `/usr/local/sbin/vzone-smtp-restrictions` (`ensure-mkhome-sudoers.sh`)
 
 ## UI
 

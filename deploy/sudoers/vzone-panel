@@ -33,8 +33,8 @@ vzone ALL=(root) NOPASSWD: /usr/bin/systemctl start vzone-update-job.path
 vzone ALL=(root) NOPASSWD: /bin/systemctl start vzone-repair-job.path
 vzone ALL=(root) NOPASSWD: /usr/bin/systemctl start vzone-repair-job.path
 
-# Bootstrap agent update (WHM Panel Update — sans SSH)
-vzone ALL=(root) NOPASSWD: /bin/bash /opt/vzone-src/scripts/install-update-agent.sh
-vzone ALL=(root) NOPASSWD: /usr/bin/bash /opt/vzone-src/scripts/install-update-agent.sh
-vzone ALL=(root) NOPASSWD: /bin/bash /opt/vzone/scripts/install-update-agent.sh
-vzone ALL=(root) NOPASSWD: /usr/bin/bash /opt/vzone/scripts/install-update-agent.sh
+# SMTP Restrictions (WHM Security Center) — iptables OUTPUT port 25
+vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-smtp-restrictions --status
+vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-smtp-restrictions --enable
+vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-smtp-restrictions --disable
+vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-smtp-restrictions --check

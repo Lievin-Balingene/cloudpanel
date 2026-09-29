@@ -47,6 +47,17 @@ TWEAK_CATALOG: list[dict[str, Any]] = [
                 "min": 5,
                 "max": 1440,
             },
+            {
+                "key": "smtp_restrictions",
+                "label": "SMTP Restrictions",
+                "type": "bool",
+                "default": False,
+                "help": (
+                    "Empêche les utilisateurs de by-passer le serveur mail pour envoyer "
+                    "(seuls root, MTA et mailman peuvent joindre des SMTP distants sur le port 25). "
+                    "Aussi disponible dans Security Center → SMTP Restrictions."
+                ),
+            },
         ],
     },
     {

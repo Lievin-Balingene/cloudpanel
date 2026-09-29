@@ -32,6 +32,8 @@ from apps.security.services import (
     unlock_key,
     update_policy,
 )
+from apps.security.smtp_restrictions import get_status as smtp_restrict_status
+from apps.security.smtp_restrictions import set_enabled as smtp_restrict_set
 
 
 class SshKeyListCreateView(APIView):
@@ -151,3 +153,34 @@ class MySecurityStatusView(APIView):
 
     def get(self, request: Request) -> Response:
         return Response({"success": True, "data": my_security_status(request.user)})
+
+
+class SmtpRestrictionsView(APIView):
+    """WHM Security Center — SMTP Restrictions (bloquer by-pass MTA)."""
+
+    permission_classes = [IsAuthenticated, IsAdministrator]
+
+    def get(self, request: Request) -> Response:
+        return Response({"success": True, "data": smtp_restrict_status()})
+
+    def post(self, request: Request) -> Response:
+        enabled = request.data.get("enabled", None)
+        if enabled is None:
+            action = str(request.data.get("action") or "").lower()
+            if action in {"enable", "on", "1", "true"}:
+                enabled = True
+            elif action in {"disable", "off", "0", "false"}:
+                enabled = False
+            else:
+                return Response(
+                    {
+                        "success": False,
+                        "error": {
+                            "code": "invalid_action",
+                            "message": "Spécifiez enabled=true|false ou action=enable|disable.",
+                        },
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        data = smtp_restrict_set(bool(enabled))
+        return Response({"success": True, "data": data})

@@ -265,6 +265,12 @@ const navSections: NavSection[] = [
     title: "Security Center",
     items: [
       { to: "/whm/security", label: "Security Advisor / Policy", icon: KeyRound, keywords: ["password", "policy"] },
+      {
+        to: "/whm/smtp-restrictions",
+        label: "SMTP Restrictions",
+        icon: Mail,
+        keywords: ["smtp", "spam", "mail", "mta", "port 25"],
+      },
       { to: "/whm/firewall", label: "Firewall & Fail2Ban", icon: Shield, keywords: ["fail2ban", "cphulk"] },
       { to: "/whm/account-security", label: "Two-Factor Authentication", icon: KeyRound, keywords: ["2fa"] },
       { to: "/whm/domains", label: "SSL/TLS & AutoSSL", icon: AppWindow, keywords: ["ssl", "letsencrypt"] },
