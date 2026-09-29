@@ -85,20 +85,35 @@ unset LD_PRELOAD LD_LIBRARY_PATH
 
 cd "$HOME_DIR" 2>/dev/null || cd /tmp
 
+# GID primaire réel (useradd -g vzone-clients → PAS de groupe homonyme « une »)
+# --gid="$USERNAME" provoquait: Failed to resolve group une: No such process
+PRIMARY_GID="$(id -g "$USERNAME" 2>/dev/null || true)"
+if [[ -z "$PRIMARY_GID" ]]; then
+  PRIMARY_GID="$(getent passwd "$USERNAME" | cut -d: -f4 || true)"
+fi
+[[ -n "$PRIMARY_GID" ]] || {
+  echo "GID introuvable pour ${USERNAME}" >&2
+  exit 3
+}
+
 # V-zone Pulse : exécuter dans le slice cgroups du compte si disponible
 SLICE="vz-pulse-${USERNAME}.slice"
 SYSTEMD_RUN_BIN="$(_find_bin systemd-run || true)"
 
 if [[ -n "$SYSTEMD_RUN_BIN" ]] && systemctl cat "${SLICE}" >/dev/null 2>&1; then
-  exec "$SYSTEMD_RUN_BIN" --quiet --collect \
-    --uid="$USERNAME" --gid="$USERNAME" \
+  if "$SYSTEMD_RUN_BIN" --quiet --collect \
+    --uid="$USERNAME" --gid="$PRIMARY_GID" \
     --slice="$SLICE" \
     --working-directory="$HOME_DIR" \
     --setenv=HOME="$HOME_DIR" \
     --setenv=USER="$USERNAME" \
     --setenv=LOGNAME="$USERNAME" \
     --setenv=PATH="/usr/local/bin:/usr/bin:/bin" \
-    --scope -- "$@"
+    --scope -- "$@"; then
+    exit 0
+  fi
+  # Slice présent mais systemd-run a échoué → fallback runuser/su
+  echo "avertissement: systemd-run slice ${SLICE} échoué — fallback runuser" >&2
 fi
 
 if [[ -n "$RUNUSER_BIN" ]]; then
