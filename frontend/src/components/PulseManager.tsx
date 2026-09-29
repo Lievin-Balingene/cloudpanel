@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Activity, Cpu, HardDrive, MemoryStick, RefreshCw, Zap } from "lucide-react";
 import { apiRequest } from "@/lib/api";
 import { PageHeader } from "@/components/ui/PageChrome";
@@ -60,7 +60,6 @@ function Bar({ pct, label }: { pct: number | null | undefined; label: string }) 
 }
 
 export function PulseManager({ title, mode = "whm" }: { title: string; mode?: "whm" | "client" }) {
-  const qc = useQueryClient();
   const [error, setError] = useState<string | null>(null);
 
   const overview = useQuery({

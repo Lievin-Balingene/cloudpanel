@@ -33,7 +33,6 @@ import {
   BarChart3,
   FileLock2,
   Gauge,
-  Activity,
   Zap,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
