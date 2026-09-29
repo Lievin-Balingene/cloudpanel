@@ -205,6 +205,9 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
                 data = str(payload.get("data", ""))
                 await self._write_input(data)
                 return
+            if payload.get("type") == "ping":
+                await self.send(text_data="")  # keepalive noop (évite timeout proxy)
+                return
         await self._write_input(text_data)
 
     async def _write_input(self, data: str) -> None:
@@ -260,6 +263,17 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
     def _spawn_pty(self, cmd: list[str], *, env: dict[str, str], cwd: str = "/tmp") -> None:
         master_fd, slave_fd = pty.openpty()
         self._resize(120, 34, master_fd=master_fd)
+
+        def _child_setup() -> None:
+            os.setsid()
+            try:
+                import fcntl
+
+                # Devient le terminal de contrôle → job control bash (fg/bg/Ctrl-Z)
+                fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+            except OSError:
+                pass
+
         try:
             proc = subprocess.Popen(
                 cmd,
@@ -268,7 +282,7 @@ class WebTerminalConsumer(AsyncWebsocketConsumer):
                 stderr=slave_fd,
                 cwd=cwd,
                 env=env,
-                preexec_fn=os.setsid,
+                preexec_fn=_child_setup,
                 close_fds=True,
             )
         except OSError:

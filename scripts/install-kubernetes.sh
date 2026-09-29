@@ -165,11 +165,13 @@ fi
 "${KUBECTL_PATH}" version --client 2>/dev/null || true
 echo "[vzone] kubectl OK: ${KUBECTL_PATH}"
 
-# Recharger l'API pour prendre VZONE_KUBECTL_BIN (EnvironmentFile systemd)
+# Ne PAS redémarrer vzone-api ici : ça coupe le terminal WHM WebSocket (code 1006).
+# L'env est déjà écrit ; un reload suffit plus tard (hors session interactive).
 if systemctl list-unit-files vzone-api.service >/dev/null 2>&1; then
-  systemctl daemon-reload 2>/dev/null || true
-  systemctl restart vzone-api.service 2>/dev/null || true
-  echo "[vzone] vzone-api redémarré pour charger VZONE_KUBECTL_BIN"
+  echo "[vzone] VZONE_KUBECTL_BIN enregistré dans ${ENV_FILE}"
+  echo "[vzone] Pour appliquer sans couper ce terminal, depuis un autre shell :"
+  echo "[vzone]   sudo systemctl restart vzone-api"
+  echo "[vzone] Ou utilisez WHM → Panel Update / réparations."
 fi
 
 echo "[vzone] Kubernetes tooling prêt"

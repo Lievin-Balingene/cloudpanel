@@ -75,4 +75,4 @@ export TERM="${TERM:-xterm-256color}"
 unset SUDO_COMMAND SUDO_USER SUDO_UID SUDO_GID SUDO_PROMPT
 cd /root || cd /
 
-exec /bin/bash -l
+exec /bin/bash -il

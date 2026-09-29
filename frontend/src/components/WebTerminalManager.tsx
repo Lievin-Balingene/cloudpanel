@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Check, Copy, Focus } from "lucide-react";
+import { Check, Copy, Focus, RefreshCw } from "lucide-react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -42,21 +42,38 @@ function readTerminalBuffer(term: Terminal): string {
     if (!line) continue;
     lines.push(line.translateToString(true));
   }
-  // Retirer les lignes vides en fin de buffer
   while (lines.length > 0 && lines[lines.length - 1].trim() === "") {
     lines.pop();
   }
   return lines.join("\n");
 }
 
-export function WebTerminalManager({ title }: { title: string }) {
-  const { data: access, isLoading } = useQuery({
-    queryKey: ["terminal-access"],
+export function WebTerminalManager({
+  title,
+  variant = "client",
+}: {
+  title: string;
+  /** WHM admin = root ; client/revendeur = jail */
+  variant?: "whm" | "client";
+}) {
+  const [session, setSession] = useState(0);
+  const {
+    data: access,
+    isLoading,
+    isError,
+    error: queryError,
+    refetch,
+    isFetching,
+  } = useQuery({
+    queryKey: ["terminal-access", variant, session],
     queryFn: () => apiRequest<TerminalAccess>("/core/terminal/access/"),
-    // Ticket court : ne pas servir un ticket périmé depuis le cache
-    staleTime: 0,
-    gcTime: 0,
+    staleTime: Infinity,
+    gcTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 1,
   });
+
   const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState("Initialisation…");
   const [copied, setCopied] = useState(false);
@@ -64,10 +81,23 @@ export function WebTerminalManager({ title }: { title: string }) {
   const fitAddonRef = useRef<FitAddon | null>(null);
   const terminalHostRef = useRef<HTMLDivElement | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const intentionalCloseRef = useRef(false);
+
+  const isRoot = variant === "whm" || access?.mode === "root";
 
   const wsUrl = useMemo(() => {
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
     return `${proto}://${window.location.host}/ws/terminal/`;
+  }, []);
+
+  const reconnect = useCallback(() => {
+    intentionalCloseRef.current = true;
+    try {
+      wsRef.current?.close();
+    } catch {
+      // noop
+    }
+    setSession((n) => n + 1);
   }, []);
 
   useEffect(() => {
@@ -101,6 +131,7 @@ export function WebTerminalManager({ title }: { title: string }) {
     terminalRef.current = term;
     fitAddonRef.current = fitAddon;
     setStatus("Connexion…");
+    intentionalCloseRef.current = false;
 
     const qs = `?ticket=${encodeURIComponent(access.ws_ticket)}`;
     const ws = new WebSocket(`${wsUrl}${qs}`);
@@ -108,6 +139,7 @@ export function WebTerminalManager({ title }: { title: string }) {
     let disposed = false;
     let resizeObserver: ResizeObserver | null = null;
     let dataDisposable: { dispose: () => void } | null = null;
+    let pingTimer: number | null = null;
 
     const sendResize = () => {
       if (disposed || ws.readyState !== WebSocket.OPEN) return;
@@ -134,10 +166,9 @@ export function WebTerminalManager({ title }: { title: string }) {
     ws.onopen = () => {
       if (disposed) return;
       setConnected(true);
-      const modeLabel = access?.mode === "root" ? "root (WHM)" : "jail client";
-      setStatus(`Connecté — ${modeLabel}`);
+      setStatus(isRoot ? "Connecté — root (WHM)" : "Connecté — jail client");
       term.clear();
-      if (access?.mode === "root") {
+      if (isRoot) {
         term.writeln("\x1b[1;33m[V-zone WHM Terminal — shell root]\x1b[0m\r\n");
       } else {
         term.writeln(
@@ -149,25 +180,37 @@ export function WebTerminalManager({ title }: { title: string }) {
         sendResize();
         term.focus();
       }, 50);
+      pingTimer = window.setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "ping" }));
+        }
+      }, 25_000);
     };
 
     ws.onmessage = (evt) => {
       if (disposed) return;
-      term.write(String(evt.data || ""));
+      const data = String(evt.data || "");
+      if (!data) return;
+      term.write(data);
     };
 
     ws.onclose = (evt) => {
       if (disposed) return;
       setConnected(false);
       setStatus("Déconnecté");
+      if (intentionalCloseRef.current) return;
       const why =
         evt.code === 4401
-          ? "auth refusée (ticket)"
+          ? "auth refusée (ticket) — cliquez Reconnecter"
           : evt.code === 4403
-            ? "accès SSH non autorisé (package)"
+            ? isRoot
+              ? "terminal admin désactivé (VZONE_TERMINAL_ALLOW_ADMIN)"
+              : "accès SSH non autorisé (package)"
             : evt.code === 4500
               ? "shell indisponible (sudo / compte OS)"
-              : `code ${evt.code}`;
+              : evt.code === 1006
+                ? "connexion coupée (API redémarrée ou réseau) — Reconnecter"
+                : `code ${evt.code}`;
       term.writeln(`\r\n\x1b[1;31m[session fermée — ${why}]\x1b[0m`);
     };
 
@@ -184,6 +227,8 @@ export function WebTerminalManager({ title }: { title: string }) {
 
     return () => {
       disposed = true;
+      intentionalCloseRef.current = true;
+      if (pingTimer != null) window.clearInterval(pingTimer);
       window.removeEventListener("resize", sendResize);
       if (resizeObserver) resizeObserver.disconnect();
       if (dataDisposable) dataDisposable.dispose();
@@ -198,7 +243,7 @@ export function WebTerminalManager({ title }: { title: string }) {
       fitAddonRef.current = null;
       setConnected(false);
     };
-  }, [access?.allowed, access?.mode, access?.username, access?.ws_ticket, wsUrl]);
+  }, [access?.allowed, access?.ws_ticket, access?.username, wsUrl, isRoot, session]);
 
   function focusTerminal() {
     terminalRef.current?.focus();
@@ -218,35 +263,63 @@ export function WebTerminalManager({ title }: { title: string }) {
     window.setTimeout(() => setCopied(false), 2000);
   }
 
+  const displayUser = isRoot ? "root" : access?.username || "compte";
+  const subtitle = isRoot
+    ? "Shell root interactif (WHM) — saisie clavier directe."
+    : `Prompt vzone@${displayUser} — saisie clavier directe (jail du compte).`;
+
   return (
     <div className="space-y-3 animate-fade-up">
       <div className="vz-panel overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-cp-border bg-cp-header px-4 py-2 text-white">
           <div>
             <h1 className="text-sm font-semibold uppercase tracking-wide">{title}</h1>
-            <p className="text-[11px] text-white/80">
-              Prompt <code className="text-white/90">vzone@{access?.username || "compte"}</code>{" "}
-              — saisie clavier directe (jail du compte).
-            </p>
+            <p className="text-[11px] text-white/80">{subtitle}</p>
           </div>
-          <div className="text-xs text-white/90">
-            {access?.username ? (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-white/90">
+            {access?.username || isRoot ? (
               <>
-                vzone@{access.username}
+                {isRoot ? "root" : `vzone@${access?.username}`}
                 <span className="mx-1 opacity-50">·</span>
                 {connected ? "en ligne" : "hors ligne"}
               </>
             ) : null}
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded border border-white/30 px-2 py-0.5 text-[11px] hover:bg-white/10"
+              onClick={() => reconnect()}
+              disabled={isFetching}
+              title="Nouveau ticket + reconnexion"
+            >
+              <RefreshCw className={`h-3 w-3 ${isFetching ? "animate-spin" : ""}`} />
+              Reconnecter
+            </button>
           </div>
         </div>
 
         {isLoading && (
-          <p className="px-4 py-3 text-sm text-cp-muted">Vérification des droits SSH…</p>
+          <p className="px-4 py-3 text-sm text-cp-muted">
+            {isRoot ? "Ouverture du terminal root…" : "Vérification des droits SSH…"}
+          </p>
         )}
 
-        {!isLoading && !access?.allowed && (
+        {isError && (
+          <div className="m-4 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-cp-danger">
+            Impossible de joindre l’API terminal :{" "}
+            {queryError instanceof Error ? queryError.message : "erreur réseau"}.{" "}
+            <button type="button" className="underline" onClick={() => void refetch()}>
+              Réessayer
+            </button>
+          </div>
+        )}
+
+        {!isLoading && !isError && access && !access.allowed && (
           <div className="m-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            Accès refusé : {access?.reason || "Votre package n'autorise pas SSH."}
+            Accès refusé :{" "}
+            {access.reason ||
+              (isRoot
+                ? "Terminal admin désactivé (VZONE_TERMINAL_ALLOW_ADMIN)."
+                : "Votre package n'autorise pas SSH.")}
           </div>
         )}
 
@@ -265,10 +338,18 @@ export function WebTerminalManager({ title }: { title: string }) {
                   onClick={() => void copyAll()}
                   title="Copier tout le contenu du terminal"
                 >
-                  {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                  {copied ? (
+                    <Check className="h-3.5 w-3.5 text-emerald-600" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" />
+                  )}
                   {copied ? "Copié" : "Tout copier"}
                 </button>
-                <button type="button" className="vz-btn-ghost !px-2 !py-1 text-xs" onClick={focusTerminal}>
+                <button
+                  type="button"
+                  className="vz-btn-ghost !px-2 !py-1 text-xs"
+                  onClick={focusTerminal}
+                >
                   <Focus className="h-3.5 w-3.5" />
                   Focus
                 </button>
@@ -280,7 +361,7 @@ export function WebTerminalManager({ title }: { title: string }) {
               onClick={focusTerminal}
               onMouseDown={focusTerminal}
               role="application"
-              aria-label="Terminal SSH interactif"
+              aria-label={isRoot ? "Terminal WHM root" : "Terminal SSH jailé"}
               tabIndex={0}
             />
           </>
