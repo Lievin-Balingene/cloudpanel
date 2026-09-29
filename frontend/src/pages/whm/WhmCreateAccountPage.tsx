@@ -36,6 +36,11 @@ export function WhmCreateAccountPage() {
   // Un revendeur ne crée QUE des clients (permission create-reseller = root only)
   const [accountKind, setAccountKind] = useState<"client" | "reseller">("client");
   const effectiveKind: "client" | "reseller" = allowResellerType ? accountKind : "client";
+  const accountLimits = me?.role === "reseller" ? me.account_limits : null;
+  const atAccountLimit =
+    !!accountLimits &&
+    !accountLimits.unlimited &&
+    (accountLimits.remaining ?? 0) <= 0;
 
   useEffect(() => {
     if (!allowResellerType && accountKind === "reseller") {
@@ -146,6 +151,10 @@ export function WhmCreateAccountPage() {
   function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    if (atAccountLimit) {
+      setError("Limite de comptes atteinte pour ce revendeur.");
+      return;
+    }
     if (!form.domain.trim().includes(".")) {
       setError("Indiquez un domaine valide (ex: exemple.com).");
       return;
@@ -176,6 +185,28 @@ export function WhmCreateAccountPage() {
         >
           {error}
         </p>
+      )}
+
+      {accountLimits && (
+        <div
+          className={`rounded-lg border px-3 py-2 text-sm ${
+            atAccountLimit
+              ? "border-red-200 bg-red-50 text-cp-danger"
+              : "border-cp-border bg-white text-cp-text dark:border-ink-800 dark:bg-ink-950"
+          }`}
+        >
+          Comptes clients :{" "}
+          <strong>
+            {accountLimits.used_accounts}
+            {accountLimits.unlimited ? " / ∞ (illimité)" : ` / ${accountLimits.max_accounts}`}
+          </strong>
+          {atAccountLimit && (
+            <span className="mt-1 block text-xs">
+              Limite atteinte — contactez l’administrateur pour augmenter le plafond ou passer en
+              illimité.
+            </span>
+          )}
+        </div>
       )}
 
       <form className="overflow-hidden rounded-lg border border-cp-border bg-white shadow-panel dark:border-ink-800 dark:bg-ink-950" onSubmit={onSubmit}>
@@ -360,7 +391,11 @@ export function WhmCreateAccountPage() {
           <Link to="/whm/accounts" className="vz-btn-ghost">
             Cancel
           </Link>
-          <button className="whm-btn-create min-w-[160px]" type="submit" disabled={createUser.isPending}>
+          <button
+            className="whm-btn-create min-w-[160px]"
+            type="submit"
+            disabled={createUser.isPending || atAccountLimit}
+          >
             {createUser.isPending ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />

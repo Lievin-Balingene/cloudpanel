@@ -17,6 +17,15 @@ type ResellerAclPayload = {
   privileges: string[];
   enforce_ownership: boolean;
   allow_overselling: boolean;
+  max_accounts: number | null;
+  account_limits?: {
+    unlimited: boolean;
+    max_accounts: number | null;
+    used_accounts: number;
+    remaining: number | null;
+    source?: string;
+    package_max_accounts?: number | null;
+  };
   notes: string;
   catalog: PrivilegeGroup[];
   defaults: string[];
@@ -33,6 +42,8 @@ export function WhmResellerPrivilegesPage() {
   const [enforceOwn, setEnforceOwn] = useState(true);
   const [oversell, setOversell] = useState(false);
   const [notes, setNotes] = useState("");
+  const [limitMode, setLimitMode] = useState<"inherit" | "unlimited" | "custom">("inherit");
+  const [limitValue, setLimitValue] = useState(25);
   const [msg, setMsg] = useState("");
 
   const { data: users = [] } = useQuery({
@@ -60,20 +71,36 @@ export function WhmResellerPrivilegesPage() {
       setEnforceOwn(acl.enforce_ownership);
       setOversell(acl.allow_overselling);
       setNotes(acl.notes || "");
+      if (acl.max_accounts === null || acl.max_accounts === undefined) {
+        setLimitMode("inherit");
+        setLimitValue(acl.account_limits?.package_max_accounts || 25);
+      } else if (acl.max_accounts === 0) {
+        setLimitMode("unlimited");
+        setLimitValue(0);
+      } else {
+        setLimitMode("custom");
+        setLimitValue(acl.max_accounts);
+      }
     }
   }, [acl, draft]);
 
   const saveMut = useMutation({
-    mutationFn: () =>
-      apiRequest(`/auth/reseller-privileges/${activeId}/`, {
+    mutationFn: () => {
+      let max_accounts: number | null = null;
+      if (limitMode === "unlimited") max_accounts = 0;
+      else if (limitMode === "custom") max_accounts = Math.max(0, Number(limitValue) || 0);
+      else max_accounts = null;
+      return apiRequest(`/auth/reseller-privileges/${activeId}/`, {
         method: "PUT",
         body: JSON.stringify({
           privileges,
           enforce_ownership: enforceOwn,
           allow_overselling: oversell,
+          max_accounts,
           notes,
         }),
-      }),
+      });
+    },
     onSuccess: async () => {
       setMsg("Privileges enregistres.");
       setDraft(null);
@@ -211,6 +238,84 @@ export function WhmResellerPrivilegesPage() {
               {msg}
             </p>
           )}
+
+          <section className="rounded-lg border border-cp-border bg-white p-4 shadow-sm">
+            <h2 className="text-sm font-semibold text-cp-navy">Limite de comptes clients</h2>
+            <p className="mt-1 text-xs text-cp-muted">
+              Définit combien de comptes ce revendeur peut créer. Illimité = aucun plafond.
+            </p>
+            {acl.account_limits && (
+              <p className="mt-2 text-sm">
+                Utilisé :{" "}
+                <strong>
+                  {acl.account_limits.used_accounts}
+                  {acl.account_limits.unlimited
+                    ? " / ∞"
+                    : ` / ${acl.account_limits.max_accounts}`}
+                </strong>
+                {!acl.account_limits.unlimited && acl.account_limits.remaining != null && (
+                  <span className="text-cp-muted">
+                    {" "}
+                    ({acl.account_limits.remaining} restant
+                    {acl.account_limits.remaining > 1 ? "s" : ""})
+                  </span>
+                )}
+              </p>
+            )}
+            {isAdmin ? (
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="limitMode"
+                    checked={limitMode === "inherit"}
+                    onChange={() => setLimitMode("inherit")}
+                  />
+                  Hériter du package
+                  {acl.account_limits?.package_max_accounts != null && (
+                    <span className="text-xs text-cp-muted">
+                      (
+                      {acl.account_limits.package_max_accounts === 0
+                        ? "illimité"
+                        : acl.account_limits.package_max_accounts}
+                      )
+                    </span>
+                  )}
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="limitMode"
+                    checked={limitMode === "unlimited"}
+                    onChange={() => setLimitMode("unlimited")}
+                  />
+                  Illimité
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="limitMode"
+                    checked={limitMode === "custom"}
+                    onChange={() => setLimitMode("custom")}
+                  />
+                  Limité à
+                  <input
+                    type="number"
+                    min={1}
+                    className="w-24 rounded-md border border-cp-border px-2 py-1 text-sm"
+                    disabled={limitMode !== "custom"}
+                    value={limitValue}
+                    onChange={(e) => setLimitValue(Number(e.target.value) || 0)}
+                  />
+                  comptes
+                </label>
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-cp-muted">
+                Seul un administrateur peut modifier cette limite.
+              </p>
+            )}
+          </section>
 
           <div className="grid gap-4 lg:grid-cols-2">
             {catalog.map((group) => {

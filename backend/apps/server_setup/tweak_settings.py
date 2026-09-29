@@ -61,11 +61,12 @@ TWEAK_CATALOG: list[dict[str, Any]] = [
             },
             {
                 "key": "max_accounts_per_reseller",
-                "label": "Limite comptes par revendeur (0 = illimité)",
+                "label": "Limite comptes par revendeur (0 = illimité / pas de plafond global)",
                 "type": "int",
                 "default": 0,
                 "min": 0,
                 "max": 100000,
+                "help": "Plafond serveur pour tous les revendeurs. 0 = aucun plafond global (la limite vient du package / ACL).",
             },
             {
                 "key": "auto_create_dns_zone",

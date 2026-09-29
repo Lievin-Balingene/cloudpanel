@@ -270,6 +270,15 @@ class UserCreateSerializer(serializers.ModelSerializer):
         if actor is not None and actor.is_authenticated and actor.role == User.Role.RESELLER:
             attrs["parent"] = actor
             attrs["role"] = User.Role.CLIENT
+            from apps.accounts.reseller_services import assert_reseller_can_create_account
+            from apps.core.exceptions import QuotaExceeded
+
+            try:
+                assert_reseller_can_create_account(actor)
+            except QuotaExceeded as exc:
+                raise serializers.ValidationError(
+                    {"non_field_errors": [str(exc.detail)]}
+                ) from exc
         return attrs
 
     def create(self, validated_data: dict) -> User:
@@ -277,12 +286,24 @@ class UserCreateSerializer(serializers.ModelSerializer):
             provision_account_home,
             provision_primary_domain_for_account,
         )
+        from apps.accounts.reseller_services import assert_reseller_can_create_account
+        from apps.core.exceptions import QuotaExceeded
 
         quota_data = validated_data.pop("quota", None)
         password = validated_data.pop("password")
         domain_name = (validated_data.pop("domain", None) or "").strip()
         package_id = validated_data.pop("package_id", None)
         create_welcome_index = bool(validated_data.pop("create_welcome_index", True))
+
+        request = self.context.get("request")
+        actor = getattr(request, "user", None)
+        if actor is not None and getattr(actor, "role", None) == User.Role.RESELLER:
+            try:
+                assert_reseller_can_create_account(actor)
+            except QuotaExceeded as exc:
+                raise serializers.ValidationError(
+                    {"non_field_errors": [str(exc.detail)]}
+                ) from exc
 
         user = User.objects.create_user(password=password, **validated_data)
         if quota_data:
@@ -479,11 +500,13 @@ class MeSerializer(UserSerializer):
 
     reseller_privileges = serializers.SerializerMethodField()
     reseller_privilege_catalog = serializers.SerializerMethodField()
+    account_limits = serializers.SerializerMethodField()
 
     class Meta(UserSerializer.Meta):
         fields = UserSerializer.Meta.fields + (
             "reseller_privileges",
             "reseller_privilege_catalog",
+            "account_limits",
         )
 
     def get_reseller_privileges(self, obj: User) -> list[str]:
@@ -505,3 +528,10 @@ class MeSerializer(UserSerializer):
         from apps.accounts.reseller_acl import catalog_as_list
 
         return catalog_as_list()
+
+    def get_account_limits(self, obj: User) -> dict | None:
+        if not obj.is_reseller:
+            return None
+        from apps.accounts.reseller_services import resolve_reseller_account_limit
+
+        return resolve_reseller_account_limit(obj)

@@ -40,6 +40,13 @@ export interface User {
     group: string;
     privileges: { code: string; label: string }[];
   }[];
+  account_limits?: {
+    unlimited: boolean;
+    max_accounts: number | null;
+    used_accounts: number;
+    remaining: number | null;
+    source?: string;
+  } | null;
 }
 
 export interface ApiSuccess<T> {

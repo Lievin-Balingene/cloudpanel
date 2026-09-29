@@ -109,7 +109,24 @@ def _assert_reseller_can_assign(
             status_code=403,
         )
     reseller_assignment = PackageAssignment.objects.filter(user=reseller).select_related("package").first()
-    if reseller_assignment and reseller_assignment.package.max_accounts:
+    # Utilise la limite effective (ACL > package > tweak)
+    from apps.accounts.reseller_services import resolve_reseller_account_limit
+
+    info = resolve_reseller_account_limit(reseller)
+    if not info["unlimited"]:
+        current = info["used_accounts"]
+        # Si on assigne à un client déjà rattaché, ne pas recompter
+        already = target.pk and User.objects.filter(pk=target.pk, parent=reseller).exists()
+        if not already and current >= int(info["max_accounts"] or 0):
+            raise QuotaExceeded(
+                detail=(
+                    f"Nombre maximal de comptes atteint pour ce revendeur "
+                    f"({current}/{info['max_accounts']})."
+                ),
+                extra=info,
+            )
+    # Garde l'ancien chemin package si pas d'info (rétrocompat silencieuse)
+    elif reseller_assignment and reseller_assignment.package.max_accounts:
         current = User.objects.filter(parent=reseller, role=User.Role.CLIENT).count()
         if target.pk is None or not User.objects.filter(pk=target.pk, parent=reseller).exists():
             if current >= reseller_assignment.package.max_accounts:

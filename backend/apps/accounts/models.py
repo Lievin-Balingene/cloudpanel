@@ -202,6 +202,14 @@ class ResellerPrivileges(models.Model):
         default=False,
         help_text="Si false, les packages clients ne peuvent pas depasser le pool du revendeur.",
     )
+    max_accounts = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Limite de comptes clients pour ce revendeur. "
+            "Null = hériter du package revendeur. 0 = illimité. >0 = plafond."
+        ),
+    )
     notes = models.CharField(max_length=255, blank=True, default="")
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(

@@ -441,7 +441,7 @@ export function WhmPackagesPage() {
               />
             </Field>
             {form.package_type === "reseller" && (
-              <Field label="Comptes max (revendeur)">
+              <Field label="Comptes clients max (0 = illimité)">
                 <input
                   className="vz-input w-full"
                   type="number"
@@ -450,6 +450,11 @@ export function WhmPackagesPage() {
                   onChange={setNum("max_accounts")}
                   title="0 = illimité"
                 />
+                <p className="mt-1 text-[11px] text-cp-muted">
+                  {Number(form.max_accounts) === 0
+                    ? "Illimité — le revendeur peut créer autant de comptes que nécessaire."
+                    : `Limité à ${form.max_accounts} comptes clients.`}
+                </p>
               </Field>
             )}
           </div>

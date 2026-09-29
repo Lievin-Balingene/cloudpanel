@@ -372,6 +372,10 @@ class ResellerPrivilegesDetailView(APIView):
         if acl is None:
             acl = ensure_reseller_privileges(target)
 
+        from apps.accounts.reseller_services import resolve_reseller_account_limit
+
+        limits = resolve_reseller_account_limit(target)
+
         return Response(
             {
                 "success": True,
@@ -381,6 +385,8 @@ class ResellerPrivilegesDetailView(APIView):
                     "privileges": list(acl.privileges or []),
                     "enforce_ownership": acl.enforce_ownership,
                     "allow_overselling": acl.allow_overselling,
+                    "max_accounts": acl.max_accounts,
+                    "account_limits": limits,
                     "notes": acl.notes,
                     "catalog": catalog_as_list(),
                     "defaults": default_privileges_for_package(),
@@ -390,7 +396,10 @@ class ResellerPrivilegesDetailView(APIView):
 
     def put(self, request: Request, pk: int) -> Response:
         from apps.accounts.reseller_acl import sanitize_privileges
-        from apps.accounts.reseller_services import ensure_reseller_privileges
+        from apps.accounts.reseller_services import (
+            ensure_reseller_privileges,
+            resolve_reseller_account_limit,
+        )
 
         if not request.user.is_administrator:
             return Response(
@@ -420,8 +429,30 @@ class ResellerPrivilegesDetailView(APIView):
             acl.allow_overselling = bool(request.data.get("allow_overselling"))
         if "notes" in request.data:
             acl.notes = str(request.data.get("notes") or "")[:255]
+        if "max_accounts" in request.data:
+            raw = request.data.get("max_accounts")
+            if raw is None or raw == "":
+                acl.max_accounts = None
+            else:
+                try:
+                    n = int(raw)
+                except (TypeError, ValueError):
+                    return Response(
+                        {
+                            "success": False,
+                            "error": {
+                                "code": "invalid_max_accounts",
+                                "message": "max_accounts doit être un entier (≥ 0) ou null (hériter du package).",
+                            },
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if n < 0:
+                    n = 0
+                acl.max_accounts = n
         acl.updated_by = request.user
         acl.save()
+        limits = resolve_reseller_account_limit(target)
         return Response(
             {
                 "success": True,
@@ -431,6 +462,8 @@ class ResellerPrivilegesDetailView(APIView):
                     "privileges": list(acl.privileges or []),
                     "enforce_ownership": acl.enforce_ownership,
                     "allow_overselling": acl.allow_overselling,
+                    "max_accounts": acl.max_accounts,
+                    "account_limits": limits,
                     "notes": acl.notes,
                 },
             }
