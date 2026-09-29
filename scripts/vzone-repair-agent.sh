@@ -22,6 +22,7 @@ ALLOWED = {
     "mail-reputation": "repair-mail-reputation.sh",
     "frontend": "repair-frontend.sh",
     "api-502": "repair-api-502.sh",
+    "api-500-import": "repair-api-500-import.sh",
     "panel-404": "repair-panel-404.sh",
     "nginx-500": "repair-nginx-500.sh",
     "domains-403": "repair-domains-403.sh",

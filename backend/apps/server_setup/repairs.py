@@ -64,6 +64,13 @@ REPAIR_CATALOG: dict[str, dict] = {
         "category": "panel",
         "risk": "safe",
     },
+    "api-500-import": {
+        "script": "repair-api-500-import.sh",
+        "title": "Réparer API 500 (import)",
+        "description": "Corrige ImportError Daphne (ex. datetime.UTC) + migrate + redémarrage API.",
+        "category": "panel",
+        "risk": "safe",
+    },
     "panel-404": {
         "script": "repair-panel-404.sh",
         "title": "Réparer panel 404",

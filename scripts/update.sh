@@ -33,16 +33,32 @@ set -a; source /etc/vzone/vzone.env; set +a
 export DJANGO_SETTINGS_MODULE=vzone.settings.production
 pip install -r "${VZONE_ROOT}/backend/requirements/prod.txt" || BACKEND_OK=0
 cd "${VZONE_ROOT}/backend"
+# Préflight import (évite de démarrer Daphne avec un ImportError → 500)
+if ! python -c "import django; django.setup(); from django.urls import get_resolver; get_resolver().url_patterns" 2>/tmp/vzone-django-import.err; then
+  echo "[vzone] ERREUR: import Django/URLconf échoué — Daphne ne sera pas démarré" >&2
+  tail -n 40 /tmp/vzone-django-import.err >&2 || true
+  BACKEND_OK=0
+fi
 # Court redémarrage API uniquement pour appliquer le nouveau code + migrations
 systemctl stop vzone-api vzone-worker vzone-beat 2>/dev/null || true
-python manage.py migrate --noinput || BACKEND_OK=0
-python manage.py collectstatic --noinput || true
-deactivate
-systemctl start vzone-worker vzone-beat 2>/dev/null || true
-if [[ -f "${REPO_DIR}/scripts/ensure-vzone-api.sh" ]]; then
-  bash "${REPO_DIR}/scripts/ensure-vzone-api.sh" || true
+if [[ "${BACKEND_OK}" -eq 1 ]]; then
+  python manage.py migrate --noinput || BACKEND_OK=0
+  python manage.py collectstatic --noinput || true
 else
-  systemctl start vzone-api 2>/dev/null || true
+  echo "[vzone] Skip migrate (import cassé)" >&2
+fi
+deactivate
+
+if [[ "${BACKEND_OK}" -eq 1 ]]; then
+  systemctl start vzone-worker vzone-beat 2>/dev/null || true
+  if [[ -f "${REPO_DIR}/scripts/ensure-vzone-api.sh" ]]; then
+    bash "${REPO_DIR}/scripts/ensure-vzone-api.sh" || BACKEND_OK=0
+  else
+    systemctl start vzone-api 2>/dev/null || BACKEND_OK=0
+  fi
+else
+  echo "[vzone] API laissée arrêtée (corrigez l'erreur puis relancez update.sh)" >&2
+  systemctl stop vzone-api 2>/dev/null || true
 fi
 
 # Frontend : toujours reconstruire (évite 404 nginx sur toutes les pages)
@@ -54,7 +70,7 @@ if [[ ! -f "${VZONE_ROOT}/frontend/dist/index.html" ]]; then
 fi
 
 if [[ "${BACKEND_OK}" -ne 1 ]]; then
-  echo "[vzone] ERREUR: étapes backend (pip/migrate) ont échoué — corrigez puis relancez update.sh" >&2
+  echo "[vzone] ERREUR: étapes backend (pip/import/migrate) ont échoué — corrigez puis relancez update.sh" >&2
   exit 1
 fi
 
