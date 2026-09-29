@@ -19,42 +19,12 @@ import { formatBytes } from "@/lib/format";
 import { useState } from "react";
 
 const favorites = [
-  {
-    to: "/whm/accounts",
-    label: "List Accounts",
-    desc: "View, modify, and manage hosting accounts.",
-    icon: Users,
-  },
-  {
-    to: "/whm/accounts/create",
-    label: "Create a New Account",
-    desc: "Domain + username + package",
-    icon: UserPlus,
-  },
-  {
-    to: "/whm/server-setup",
-    label: "Basic Setup",
-    desc: "Hostname & nameservers",
-    icon: Server,
-  },
-  {
-    to: "/whm/packages",
-    label: "Packages",
-    desc: "Hosting plans and limits",
-    icon: Package,
-  },
-  {
-    to: "/whm/dns",
-    label: "DNS Functions",
-    desc: "Zones & DNS records",
-    icon: Globe,
-  },
-  {
-    to: "/whm/resources",
-    label: "Server Information",
-    desc: "CPU, RAM, disk details",
-    icon: Activity,
-  },
+  { to: "/whm/accounts", label: "List Accounts", icon: Users },
+  { to: "/whm/accounts/create", label: "Create a New Account", icon: UserPlus },
+  { to: "/whm/server-setup", label: "Basic Setup", icon: Server },
+  { to: "/whm/packages", label: "Packages", icon: Package },
+  { to: "/whm/dns", label: "DNS Functions", icon: Globe },
+  { to: "/whm/resources", label: "Server Information", icon: Activity },
 ];
 
 function tone(percent: number | undefined): "ok" | "warn" | "bad" | "idle" {
@@ -155,26 +125,20 @@ export function WhmHomePage() {
             <h1 className="text-2xl font-semibold tracking-tight text-slate-800 dark:text-ink-50">
               Favorites
             </h1>
-            <p className="mt-1 text-sm text-slate-500">
-              Raccourcis Admin — comptes, DNS, packages et supervision.
-            </p>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {favorites.map((tool) => (
               <Link
                 key={tool.to}
                 to={tool.to}
-                className="group flex items-start gap-3 rounded-xl border border-slate-200/90 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md dark:border-ink-700 dark:bg-ink-950"
+                className="group flex items-center gap-2.5 rounded-lg border border-slate-200/90 bg-white px-3 py-2.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md dark:border-ink-700 dark:bg-ink-950"
               >
-                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-orange-50 text-cp-orange dark:bg-orange-950/40">
-                  <tool.icon className="h-5 w-5" />
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-orange-50 text-cp-orange dark:bg-orange-950/40">
+                  <tool.icon className="h-4 w-4" />
                 </span>
-                <span className="min-w-0">
-                  <span className="block text-[15px] font-semibold text-slate-800 group-hover:text-cp-link dark:text-ink-50">
-                    {tool.label}
-                  </span>
-                  <span className="mt-0.5 block text-xs leading-snug text-slate-500">{tool.desc}</span>
+                <span className="min-w-0 truncate text-sm font-semibold text-slate-800 group-hover:text-cp-link dark:text-ink-50">
+                  {tool.label}
                 </span>
               </Link>
             ))}

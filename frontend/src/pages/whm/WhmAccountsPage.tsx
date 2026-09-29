@@ -154,7 +154,9 @@ export function WhmAccountsPage() {
             />
           </div>
           <p className="text-xs text-cp-muted">
-            {filtered.length} account{filtered.length === 1 ? "" : "s"}
+            {isLoading
+              ? "Chargement…"
+              : `${filtered.length} compte${filtered.length === 1 ? "" : "s"}`}
           </p>
         </div>
       </div>

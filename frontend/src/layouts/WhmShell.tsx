@@ -78,7 +78,7 @@ const navSections: NavSection[] = [
         icon: UserPlus,
         keywords: ["créer", "compte", "account"],
       },
-      { to: "/whm/accounts", label: "List Accounts", icon: Users, keywords: ["comptes", "users"] },
+      { to: "/whm/accounts", end: true, label: "List Accounts", icon: Users, keywords: ["comptes", "users"] },
       {
         to: "/whm/server-setup",
         label: "Basic Server Setup",
