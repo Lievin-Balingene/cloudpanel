@@ -51,7 +51,10 @@ const hubs: HubSection[] = [
   {
     title: "Packages",
     icon: Package,
-    links: [{ to: "/whm/packages", label: "Add / Edit Packages" }],
+    links: [
+      { to: "/whm/packages/create", label: "Add a Package" },
+      { to: "/whm/packages", label: "List Packages" },
+    ],
   },
   {
     title: "DNS Functions",

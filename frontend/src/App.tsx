@@ -6,6 +6,8 @@ import { WhmShell } from "./layouts/WhmShell";
 import { ClientShell } from "./layouts/ClientShell";
 import { WhmHomePage } from "./pages/whm/WhmHomePage";
 import { WhmPackagesPage } from "./pages/whm/WhmPackagesPage";
+import { WhmPackageCreatePage } from "./pages/whm/WhmPackageCreatePage";
+import { WhmPackageEditPage } from "./pages/whm/WhmPackageEditPage";
 import { WhmDnsPage } from "./pages/whm/WhmDnsPage";
 import { WhmResourcesPage } from "./pages/whm/WhmResourcesPage";
 import { WhmAccountsPage } from "./pages/whm/WhmAccountsPage";
@@ -146,6 +148,8 @@ export default function App() {
         <Route path="accounts/created" element={<WhmAccountCreatedPage />} />
         <Route path="accounts" element={<WhmAccountsPage />} />
         <Route path="transfer" element={<WhmTransferPage />} />
+        <Route path="packages/create" element={<WhmPackageCreatePage />} />
+        <Route path="packages/:id/edit" element={<WhmPackageEditPage />} />
         <Route path="packages" element={<WhmPackagesPage />} />
         <Route path="resellers" element={<WhmResellerPrivilegesPage />} />
         <Route path="server-setup" element={<WhmServerSetupPage />} />

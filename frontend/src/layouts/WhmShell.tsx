@@ -182,7 +182,19 @@ const navSections: NavSection[] = [
     id: "packages",
     title: "Packages",
     items: [
-      { to: "/whm/packages", label: "Add / Edit Packages", icon: Package, keywords: ["quota", "plan", "feature"] },
+      {
+        to: "/whm/packages/create",
+        label: "Add a Package",
+        icon: Package,
+        keywords: ["créer", "quota", "plan", "feature"],
+      },
+      {
+        to: "/whm/packages",
+        end: true,
+        label: "List Packages",
+        icon: Package,
+        keywords: ["edit", "quota", "plan"],
+      },
     ],
   },
   {
