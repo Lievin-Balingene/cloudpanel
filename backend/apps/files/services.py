@@ -13,7 +13,7 @@ import time
 import zipfile
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import BinaryIO
 
@@ -252,7 +252,7 @@ def entry_from_path(user: User, path: Path) -> FileEntry:
         path=relative_to_home(user, path),
         is_dir=is_dir,
         size=0 if is_dir else st.st_size,
-        modified_at=datetime.fromtimestamp(st.st_mtime, tz=UTC).isoformat(),
+        modified_at=datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
         permissions=_mode_string(st.st_mode),
         mode=stat.S_IMODE(st.st_mode),
         mime=mime,
@@ -289,7 +289,7 @@ def list_directory(user: User, relative: str | None = None) -> dict:
                         path=rel,
                         is_dir=is_dir,
                         size=0 if is_dir else st.st_size,
-                        modified_at=datetime.fromtimestamp(st.st_mtime, tz=UTC).isoformat(),
+                        modified_at=datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
                         permissions=_mode_string(st.st_mode),
                         mode=stat.S_IMODE(st.st_mode),
                         mime=mime,
