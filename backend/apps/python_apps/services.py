@@ -1863,39 +1863,32 @@ def fix_client_paths(
     else:
         for path in unique:
             try:
+                # Toujours --force d'abord (évite exit 5 / Start bloqué)
                 proc = subprocess.run(
-                    ["sudo", "-n", str(FIX_APP_PERMS), jail, str(path)],
+                    ["sudo", "-n", str(FIX_APP_PERMS), jail, str(path), "--force"],
                     capture_output=True,
                     text=True,
                     timeout=180,
                     check=False,
                 )
                 if proc.returncode != 0:
+                    proc = subprocess.run(
+                        ["sudo", "-n", str(FIX_APP_PERMS), jail, str(path)],
+                        capture_output=True,
+                        text=True,
+                        timeout=180,
+                        check=False,
+                    )
+                if proc.returncode != 0:
                     err = (proc.stderr or proc.stdout or "")[:600]
                     logger.warning("fix-app-perms %s %s → %s %s", jail, path, proc.returncode, err)
-                    if required:
-                        raise VZoneAPIException(
-                            detail=(
-                                f"Impossible de corriger les permissions de `{path}` "
-                                f"pour `{jail}`: {err or proc.returncode}. "
-                                f"Manuel: sudo {FIX_APP_PERMS} {jail} {path}"
-                            ),
-                            code="fix_app_perms_failed",
-                            status_code=500,
-                            extra={"path": str(path), "jail": jail},
-                        )
+                    # Ne plus lever : le Start doit pouvoir continuer
                 else:
                     logger.info("fix-app-perms OK %s → %s", jail, path)
             except VZoneAPIException:
                 raise
             except Exception as exc:  # noqa: BLE001
                 logger.warning("fix-app-perms exception: %s", exc)
-                if required:
-                    raise VZoneAPIException(
-                        detail=f"fix-app-perms a échoué: {exc}",
-                        code="fix_app_perms_failed",
-                        status_code=500,
-                    ) from exc
 
     # Complément ACL/chmod (sans root)
     for path in unique:
@@ -2061,12 +2054,34 @@ def _ensure_django_hosts_patch(app: PythonApp, app_root: Path) -> None:
 
 
 def _ensure_app_data_writable(owner: User, app_root: Path, *extra: Path) -> None:
-    """Garantie ownership jail avant démarrage gunicorn."""
+    """Garantie ownership jail avant démarrage gunicorn.
+
+    Ne bloque plus le Start : un échec de perms ne doit pas empêcher gunicorn
+    (sinon le domaine reste sur public_html). On force au maximum via --force.
+    """
+    jail = _jail_name(owner)
+    # Toujours tenter --force en premier (idempotent)
+    if (
+        provision_mode() != "mock"
+        and jail
+        and FIX_APP_PERMS.is_file()
+        and app_root.exists()
+    ):
+        try:
+            subprocess.run(
+                ["sudo", "-n", str(FIX_APP_PERMS), jail, str(app_root), "--force"],
+                capture_output=True,
+                text=True,
+                timeout=180,
+                check=False,
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("fix-app-perms --force skip", exc_info=True)
     fix_client_paths(
         owner,
         app_root,
         *extra,
-        required=True,
+        required=False,
         verify_sqlite_in=app_root,
     )
 
