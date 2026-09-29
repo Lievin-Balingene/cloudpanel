@@ -447,7 +447,9 @@ export function ClientShell() {
               <div className="min-w-0">
                 <p className="text-sm font-semibold tracking-wide">V-zone</p>
                 <p className="truncate text-[11px] text-white/85">
-                  {user?.role === "reseller" ? "Espace client · Revendeur" : "Espace client"}
+                  {user?.role === "reseller"
+                    ? "cPanel · Espace client (revendeur)"
+                    : "cPanel · Espace client"}
                 </p>
               </div>
             </NavLink>

@@ -2,29 +2,132 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import {
   Activity,
+  ArrowRightLeft,
+  Bell,
   Check,
   Copy,
   Cpu,
+  Database,
   Globe,
   HardDrive,
+  KeyRound,
+  Mail,
   MemoryStick,
   Package,
   Server,
+  Shield,
   UserPlus,
   Users,
+  type LucideIcon,
 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
 import type { DashboardOverview } from "@/types";
 import { formatBytes } from "@/lib/format";
 import { useState } from "react";
 
-const favorites = [
+type HubLink = { to: string; label: string };
+type HubSection = { title: string; icon: LucideIcon; links: HubLink[] };
+
+const hubs: HubSection[] = [
+  {
+    title: "Account Information",
+    icon: Users,
+    links: [
+      { to: "/whm/accounts", label: "List Accounts" },
+      { to: "/whm/domains", label: "Domains" },
+      { to: "/whm/resources", label: "Bandwidth / Resources" },
+    ],
+  },
+  {
+    title: "Account Functions",
+    icon: UserPlus,
+    links: [
+      { to: "/whm/accounts/create", label: "Create a New Account" },
+      { to: "/whm/accounts", label: "Modify / Suspend" },
+      { to: "/whm/resellers", label: "Reseller Privileges" },
+      { to: "/whm/transfer", label: "Transfer Tool" },
+    ],
+  },
+  {
+    title: "Packages",
+    icon: Package,
+    links: [{ to: "/whm/packages", label: "Add / Edit Packages" }],
+  },
+  {
+    title: "DNS Functions",
+    icon: Globe,
+    links: [{ to: "/whm/dns", label: "DNS Zone Manager" }],
+  },
+  {
+    title: "Server Configuration",
+    icon: Server,
+    links: [
+      { to: "/whm/server-setup", label: "Basic Setup" },
+      { to: "/whm/panel-update", label: "Update Preferences" },
+      { to: "/whm/cron", label: "Cron Jobs" },
+      { to: "/whm/repairs", label: "Réparations" },
+    ],
+  },
+  {
+    title: "Service Configuration",
+    icon: Mail,
+    links: [
+      { to: "/whm/email", label: "Email" },
+      { to: "/whm/databases", label: "Databases" },
+      { to: "/whm/ftp", label: "FTP" },
+      { to: "/whm/ols", label: "OpenLiteSpeed" },
+    ],
+  },
+  {
+    title: "Software",
+    icon: Database,
+    links: [
+      { to: "/whm/php", label: "MultiPHP" },
+      { to: "/whm/wordpress", label: "WordPress" },
+      { to: "/whm/python", label: "Python" },
+      { to: "/whm/node", label: "Node.js" },
+      { to: "/whm/git", label: "Git" },
+      { to: "/whm/docker", label: "Docker" },
+    ],
+  },
+  {
+    title: "Security Center",
+    icon: Shield,
+    links: [
+      { to: "/whm/security", label: "Security Policy" },
+      { to: "/whm/firewall", label: "Firewall & Fail2Ban" },
+      { to: "/whm/account-security", label: "Two-Factor Auth" },
+      { to: "/whm/domains", label: "SSL / TLS" },
+    ],
+  },
+  {
+    title: "Backup & Transfers",
+    icon: HardDrive,
+    links: [
+      { to: "/whm/backups", label: "Backup / Restore" },
+      { to: "/whm/transfer", label: "Transfer Tool" },
+    ],
+  },
+  {
+    title: "Server Status",
+    icon: Activity,
+    links: [
+      { to: "/whm/monitoring", label: "Service Status" },
+      { to: "/whm/resources", label: "System Health" },
+      { to: "/whm/terminal", label: "Terminal" },
+    ],
+  },
+];
+
+const quick = [
   { to: "/whm/accounts", label: "List Accounts", icon: Users },
-  { to: "/whm/accounts/create", label: "Create a New Account", icon: UserPlus },
-  { to: "/whm/server-setup", label: "Basic Setup", icon: Server },
+  { to: "/whm/accounts/create", label: "Create Account", icon: UserPlus },
   { to: "/whm/packages", label: "Packages", icon: Package },
-  { to: "/whm/dns", label: "DNS Functions", icon: Globe },
-  { to: "/whm/resources", label: "Server Information", icon: Activity },
+  { to: "/whm/dns", label: "DNS", icon: Globe },
+  { to: "/whm/monitoring", label: "Services", icon: Bell },
+  { to: "/whm/security", label: "Security", icon: KeyRound },
+  { to: "/whm/transfer", label: "Transfers", icon: ArrowRightLeft },
+  { to: "/whm/backups", label: "Backups", icon: HardDrive },
 ];
 
 function tone(percent: number | undefined): "ok" | "warn" | "bad" | "idle" {
@@ -52,9 +155,9 @@ function loadTrend(load: number[] | null | undefined): { label: string; up: bool
   if (!load || load.length < 2) return { label: "En attente…", up: null };
   const [a, b] = load;
   if (typeof a !== "number" || typeof b !== "number") return { label: "—", up: null };
-  if (a > b + 0.3) return { label: "Load spike settling", up: true };
-  if (a < b - 0.3) return { label: "Load decreasing", up: false };
-  return { label: "Load stable", up: null };
+  if (a > b + 0.3) return { label: "Charge en hausse", up: true };
+  if (a < b - 0.3) return { label: "Charge en baisse", up: false };
+  return { label: "Charge stable", up: null };
 }
 
 function MetricRow({
@@ -122,17 +225,23 @@ export function WhmHomePage() {
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0 space-y-5">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-800 dark:text-ink-50">
-              Favorites
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+              WebHost Manager
+            </p>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-800 dark:text-ink-50">
+              Accueil WHM
             </h1>
+            <p className="mt-1 max-w-2xl text-sm text-slate-500">
+              Comptes, packages, DNS, services et sécurité — structure familière WHM.
+            </p>
           </div>
 
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {favorites.map((tool) => (
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            {quick.map((tool) => (
               <Link
-                key={tool.to}
+                key={tool.to + tool.label}
                 to={tool.to}
-                className="group flex items-center gap-2.5 rounded-lg border border-slate-200/90 bg-white px-3 py-2.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md dark:border-ink-700 dark:bg-ink-950"
+                className="group flex items-center gap-2.5 rounded-lg border border-slate-200/90 bg-white px-3 py-2.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition hover:-translate-y-0.5 hover:border-cp-orange/40 hover:shadow-md dark:border-ink-700 dark:bg-ink-950"
               >
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-orange-50 text-cp-orange dark:bg-orange-950/40">
                   <tool.icon className="h-4 w-4" />
@@ -166,6 +275,33 @@ export function WhmHomePage() {
             ))}
           </div>
 
+          <div className="grid gap-3 sm:grid-cols-2">
+            {hubs.map((hub) => (
+              <section
+                key={hub.title}
+                className="overflow-hidden rounded-xl border border-slate-200/90 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-ink-700 dark:bg-ink-950"
+              >
+                <div className="flex items-center gap-2 border-b border-slate-100 bg-[#f4f7fa] px-3.5 py-2.5 dark:border-ink-800 dark:bg-ink-900">
+                  <hub.icon className="h-4 w-4 text-cp-orange" />
+                  <h2 className="text-sm font-semibold text-slate-800 dark:text-ink-50">{hub.title}</h2>
+                </div>
+                <ul className="divide-y divide-slate-100 dark:divide-ink-800">
+                  {hub.links.map((link) => (
+                    <li key={hub.title + link.to + link.label}>
+                      <Link
+                        to={link.to}
+                        className="flex items-center justify-between px-3.5 py-2 text-sm text-cp-link transition hover:bg-orange-50/60 dark:hover:bg-ink-900"
+                      >
+                        <span>{link.label}</span>
+                        <span className="text-xs text-slate-400">→</span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
+
           {data?.services && data.services.length > 0 && (
             <div className="overflow-hidden rounded-xl border border-slate-200/90 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-ink-700 dark:bg-ink-950">
               <div className="border-b border-slate-100 px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:border-ink-800">
@@ -188,7 +324,7 @@ export function WhmHomePage() {
                           svc.active ? "bg-emerald-500" : "bg-rose-500"
                         }`}
                       />
-                      {svc.active ? "up" : "down"}
+                      {svc.active ? "Running" : "Stopped"}
                     </span>
                   </div>
                 ))}
@@ -197,7 +333,6 @@ export function WhmHomePage() {
           )}
         </div>
 
-        {/* Statistics — carte soignée */}
         <aside className="xl:sticky xl:top-4 xl:self-start">
           <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_8px_30px_rgba(15,23,42,0.06)] dark:border-ink-700 dark:bg-ink-950">
             <div className="relative overflow-hidden bg-gradient-to-br from-[#2a4a6b] via-[#345578] to-[#1e3a55] px-5 py-4 text-white">
@@ -226,7 +361,11 @@ export function WhmHomePage() {
                     className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:border-cp-link hover:text-cp-link dark:border-ink-600 dark:bg-ink-950"
                     title="Copier"
                   >
-                    {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                    {copied ? (
+                      <Check className="h-3.5 w-3.5 text-emerald-600" />
+                    ) : (
+                      <Copy className="h-3.5 w-3.5" />
+                    )}
                   </button>
                 </div>
               </section>

@@ -69,7 +69,7 @@ type NavSection = {
 const navSections: NavSection[] = [
   {
     id: "favorites",
-    title: "Favorites",
+    title: "Home",
     items: [
       { to: "/whm", end: true, label: "Home", icon: LayoutDashboard, keywords: ["accueil", "dashboard"] },
       {
@@ -81,87 +81,171 @@ const navSections: NavSection[] = [
       { to: "/whm/accounts", end: true, label: "List Accounts", icon: Users, keywords: ["comptes", "users"] },
       {
         to: "/whm/server-setup",
-        label: "Basic Server Setup",
+        label: "Basic WebHost Manager Setup",
         icon: Server,
         keywords: ["hostname", "nameserver", "setup"],
       },
     ],
   },
   {
-    id: "accounts",
+    id: "server-config",
+    title: "Server Configuration",
+    items: [
+      {
+        to: "/whm/server-setup",
+        label: "Basic Setup / Hostname",
+        icon: Server,
+        keywords: ["hostname", "nameserver", "contact"],
+      },
+      {
+        to: "/whm/panel-update",
+        label: "Update Preferences",
+        icon: Rocket,
+        keywords: ["mise à jour", "update", "git"],
+      },
+      {
+        to: "/whm/cron",
+        label: "Configure Cron Jobs",
+        icon: Clock,
+        keywords: ["planification", "cron"],
+      },
+      {
+        to: "/whm/repairs",
+        label: "Réparations système",
+        icon: Wrench,
+        keywords: ["repair", "smtp", "dkim", "nginx"],
+      },
+    ],
+  },
+  {
+    id: "account-info",
+    title: "Account Information",
+    items: [
+      { to: "/whm/accounts", end: true, label: "List Accounts", icon: Users, keywords: ["comptes", "list"] },
+      { to: "/whm/domains", label: "List Domains", icon: AppWindow, keywords: ["domaine", "parked", "subdomain"] },
+      { to: "/whm/resources", label: "View Bandwidth / Resources", icon: Activity, keywords: ["cpu", "ram", "bandwidth"] },
+    ],
+  },
+  {
+    id: "account-functions",
     title: "Account Functions",
     items: [
-      { to: "/whm/transfer", label: "Transfer Tool", icon: ArrowRightLeft, keywords: ["migration"] },
-      { to: "/whm/packages", label: "Packages", icon: Package, keywords: ["quota", "plan"] },
+      {
+        to: "/whm/accounts/create",
+        label: "Create a New Account",
+        icon: UserPlus,
+        keywords: ["créer", "compte"],
+      },
+      { to: "/whm/accounts", end: true, label: "Modify / Suspend / Terminate", icon: Users, keywords: ["modify", "suspend"] },
       {
         to: "/whm/resellers",
         label: "Edit Reseller Privileges",
         icon: Shield,
-        keywords: ["revendeur", "acl", "privileges", "cpanel"],
+        keywords: ["revendeur", "acl", "privileges"],
       },
-      { to: "/whm/domains", label: "Domains", icon: AppWindow, keywords: ["domaine", "ssl"] },
-      { to: "/whm/dns", label: "DNS Functions", icon: Globe, keywords: ["zone", "record"] },
+      { to: "/whm/transfer", label: "Transfer Tool", icon: ArrowRightLeft, keywords: ["migration", "cpmove"] },
+    ],
+  },
+  {
+    id: "packages",
+    title: "Packages",
+    items: [
+      { to: "/whm/packages", label: "Add / Edit Packages", icon: Package, keywords: ["quota", "plan", "feature"] },
+    ],
+  },
+  {
+    id: "dns",
+    title: "DNS Functions",
+    items: [
+      { to: "/whm/dns", label: "DNS Zone Manager", icon: Globe, keywords: ["zone", "record", "a", "mx", "txt"] },
+    ],
+  },
+  {
+    id: "transfers",
+    title: "Transfers",
+    items: [
+      { to: "/whm/transfer", label: "Transfer Tool", icon: ArrowRightLeft, keywords: ["migration"] },
+    ],
+  },
+  {
+    id: "backup",
+    title: "Backup",
+    items: [
+      { to: "/whm/backups", label: "Backup Configuration / Restore", icon: HardDrive, keywords: ["sauvegarde"] },
+    ],
+  },
+  {
+    id: "system-health",
+    title: "System Health",
+    items: [
+      { to: "/whm/resources", label: "System Information", icon: Activity, keywords: ["cpu", "ram", "disk"] },
+      { to: "/whm/monitoring", label: "Process / Service Health", icon: Bell, keywords: ["alerte", "monitoring"] },
+      { to: "/whm/terminal", label: "Process Manager (Terminal)", icon: Terminal, keywords: ["ssh", "shell"] },
+    ],
+  },
+  {
+    id: "server-status",
+    title: "Server Status",
+    items: [
+      { to: "/whm/monitoring", label: "Service Status", icon: Bell, keywords: ["services"] },
+      { to: "/whm/resources", label: "Server Monitoring", icon: Activity, keywords: ["load"] },
     ],
   },
   {
     id: "services",
     title: "Service Configuration",
     items: [
-      { to: "/whm/email", label: "Email", icon: Mail, keywords: ["mail", "roundcube"] },
-      { to: "/whm/databases", label: "Databases", icon: Database, keywords: ["mysql", "postgres"] },
-      { to: "/whm/ftp", label: "FTP", icon: Upload },
-      { to: "/whm/cron", label: "Cron Jobs", icon: Clock, keywords: ["planification"] },
+      { to: "/whm/email", label: "Mailserver / Email", icon: Mail, keywords: ["roundcube", "exim"] },
+      { to: "/whm/databases", label: "Database Services", icon: Database, keywords: ["mysql", "postgres"] },
+      { to: "/whm/ftp", label: "FTP Configuration", icon: Upload },
       { to: "/whm/files", label: "File Manager", icon: FolderOpen, keywords: ["fichiers"] },
+      { to: "/whm/ols", label: "OpenLiteSpeed / Web", icon: Zap, keywords: ["ols", "litespeed", "nginx"] },
     ],
   },
   {
     id: "software",
     title: "Software",
     items: [
+      { to: "/whm/php", label: "MultiPHP Manager", icon: FileCode2, keywords: ["php"] },
+      { to: "/whm/wordpress", label: "WordPress", icon: LayoutTemplate, keywords: ["wp"] },
       { to: "/whm/python", label: "Setup Python App", icon: Code2, keywords: ["django", "flask"] },
       { to: "/whm/node", label: "Setup Node.js App", icon: Terminal, keywords: ["express", "npm"] },
-      { to: "/whm/php", label: "MultiPHP Manager", icon: FileCode2 },
-      { to: "/whm/wordpress", label: "WordPress", icon: LayoutTemplate, keywords: ["wp"] },
       { to: "/whm/git", label: "Git Version Control", icon: GitBranch },
-      { to: "/whm/ols", label: "OpenLiteSpeed", icon: Zap, keywords: ["ols", "litespeed", "lsphp"] },
-    ],
-  },
-  {
-    id: "server",
-    title: "Server Configuration",
-    items: [
-      { to: "/whm/terminal", label: "Terminal", icon: Terminal, keywords: ["ssh", "shell"] },
       { to: "/whm/docker", label: "Docker", icon: Box },
       { to: "/whm/kubernetes", label: "Kubernetes", icon: Network, keywords: ["k8s"] },
-      { to: "/whm/backups", label: "Backup", icon: HardDrive, keywords: ["sauvegarde"] },
-      { to: "/whm/panel-update", label: "Panel Update", icon: Rocket, keywords: ["mise à jour", "update", "git"] },
-      {
-        to: "/whm/repairs",
-        label: "Réparations",
-        icon: Wrench,
-        keywords: ["repair", "smtp", "dkim", "roundcube", "nginx", "403", "502"],
-      },
-    ],
-  },
-  {
-    id: "status",
-    title: "Server Status",
-    items: [
-      { to: "/whm/monitoring", label: "Service Status", icon: Bell, keywords: ["alerte"] },
-      { to: "/whm/resources", label: "Server Information", icon: Activity, keywords: ["cpu", "ram"] },
+      { to: "/whm/panel-update", label: "Panel / System Update", icon: Rocket, keywords: ["update"] },
     ],
   },
   {
     id: "security",
     title: "Security Center",
     items: [
-      { to: "/whm/firewall", label: "Firewall", icon: Shield, keywords: ["fail2ban"] },
-      { to: "/whm/security", label: "Security Center", icon: KeyRound },
-      { to: "/whm/account-security", label: "Two-Factor Auth", icon: KeyRound, keywords: ["2fa"] },
+      { to: "/whm/security", label: "Security Advisor / Policy", icon: KeyRound, keywords: ["password", "policy"] },
+      { to: "/whm/firewall", label: "Firewall & Fail2Ban", icon: Shield, keywords: ["fail2ban", "cphulk"] },
+      { to: "/whm/account-security", label: "Two-Factor Authentication", icon: KeyRound, keywords: ["2fa"] },
+      { to: "/whm/domains", label: "SSL/TLS & AutoSSL", icon: AppWindow, keywords: ["ssl", "letsencrypt"] },
+    ],
+  },
+  {
+    id: "email-db",
+    title: "Email & Databases",
+    items: [
+      { to: "/whm/email", label: "Email Accounts", icon: Mail },
+      { to: "/whm/databases", label: "MySQL / PostgreSQL", icon: Database },
+    ],
+  },
+  {
+    id: "cpanel-dev",
+    title: "cPanel & Development",
+    items: [
+      { to: "/whm/files", label: "Browse Account Files", icon: FolderOpen },
+      { to: "/whm/terminal", label: "Terminal / API Ops", icon: Terminal },
+      { to: "/whm/docker", label: "Containers", icon: Box },
     ],
   },
 ];
 
+/** Outils aplatis pour ACL / navigation. */
 const allTools = navSections.flatMap((s) =>
   s.items.map((item) => ({ ...item, section: s.title, sectionId: s.id })),
 );
@@ -242,7 +326,7 @@ function WhmSearchField({
         <div className="absolute left-0 right-0 top-[calc(100%+4px)] z-50 max-h-72 overflow-auto rounded border border-[#c5d0dc] bg-white shadow-xl">
           {results.slice(0, 12).map((item) => (
             <button
-              key={item.to}
+              key={`${item.sectionId}-${item.to}-${item.label}`}
               type="button"
               className="flex w-full items-center gap-2 border-b border-[#e8eef4] px-3 py-2 text-left text-sm text-[#2c3e50] last:border-0 hover:bg-[#f0f4f8]"
               onClick={() => onPick(item.to)}
@@ -362,7 +446,16 @@ export function WhmShell() {
   const headerResults = useMemo(() => {
     const q = headerQuery.trim().toLowerCase();
     if (!q) return [];
-    return visibleTools.filter((item) => matchesQuery(item, q));
+    const seen = new Set<string>();
+    const out: typeof visibleTools = [];
+    for (const item of visibleTools) {
+      if (!matchesQuery(item, q)) continue;
+      const k = `${item.to}|${item.label}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(item);
+    }
+    return out;
   }, [headerQuery, visibleTools]);
 
   const filteredSections = useMemo(() => {
@@ -456,10 +549,10 @@ export function WhmShell() {
             />
             <div className="min-w-0 flex-1">
               <p className="select-none font-sans text-[20px] font-bold leading-none tracking-tight text-white">
-                Admin
+                WHM
               </p>
               <p className="mt-0.5 truncate text-[10px] font-medium uppercase tracking-[0.12em] text-white/55">
-                V-zone
+                V-zone Admin
               </p>
             </div>
             <button
@@ -524,7 +617,7 @@ export function WhmShell() {
                     <div className="bg-[#23405c] pb-1">
                       {section.items.map((item) => (
                         <NavLink
-                          key={item.to}
+                          key={`${section.id}-${item.to}-${item.label}`}
                           to={item.to}
                           end={item.end}
                           className={({ isActive }) =>
