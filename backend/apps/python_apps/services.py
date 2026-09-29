@@ -2152,6 +2152,10 @@ def _prepare_app_logs(owner: User, app_root: Path) -> tuple[Path, Path]:
 def start_python_app(app: PythonApp) -> PythonApp:
     if not app.is_active:
         raise VZoneAPIException(detail="Application désactivée.", code="inactive", status_code=400)
+    # Effacer l'ancienne erreur affichée dans l'UI (ex. faux SQLite readonly)
+    if app.last_error:
+        app.last_error = ""
+        app.save(update_fields=["last_error", "updated_at"])
     _, app_root = resolve_app_root(app.owner, app.relative_root)
     venv_dir = Path(app.venv_path) if app.venv_path else cpanel_venv_path(app.owner, app.name, app.python_version)
     venv_dir, py = _ensure_venv_matches_labeled_version(
