@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 import shutil
 import subprocess
@@ -13,19 +14,99 @@ from django.conf import settings
 from apps.core.exceptions import VZoneAPIException
 from vzone import get_version
 
+logger = logging.getLogger(__name__)
 
-def update_jobs_dir() -> Path:
+AGENT_BIN = Path("/usr/local/sbin/vzone-update-agent")
+PATH_UNIT = "vzone-update-job.path"
+SERVICE_UNIT = "vzone-update-job.service"
+
+
+def update_jobs_dir(*, create: bool = True) -> Path:
     root = Path(getattr(settings, "VZONE_DATA_ROOT", "/var/lib/vzone")) / "update" / "jobs"
-    root.mkdir(parents=True, exist_ok=True)
+    if create:
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            logger.warning("update jobs dir mkdir failed: %s", exc)
     return root
 
 
+def _vzone_root() -> Path:
+    return Path(getattr(settings, "VZONE_ROOT", "/opt/vzone"))
+
+
+def resolve_src_dir() -> Path:
+    """Trouve le dépôt source (git) — plusieurs emplacements courants."""
+    candidates: list[Path] = []
+    configured = (getattr(settings, "VZONE_SRC_DIR", "") or "").strip()
+    if configured:
+        candidates.append(Path(configured))
+    candidates.extend(
+        [
+            Path("/opt/vzone-src"),
+            _vzone_root().parent / "vzone-src",
+            Path("/usr/local/src/vzone"),
+            Path("/root/vzone"),
+            Path("/root/vhost"),
+        ]
+    )
+    # Si le runtime /opt/vzone contient encore .git (install atypique)
+    runtime = _vzone_root()
+    if (runtime / ".git").is_dir() and (runtime / "scripts" / "update.sh").is_file():
+        candidates.insert(0, runtime)
+
+    seen: set[str] = set()
+    for path in candidates:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            if path.is_dir() and (path / "scripts" / "update.sh").is_file():
+                return path
+            if path.is_dir() and (path / "VERSION").is_file():
+                return path
+        except OSError:
+            continue
+    return Path(configured or "/opt/vzone-src")
+
+
 def default_src_dir() -> Path:
-    return Path(getattr(settings, "VZONE_SRC_DIR", "/opt/vzone-src"))
+    return resolve_src_dir()
 
 
 def agent_installed() -> bool:
-    return Path("/usr/local/sbin/vzone-update-agent").is_file()
+    try:
+        return AGENT_BIN.is_file() and os_access_ok(AGENT_BIN)
+    except OSError:
+        return False
+
+
+def os_access_ok(path: Path) -> bool:
+    try:
+        return path.exists()
+    except OSError:
+        return False
+
+
+def path_unit_enabled() -> bool | None:
+    systemctl = shutil.which("systemctl") or "/bin/systemctl"
+    try:
+        proc = subprocess.run(
+            [systemctl, "is-enabled", PATH_UNIT],
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=False,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return None
+    out = (proc.stdout or "").strip()
+    if out == "enabled":
+        return True
+    if out in {"disabled", "masked"}:
+        return False
+    return None
 
 
 def _read_json(path: Path) -> dict | None:
@@ -71,8 +152,9 @@ def _clear_stale_lock(path: Path, *, max_age: int = 3600) -> bool:
 
 
 def _job_busy() -> bool:
-    jobs = update_jobs_dir()
-    # Nettoyer locks / request périmés (>1h) pour ne pas bloquer à jamais
+    jobs = update_jobs_dir(create=False)
+    if not jobs.is_dir():
+        return False
     for stale in list(jobs.glob("*.lock")) + list(jobs.glob("*.request")):
         _clear_stale_lock(stale, max_age=3600)
 
@@ -132,13 +214,24 @@ def _git_src_info(src: Path) -> dict:
     return info
 
 
+def _read_version_file(*roots: Path) -> str:
+    for root in roots:
+        vf = root / "VERSION"
+        try:
+            if vf.is_file():
+                return vf.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+    return ""
+
+
 def _kick_update_service() -> tuple[bool, str]:
     """Démarre l'agent root (sudoers NOPASSWD ou path unit)."""
     systemctl = shutil.which("systemctl") or "/bin/systemctl"
     attempts: list[list[str]] = [
-        ["sudo", "-n", systemctl, "start", "vzone-update-job.service"],
-        ["sudo", "-n", systemctl, "start", "vzone-update-job.path"],
-        [systemctl, "start", "vzone-update-job.service"],
+        ["sudo", "-n", systemctl, "start", SERVICE_UNIT],
+        ["sudo", "-n", systemctl, "start", PATH_UNIT],
+        [systemctl, "start", SERVICE_UNIT],
     ]
     last_err = ""
     for cmd in attempts:
@@ -160,9 +253,14 @@ def _kick_update_service() -> tuple[bool, str]:
 
 
 def list_recent_jobs(*, limit: int = 8) -> list[dict]:
-    jobs = update_jobs_dir()
+    jobs = update_jobs_dir(create=False)
+    if not jobs.is_dir():
+        return []
     items: list[dict] = []
-    paths = sorted(jobs.glob("*.result"), key=lambda p: p.stat().st_mtime, reverse=True)
+    try:
+        paths = sorted(jobs.glob("*.result"), key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        return []
     for path in paths[:limit]:
         data = _read_json(path) or {}
         items.append(
@@ -175,7 +273,13 @@ def list_recent_jobs(*, limit: int = 8) -> list[dict]:
                 "finished_at": data.get("finished_at") or "",
             }
         )
-    for status_path in sorted(jobs.glob("*.status"), key=lambda p: p.stat().st_mtime, reverse=True):
+    try:
+        status_paths = sorted(
+            jobs.glob("*.status"), key=lambda p: p.stat().st_mtime, reverse=True
+        )
+    except OSError:
+        status_paths = []
+    for status_path in status_paths:
         if (jobs / f"{status_path.stem}.result").is_file():
             continue
         data = _read_json(status_path) or {}
@@ -195,24 +299,95 @@ def list_recent_jobs(*, limit: int = 8) -> list[dict]:
 
 
 def panel_update_overview() -> dict:
-    src = default_src_dir()
-    src_version = ""
-    if (src / "VERSION").is_file():
+    """Jamais lever : l'UI WHM doit toujours afficher un diagnostic."""
+    try:
+        src = resolve_src_dir()
+        src_exists = False
         try:
-            src_version = (src / "VERSION").read_text(encoding="utf-8").strip()
+            src_exists = src.is_dir()
         except OSError:
-            src_version = ""
-    git_info = _git_src_info(src)
-    return {
-        "version": get_version(),
-        "src_dir": str(src),
-        "src_exists": src.is_dir(),
-        "src_version": src_version,
-        "agent_installed": agent_installed(),
-        "busy": _job_busy(),
-        "recent_jobs": list_recent_jobs(),
-        **git_info,
-    }
+            src_exists = False
+
+        runtime_version = ""
+        try:
+            runtime_version = get_version() or ""
+        except Exception:  # noqa: BLE001
+            runtime_version = ""
+        if not runtime_version:
+            runtime_version = _read_version_file(_vzone_root()) or "—"
+
+        src_version = _read_version_file(src) if src_exists else ""
+        git_info = _git_src_info(src) if src_exists else {
+            "git_ok": False,
+            "git_branch": "",
+            "git_head": "",
+            "git_remote": "",
+            "git_error": "src absent",
+        }
+        agent_ok = agent_installed()
+        path_enabled = path_unit_enabled() if agent_ok else None
+
+        bootstrap_script = ""
+        for candidate in (
+            src / "scripts" / "install-update-agent.sh",
+            _vzone_root() / "scripts" / "install-update-agent.sh",
+        ):
+            if candidate.is_file():
+                bootstrap_script = str(candidate)
+                break
+
+        return {
+            "version": runtime_version,
+            "src_dir": str(src),
+            "src_exists": src_exists,
+            "src_version": src_version,
+            "agent_installed": agent_ok,
+            "path_unit_enabled": path_enabled,
+            "busy": _job_busy(),
+            "recent_jobs": list_recent_jobs(),
+            "bootstrap_available": bool(bootstrap_script),
+            "bootstrap_script": bootstrap_script,
+            "vzone_root": str(_vzone_root()),
+            "jobs_dir": str(update_jobs_dir(create=False)),
+            "jobs_dir_writable": _jobs_writable(),
+            **git_info,
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("panel_update_overview failed")
+        return {
+            "version": "—",
+            "src_dir": "/opt/vzone-src",
+            "src_exists": False,
+            "src_version": "",
+            "agent_installed": False,
+            "path_unit_enabled": None,
+            "busy": False,
+            "recent_jobs": [],
+            "bootstrap_available": False,
+            "bootstrap_script": "",
+            "vzone_root": str(_vzone_root()),
+            "jobs_dir": "",
+            "jobs_dir_writable": False,
+            "git_ok": False,
+            "git_branch": "",
+            "git_head": "",
+            "git_remote": "",
+            "git_error": str(exc)[:200],
+            "overview_error": str(exc)[:300],
+        }
+
+
+def _jobs_writable() -> bool:
+    jobs = update_jobs_dir(create=True)
+    try:
+        if not jobs.is_dir():
+            return False
+        probe = jobs / ".write_probe"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+        return True
+    except OSError:
+        return False
 
 
 def get_job_status(job_id: str) -> dict:
@@ -220,7 +395,7 @@ def get_job_status(job_id: str) -> dict:
     if not job_id or "/" in job_id or ".." in job_id:
         raise VZoneAPIException(detail="job_id invalide.", code="invalid_job", status_code=400)
 
-    jobs = update_jobs_dir()
+    jobs = update_jobs_dir(create=False)
     request = jobs / f"{job_id}.request"
     status = _read_json(jobs / f"{job_id}.status") or {}
     result = _read_json(jobs / f"{job_id}.result")
@@ -261,6 +436,84 @@ def get_job_status(job_id: str) -> dict:
     )
 
 
+def _find_install_script() -> Path | None:
+    for candidate in (
+        resolve_src_dir() / "scripts" / "install-update-agent.sh",
+        _vzone_root() / "scripts" / "install-update-agent.sh",
+    ):
+        try:
+            if candidate.is_file():
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
+def bootstrap_update_agent() -> dict:
+    """Installe l'agent root via sudo -n (sans SSH) si sudoers le permet."""
+    if agent_installed():
+        return {
+            "ok": True,
+            "already_installed": True,
+            "agent_installed": True,
+            "message": "Agent déjà installé.",
+        }
+
+    script = _find_install_script()
+    if script is None:
+        raise VZoneAPIException(
+            detail=(
+                "Script install-update-agent.sh introuvable. "
+                "Vérifiez /opt/vzone-src ou /opt/vzone/scripts."
+            ),
+            code="bootstrap_script_missing",
+            status_code=400,
+        )
+
+    bash = shutil.which("bash") or "/bin/bash"
+    # Prefer absolute paths that match deploy/sudoers/vzone-panel
+    for candidate in ("/bin/bash", "/usr/bin/bash", bash):
+        if Path(candidate).is_file():
+            bash = candidate
+            break
+    cmd = ["sudo", "-n", bash, str(script)]
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
+        raise VZoneAPIException(
+            detail=f"Impossible de lancer le bootstrap agent: {exc}",
+            code="bootstrap_failed",
+            status_code=500,
+        ) from exc
+
+    log = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()[-4000:]
+    if proc.returncode != 0:
+        raise VZoneAPIException(
+            detail=(
+                "Bootstrap agent refusé (sudoers manquant ou erreur). "
+                "Une fois via SSH : sudo bash /opt/vzone-src/scripts/install-update-agent.sh"
+                + (f"\n{log}" if log else "")
+            ),
+            code="bootstrap_denied",
+            status_code=503,
+        )
+
+    return {
+        "ok": True,
+        "already_installed": False,
+        "agent_installed": agent_installed(),
+        "path_unit_enabled": path_unit_enabled(),
+        "message": "Agent installé.",
+        "log": log,
+    }
+
+
 def enqueue_panel_update(
     *,
     requested_by: str = "",
@@ -268,21 +521,45 @@ def enqueue_panel_update(
     skip_pull: bool = False,
 ) -> dict:
     if not agent_installed():
+        # Tentative auto-bootstrap (si sudoers déjà en place)
+        try:
+            bootstrap_update_agent()
+        except VZoneAPIException:
+            pass
+    if not agent_installed():
         raise VZoneAPIException(
             detail=(
-                "Agent de mise à jour non installé. Une fois via SSH : "
+                "Agent de mise à jour non installé. Depuis cette page utilisez "
+                "« Installer l’agent », ou une fois via SSH : "
                 "sudo bash /opt/vzone-src/scripts/install-update-agent.sh"
             ),
             code="update_agent_missing",
             status_code=503,
         )
 
-    src = default_src_dir()
+    src = resolve_src_dir()
     if not src.is_dir():
         raise VZoneAPIException(
             detail=f"Dépôt source introuvable: {src}",
             code="src_missing",
             status_code=400,
+        )
+    if not (src / "scripts" / "update.sh").is_file():
+        raise VZoneAPIException(
+            detail=f"scripts/update.sh manquant dans {src}",
+            code="update_sh_missing",
+            status_code=400,
+        )
+
+    if not _jobs_writable():
+        raise VZoneAPIException(
+            detail=(
+                "Répertoire jobs non accessible en écriture "
+                f"({update_jobs_dir(create=False)}). "
+                "Corrigez les droits : chown -R vzone:vzone /var/lib/vzone/update"
+            ),
+            code="jobs_not_writable",
+            status_code=503,
         )
 
     if _job_busy():
@@ -292,7 +569,7 @@ def enqueue_panel_update(
             status_code=409,
         )
 
-    jobs = update_jobs_dir()
+    jobs = update_jobs_dir(create=True)
     job_id = secrets.token_hex(12)
     request = jobs / f"{job_id}.request"
     payload = {
@@ -320,7 +597,6 @@ def enqueue_panel_update(
 
     kicked, kick_err = _kick_update_service()
     if not kicked:
-        # Le path unit peut encore déclencher ; on note l'avertissement dans le status
         status_path = jobs / f"{job_id}.status"
         st = _read_json(status_path) or {}
         st["kick_warning"] = kick_err or "systemctl start a échoué (attente path unit)"

@@ -429,6 +429,7 @@ VZONE_ACME_WEBROOT = env("VZONE_ACME_WEBROOT", str(VZONE_DATA_ROOT / "acme"))
 # Hostnames qui doivent servir le panel (SPA) plutôt que public_html
 VZONE_PANEL_HOSTNAMES = env("VZONE_PANEL_HOSTNAMES", "")
 VZONE_ROOT = env("VZONE_ROOT", "/opt/vzone")
+VZONE_SRC_DIR = env("VZONE_SRC_DIR", "/opt/vzone-src")
 
 # FTP
 VZONE_FTP_VIRTUAL_USERS_FILE = env(

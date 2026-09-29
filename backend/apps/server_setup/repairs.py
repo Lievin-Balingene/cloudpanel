@@ -99,6 +99,13 @@ REPAIR_CATALOG: dict[str, dict] = {
         "category": "panel",
         "risk": "caution",
     },
+    "update-agent": {
+        "script": "install-update-agent.sh",
+        "title": "Installer agent Panel Update",
+        "description": "Installe vzone-update-agent + path unit systemd (requis pour WHM → Mettre à jour).",
+        "category": "panel",
+        "risk": "safe",
+    },
 }
 
 

@@ -16,6 +16,7 @@ from apps.server_setup.ip_functions import (
 )
 from apps.server_setup.models import ServerSetup
 from apps.server_setup.panel_update import (
+    bootstrap_update_agent,
     enqueue_panel_update,
     get_job_status,
     panel_update_overview,
@@ -135,6 +136,16 @@ class PanelUpdateOverviewView(APIView):
 
     def get(self, request: Request) -> Response:
         return Response({"success": True, "data": panel_update_overview()})
+
+
+class PanelUpdateBootstrapView(APIView):
+    """Installe l'agent root via sudo -n (sans SSH) si sudoers le permet."""
+
+    permission_classes = [IsAuthenticated, IsAdministrator]
+
+    def post(self, request: Request) -> Response:
+        payload = bootstrap_update_agent()
+        return Response({"success": True, "data": payload})
 
 
 class PanelUpdateStartView(APIView):

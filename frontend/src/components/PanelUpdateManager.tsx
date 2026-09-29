@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, Rocket } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Loader2,
+  RefreshCw,
+  Rocket,
+  Wrench,
+} from "lucide-react";
 import { apiRequest } from "@/lib/api";
 import { PageHeader } from "@/components/ui/PageChrome";
 
@@ -10,12 +17,19 @@ interface Overview {
   src_exists: boolean;
   src_version: string;
   agent_installed: boolean;
+  path_unit_enabled?: boolean | null;
   busy: boolean;
   git_ok?: boolean;
   git_branch?: string;
   git_head?: string;
   git_remote?: string;
   git_error?: string;
+  bootstrap_available?: boolean;
+  bootstrap_script?: string;
+  vzone_root?: string;
+  jobs_dir?: string;
+  jobs_dir_writable?: boolean;
+  overview_error?: string;
   recent_jobs: Array<{
     job_id: string;
     ok: boolean | null;
@@ -83,10 +97,17 @@ export function PanelUpdateManager({ title }: { title: string }) {
   const logRef = useRef<HTMLPreElement>(null);
   const activeRef = useRef(false);
 
-  const { data: overview, isLoading } = useQuery({
+  const {
+    data: overview,
+    isLoading,
+    isError,
+    error: loadError,
+    refetch,
+  } = useQuery({
     queryKey: ["panel-update-overview"],
     queryFn: () => apiRequest<Overview>("/server-setup/panel-update/"),
     refetchInterval: jobId && job?.pending ? false : 15_000,
+    retry: 2,
   });
 
   const start = useMutation({
@@ -121,8 +142,39 @@ export function PanelUpdateManager({ title }: { title: string }) {
     onError: (err: Error) => setError(err.message),
   });
 
+  const bootstrap = useMutation({
+    mutationFn: () =>
+      apiRequest<{
+        ok: boolean;
+        agent_installed?: boolean;
+        message?: string;
+        log?: string;
+      }>("/server-setup/panel-update/bootstrap/", {
+        method: "POST",
+        body: "{}",
+      }),
+    onSuccess: (data) => {
+      setError(null);
+      void qc.invalidateQueries({ queryKey: ["panel-update-overview"] });
+      if (data.log) {
+        setJob({
+          job_id: "bootstrap",
+          state: "done",
+          pending: false,
+          ok: true,
+          error: "",
+          version_before: "",
+          version_after: overview?.version || "",
+          step: "finished",
+          log: data.log,
+        });
+      }
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
   useEffect(() => {
-    if (!jobId) return;
+    if (!jobId || jobId === "bootstrap") return;
     let cancelled = false;
     activeRef.current = true;
 
@@ -143,11 +195,7 @@ export function PanelUpdateManager({ title }: { title: string }) {
           setApiDown(true);
           const up = await waitForApi(12_000);
           if (cancelled) return;
-          if (!up) {
-            // keep waiting in outer loop
-          } else {
-            setApiDown(false);
-          }
+          if (up) setApiDown(false);
         }
         await new Promise((r) => setTimeout(r, 2000));
       }
@@ -180,9 +228,12 @@ export function PanelUpdateManager({ title }: { title: string }) {
   const canStart =
     !!overview?.agent_installed &&
     !!overview?.src_exists &&
+    !!overview?.jobs_dir_writable &&
     !overview?.busy &&
     !start.isPending &&
     !(job?.pending);
+
+  const loadFailed = isError || Boolean(overview?.overview_error);
 
   return (
     <div className="space-y-3 animate-fade-up">
@@ -190,33 +241,60 @@ export function PanelUpdateManager({ title }: { title: string }) {
         title={title}
         subtitle="Synchronise /opt/vzone-src (git fetch + reset hard) puis exécute scripts/update.sh — sans SSH."
         actions={
-          <button
-            type="button"
-            className="vz-btn-primary !px-3 !py-1.5 text-xs"
-            disabled={!canStart}
-            onClick={() => {
-              if (
-                window.confirm(
-                  "Lancer la mise à jour du panel ? L’interface peut se déconnecter quelques minutes pendant le redémarrage de l’API.",
-                )
-              ) {
-                start.mutate();
-              }
-            }}
-          >
-            {start.isPending || job?.pending ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Rocket className="h-3.5 w-3.5" />
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="vz-btn-ghost !px-3 !py-1.5 text-xs"
+              onClick={() => void refetch()}
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Actualiser
+            </button>
+            {!overview?.agent_installed && (
+              <button
+                type="button"
+                className="vz-btn-ghost !px-3 !py-1.5 text-xs"
+                disabled={bootstrap.isPending}
+                onClick={() => bootstrap.mutate()}
+              >
+                {bootstrap.isPending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Wrench className="h-3.5 w-3.5" />
+                )}
+                Installer l’agent
+              </button>
             )}
-            Mettre à jour le panel
-          </button>
+            <button
+              type="button"
+              className="vz-btn-primary !px-3 !py-1.5 text-xs"
+              disabled={!canStart}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    "Lancer la mise à jour du panel ? L’interface peut se déconnecter quelques minutes pendant le redémarrage de l’API.",
+                  )
+                ) {
+                  start.mutate();
+                }
+              }}
+            >
+              {start.isPending || job?.pending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Rocket className="h-3.5 w-3.5" />
+              )}
+              Mettre à jour le panel
+            </button>
+          </div>
         }
       />
 
-      {error && (
+      {(error || loadFailed) && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-cp-danger dark:border-red-900 dark:bg-red-950/30">
-          {error}
+          {error ||
+            overview?.overview_error ||
+            (loadError instanceof Error ? loadError.message : "Impossible de charger l’état Panel Update.")}
         </div>
       )}
 
@@ -238,13 +316,25 @@ export function PanelUpdateManager({ title }: { title: string }) {
               <div className="flex justify-between gap-2">
                 <dt className="text-cp-muted">Dépôt</dt>
                 <dd className="truncate font-mono text-[11px]" title={overview?.src_dir}>
-                  {overview?.src_exists ? overview.src_dir : "absent"}
+                  {overview?.src_exists ? overview.src_dir : overview?.src_dir ? `absent (${overview.src_dir})` : "absent"}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-2">
+                <dt className="text-cp-muted">Runtime</dt>
+                <dd className="truncate font-mono text-[11px]" title={overview?.vzone_root}>
+                  {overview?.vzone_root || "—"}
                 </dd>
               </div>
               <div className="flex justify-between gap-2">
                 <dt className="text-cp-muted">Agent root</dt>
                 <dd className={overview?.agent_installed ? "text-emerald-600" : "text-cp-danger"}>
                   {overview?.agent_installed ? "Installé" : "Manquant"}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-2">
+                <dt className="text-cp-muted">Jobs dir</dt>
+                <dd className={overview?.jobs_dir_writable ? "text-emerald-600" : "text-cp-danger"}>
+                  {overview?.jobs_dir_writable ? "OK" : "Non accessible"}
                 </dd>
               </div>
               {overview?.git_ok && (
@@ -261,18 +351,31 @@ export function PanelUpdateManager({ title }: { title: string }) {
             </dl>
           )}
 
-          {!overview?.agent_installed && (
+          {!overview?.agent_installed && overview && (
             <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
               <p className="flex items-start gap-1.5 font-medium">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                Première installation (une fois via SSH)
+                Agent manquant
+              </p>
+              <p className="mt-1">
+                Cliquez sur <strong>Installer l’agent</strong> (sudoers). Si ça échoue, une fois en SSH :
               </p>
               <pre className="mt-1.5 overflow-x-auto rounded bg-black/5 p-1.5 font-mono text-[10px] dark:bg-black/30">
-                sudo bash /opt/vzone-src/scripts/install-update-agent.sh
+                sudo bash {overview.bootstrap_script || "/opt/vzone-src/scripts/install-update-agent.sh"}
               </pre>
               <p className="mt-1 text-cp-muted">
-                Ensuite les mises à jour se font depuis cette page. Les prochains{" "}
-                <code className="font-mono">update.sh</code> réinstallent l’agent automatiquement.
+                Ou WHM → Réparations → « Installer agent Panel Update ».
+              </p>
+            </div>
+          )}
+
+          {overview?.agent_installed && !overview?.src_exists && (
+            <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+              <p className="font-medium">Dépôt source introuvable</p>
+              <p className="mt-1">
+                Attendu : <code className="font-mono">{overview.src_dir}</code>. Clonez le dépôt ou définissez{" "}
+                <code className="font-mono">VZONE_SRC_DIR</code> dans{" "}
+                <code className="font-mono">/etc/vzone/vzone.env</code>.
               </p>
             </div>
           )}
