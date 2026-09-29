@@ -105,6 +105,25 @@ def test_docker_quota_limit(api: APIClient, docker_root):
 
 @pytest.mark.unit
 @pytest.mark.django_db
+def test_auto_allocate_distinct_ports(docker_root):
+    from apps.docker_mgmt.services import resolve_ports
+
+    user = UserFactory(username="dockports")
+    _enable_docker(user)
+    a = resolve_ports(user, {})
+    # Simuler occupation du premier port en DB
+    create_container(owner=user, name="one", image="nginx", ports=a, start_now=False)
+    c = resolve_ports(user, {})
+    assert list(a.keys())[0] != list(c.keys())[0]
+    # Port demandé déjà pris → réallocation
+    taken = list(a.keys())[0]
+    d = resolve_ports(user, {taken: "80"})
+    assert taken not in d
+    assert list(d.values())[0] == 80
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
 def test_helpers(docker_root):
     user = UserFactory(username="dock4")
     _enable_docker(user)

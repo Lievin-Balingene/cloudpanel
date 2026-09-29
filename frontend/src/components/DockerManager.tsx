@@ -45,7 +45,7 @@ export function DockerManager({ title }: { title: string }) {
     name: "",
     image: "nginx",
     tag: "alpine",
-    host_port: "8080",
+    host_port: "",
     container_port: "80",
     memory_mb: 512,
   });
@@ -65,14 +65,16 @@ export function DockerManager({ title }: { title: string }) {
       runWithProgress(
         `Docker · ${form.name || form.image}`,
         () =>
-          apiRequest("/docker/containers/", {
+          apiRequest<DockerContainerItem>("/docker/containers/", {
             method: "POST",
             body: JSON.stringify({
               name: form.name,
               image: form.image,
               tag: form.tag,
               memory_mb: form.memory_mb,
-              ports: form.host_port ? { [form.host_port]: form.container_port || "80" } : {},
+              ports: form.host_port.trim()
+                ? { [form.host_port.trim()]: form.container_port || "80" }
+                : {},
               start_now: true,
             }),
           }),
@@ -87,7 +89,7 @@ export function DockerManager({ title }: { title: string }) {
         name: "",
         image: "nginx",
         tag: "alpine",
-        host_port: "8080",
+        host_port: "",
         container_port: "80",
         memory_mb: 512,
       });
@@ -323,9 +325,13 @@ export function DockerManager({ title }: { title: string }) {
                 Port hôte
                 <input
                   className="mt-1 vz-input"
+                  placeholder="auto (recommandé)"
                   value={form.host_port}
                   onChange={(e) => setForm({ ...form, host_port: e.target.value })}
                 />
+                <span className="mt-1 block text-[11px] font-normal text-cp-muted">
+                  Laisser vide : le serveur choisit un port libre (plusieurs conteneurs OK).
+                </span>
               </label>
               <label className="block text-xs font-medium text-cp-muted">
                 Port conteneur

@@ -183,6 +183,93 @@ def _sanitize_ports(owner: User, ports: dict | None) -> dict:
     return cleaned
 
 
+def _ports_claimed_in_db(*, exclude_id: int | None = None) -> set[int]:
+    used: set[int] = set()
+    qs = DockerContainer.objects.exclude(status=DockerContainer.Status.REMOVED).only("id", "ports")
+    if exclude_id:
+        qs = qs.exclude(pk=exclude_id)
+    for row in qs.iterator():
+        for key in (row.ports or {}):
+            try:
+                used.add(int(str(key).split(":")[-1]))
+            except (TypeError, ValueError):
+                continue
+    return used
+
+
+def _is_host_port_free(port: int, *, exclude_id: int | None = None) -> bool:
+    """Vérifie qu'aucun process / conteneur panel n'utilise déjà ce port."""
+    import socket
+
+    if port in _ports_claimed_in_db(exclude_id=exclude_id):
+        return False
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(("0.0.0.0", port))
+        return True
+    except OSError:
+        return False
+
+
+def allocate_host_port(
+    *,
+    preferred: int | None = None,
+    start: int = 12000,
+    end: int = 18999,
+    exclude_id: int | None = None,
+) -> int:
+    """
+    Alloue un port hôte libre pour un conteneur.
+    Plage haute (12k–18k) pour laisser cohabiter beaucoup de conteneurs.
+    """
+    if preferred and preferred >= 1024 and _is_host_port_free(preferred, exclude_id=exclude_id):
+        return preferred
+    for port in range(start, end + 1):
+        if _is_host_port_free(port, exclude_id=exclude_id):
+            return port
+    raise VZoneAPIException(
+        detail=f"Aucun port hôte libre entre {start} et {end}.",
+        code="no_free_port",
+        status_code=503,
+    )
+
+
+def resolve_ports(
+    owner: User,
+    ports: dict | None,
+    *,
+    container_default: int = 80,
+    exclude_id: int | None = None,
+) -> dict:
+    """
+    Normalise le mapping ports pour multi-conteneurs :
+    - vide → alloue un port hôte libre → container_default
+    - port demandé occupé → réalloue un port libre (conserve le port conteneur)
+    """
+    cleaned = _sanitize_ports(owner, ports)
+    if not cleaned:
+        host = allocate_host_port(exclude_id=exclude_id)
+        return {str(host): container_default}
+
+    resolved: dict[str, int] = {}
+    for host_s, container_p in cleaned.items():
+        host = int(host_s)
+        if _is_host_port_free(host, exclude_id=exclude_id):
+            resolved[str(host)] = int(container_p)
+        else:
+            free = allocate_host_port(exclude_id=exclude_id)
+            resolved[str(free)] = int(container_p)
+            logger.info(
+                "Docker port %s occupé pour %s — réalloué %s→%s",
+                host,
+                owner.username,
+                free,
+                container_p,
+            )
+    return resolved
+
+
 def _add_log(container: DockerContainer, event_type: str, *, success: bool = True, message: str = "") -> None:
     DockerContainerLog.objects.create(
         container=container,
@@ -340,7 +427,7 @@ def create_container(
     start_now: bool = True,
 ) -> DockerContainer:
     _assert_docker_quota(owner)
-    ports = _sanitize_ports(owner, ports)
+    ports = resolve_ports(owner, ports)
     slug = name.strip().lower().replace(" ", "-")
     if not NAME_RE.match(slug):
         raise VZoneAPIException(detail="Nom de conteneur invalide.", code="invalid_name", status_code=400)
@@ -397,7 +484,33 @@ def start_container(container: DockerContainer) -> DockerContainer:
             else:
                 _pull_image(container.image_ref)
                 _cleanup_orphan_runtime(container)
-                result = _run_docker(_build_run_args(container), timeout=180)
+                try:
+                    result = _run_docker(_build_run_args(container), timeout=180)
+                except VZoneAPIException as exc:
+                    detail = str(exc.detail).lower()
+                    port_busy = "port" in detail and (
+                        "already" in detail or "utilisé" in detail or "allocated" in detail
+                    )
+                    if not port_busy:
+                        raise
+                    # Course critique : réallouer un port hôte libre et retenter une fois
+                    old_cp = 80
+                    if container.ports:
+                        try:
+                            old_cp = int(next(iter(container.ports.values())))
+                        except (TypeError, ValueError, StopIteration):
+                            old_cp = 80
+                    free = allocate_host_port(exclude_id=container.pk)
+                    container.ports = {str(free): old_cp}
+                    container.save(update_fields=["ports", "updated_at"])
+                    write_meta(container)
+                    logger.warning(
+                        "Docker port conflict for %s — retry on %s→%s",
+                        container.name,
+                        free,
+                        old_cp,
+                    )
+                    result = _run_docker(_build_run_args(container), timeout=180)
                 cid = (result.stdout or "").strip()
                 if not cid:
                     raise VZoneAPIException(
