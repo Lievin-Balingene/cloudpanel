@@ -265,7 +265,12 @@ def run_assistant_turn(
             content=result.content or "",
             metadata={
                 "tool_calls": [
-                    {"id": tc.id, "name": tc.name, "arguments": redact_obj(tc.arguments)}
+                    {
+                        "id": tc.id,
+                        "name": tc.name,
+                        "arguments": redact_obj(tc.arguments),
+                        "thought_signature": (tc.thought_signature or "")[:4000],
+                    }
                     for tc in result.tool_calls
                 ]
             },

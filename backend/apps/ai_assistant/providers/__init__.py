@@ -10,6 +10,8 @@ class ToolCallRequest:
     id: str
     name: str
     arguments: dict[str, Any] = field(default_factory=dict)
+    # Gemini 3 OpenAI-compat : extra_content.google.thought_signature (round-trip obligatoire)
+    thought_signature: str = ""
 
 
 @dataclass
@@ -19,6 +21,8 @@ class ChatMessage:
     name: str = ""
     tool_call_id: str = ""
     tool_calls: list[ToolCallRequest] = field(default_factory=list)
+    # Signature optionnelle sur le message assistant (texte final)
+    thought_signature: str = ""
 
 
 @dataclass

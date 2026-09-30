@@ -156,6 +156,12 @@ def _friendly_http_error(status: int, base_url: str, body: str) -> str:
             f"HTTP {status} — quota / rate-limit atteint. Attendez un moment "
             "ou vérifiez les limites de votre clé API."
         )
+    if status == 400 and "thought_signature" in low:
+        return (
+            "HTTP 400 — Gemini exige le round-trip des thought_signature sur les outils. "
+            "Mettez à jour le panel (0.39.6+) puis réessayez. "
+            f"Détail: {body[:280]}"
+        )
     return f"HTTP {status} sur {base_url}/chat/completions — {body}"
 
 
@@ -170,8 +176,11 @@ def _parse_openai_result(data: dict[str, Any], provider: str, model: str) -> Cha
     choice = (data.get("choices") or [{}])[0]
     msg = choice.get("message") or {}
     content = str(msg.get("content") or "")
+    msg_sig = _extract_thought_signature(msg)
     tool_calls: list[ToolCallRequest] = []
     for raw in msg.get("tool_calls") or []:
+        if not isinstance(raw, dict):
+            continue
         fn = raw.get("function") or {}
         name = str(fn.get("name") or "")
         args_raw = fn.get("arguments") or "{}"
@@ -187,8 +196,12 @@ def _parse_openai_result(data: dict[str, Any], provider: str, model: str) -> Cha
                     id=str(raw.get("id") or uuid4()),
                     name=name,
                     arguments=args,
+                    thought_signature=_extract_thought_signature(raw),
                 )
             )
+    # Si signature uniquement au niveau message et 1er tool sans sig → propager
+    if msg_sig and tool_calls and not tool_calls[0].thought_signature:
+        tool_calls[0].thought_signature = msg_sig
     return ChatResult(
         content=content,
         tool_calls=tool_calls,
@@ -198,6 +211,25 @@ def _parse_openai_result(data: dict[str, Any], provider: str, model: str) -> Cha
     )
 
 
+def _extract_thought_signature(obj: dict[str, Any] | None) -> str:
+    if not isinstance(obj, dict):
+        return ""
+    # Formats documentés / observés
+    for key in ("thought_signature", "thoughtSignature"):
+        val = obj.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    extra = obj.get("extra_content") or obj.get("extraContent") or {}
+    if isinstance(extra, dict):
+        google = extra.get("google") or {}
+        if isinstance(google, dict):
+            for key in ("thought_signature", "thoughtSignature"):
+                val = google.get(key)
+                if isinstance(val, str) and val.strip():
+                    return val.strip()
+    return ""
+
+
 def _to_openai_msg(m: ChatMessage) -> dict[str, Any]:
     if m.role == "tool":
         return {
@@ -205,10 +237,13 @@ def _to_openai_msg(m: ChatMessage) -> dict[str, Any]:
             "tool_call_id": m.tool_call_id or "tool",
             "content": m.content or "",
         }
-    out: dict[str, Any] = {"role": m.role, "content": m.content or ""}
+    # Gemini docs utilisent parfois role=model ; l'endpoint OpenAI attend assistant
+    role = "assistant" if m.role in {"assistant", "model"} else m.role
+    out: dict[str, Any] = {"role": role, "content": m.content or ""}
     if m.tool_calls:
-        out["tool_calls"] = [
-            {
+        serialized = []
+        for idx, tc in enumerate(m.tool_calls):
+            item: dict[str, Any] = {
                 "id": tc.id,
                 "type": "function",
                 "function": {
@@ -216,8 +251,17 @@ def _to_openai_msg(m: ChatMessage) -> dict[str, Any]:
                     "arguments": json.dumps(tc.arguments, ensure_ascii=False),
                 },
             }
-            for tc in m.tool_calls
-        ]
+            sig = (tc.thought_signature or "").strip()
+            # Gemini 3 : 1er functionCall du step DOIT avoir une signature.
+            # Si absente (historique / provider incomplet) → bypass documenté.
+            if not sig and idx == 0:
+                sig = "skip_thought_signature_validator"
+            if sig:
+                item["extra_content"] = {"google": {"thought_signature": sig}}
+            serialized.append(item)
+        out["tool_calls"] = serialized
+    elif m.thought_signature:
+        out["extra_content"] = {"google": {"thought_signature": m.thought_signature}}
     return out
 
 

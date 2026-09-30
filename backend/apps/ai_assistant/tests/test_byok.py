@@ -128,6 +128,55 @@ def test_openai_compat_retries_on_503(settings):
     assert sleep.called
 
 
+def test_openai_compat_thought_signature_roundtrip():
+    from apps.ai_assistant.providers import ChatMessage, ToolCallRequest
+    from apps.ai_assistant.providers.openai_compat import (
+        _parse_openai_result,
+        _to_openai_msg,
+    )
+
+    data = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call-1",
+                            "type": "function",
+                            "function": {
+                                "name": "get_deployment_context",
+                                "arguments": "{}",
+                            },
+                            "extra_content": {
+                                "google": {"thought_signature": "SIGABC123"}
+                            },
+                        }
+                    ],
+                }
+            }
+        ]
+    }
+    result = _parse_openai_result(data, "openai_compat", "gemini-3.5-flash")
+    assert result.tool_calls[0].thought_signature == "SIGABC123"
+
+    msg = ChatMessage(role="assistant", content="", tool_calls=result.tool_calls)
+    payload = _to_openai_msg(msg)
+    assert payload["tool_calls"][0]["extra_content"]["google"]["thought_signature"] == "SIGABC123"
+
+    # Sans signature → bypass documenté sur le 1er tool call
+    bare = ChatMessage(
+        role="assistant",
+        tool_calls=[ToolCallRequest(id="x", name="list_domains", arguments={})],
+    )
+    bare_payload = _to_openai_msg(bare)
+    assert (
+        bare_payload["tool_calls"][0]["extra_content"]["google"]["thought_signature"]
+        == "skip_thought_signature_validator"
+    )
+
+
 def test_normalize_openai_compat_gemini_url():
     from apps.ai_assistant.services.provider_resolve import normalize_openai_compat_base_url
 
