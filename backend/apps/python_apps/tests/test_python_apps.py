@@ -219,11 +219,50 @@ def test_sync_passenger_wsgi_replaces_hello_stub(py_root):
     info = sync_passenger_wsgi(app, project, force=False)
     assert info["rewritten"] is True
     assert info["settings_module"] == "mysite.settings"
+    assert info.get("project_subdir") == ""
     synced = (project / "passenger_wsgi.py").read_text(encoding="utf-8")
     assert "mysite.settings" in synced
     assert "get_wsgi_application" in synced
     assert "Hello from V-zone Python app" not in synced
     assert (project / "passenger_wsgi.py.bak").exists()
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_sync_passenger_wsgi_nested_manage_py(py_root):
+    from apps.python_apps.services import sync_passenger_wsgi
+
+    user = UserFactory(username="pynest")
+    home = Path(py_root) / "pynest"
+    app_root = home / "webapp"
+    app_root.mkdir(parents=True)
+    nested = app_root / "backend"
+    nested.mkdir()
+    (nested / "manage.py").write_text("# manage", encoding="utf-8")
+    pkg = nested / "config"
+    pkg.mkdir()
+    (pkg / "settings.py").write_text("SECRET_KEY='x'\nALLOWED_HOSTS=[]\n", encoding="utf-8")
+    stub = (
+        'def application(environ, start_response):\n'
+        '    start_response("200 OK", [("Content-Type", "text/plain")])\n'
+        '    return [b"Hello from V-zone Python\\n"]\n'
+    )
+    (app_root / "passenger_wsgi.py").write_text(stub, encoding="utf-8")
+    app = create_python_app(
+        owner=user,
+        name="webapp",
+        framework="django",
+        relative_root="webapp",
+    )
+    (app_root / "passenger_wsgi.py").write_text(stub, encoding="utf-8")
+    info = sync_passenger_wsgi(app, app_root, force=True)
+    assert info["rewritten"] is True
+    assert info["settings_module"] == "config.settings"
+    assert info["project_subdir"] == "backend"
+    synced = (app_root / "passenger_wsgi.py").read_text(encoding="utf-8")
+    assert '_PROJECT_SUB = "backend"' in synced
+    assert "config.settings" in synced
+    assert "hello from v-zone" not in synced.lower()
 
 
 @pytest.mark.unit

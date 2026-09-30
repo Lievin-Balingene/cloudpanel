@@ -10,6 +10,7 @@ from apps.python_apps.views import (
     PythonAppRestartView,
     PythonAppStartView,
     PythonAppStopView,
+    PythonAppSyncWsgiView,
     PythonOverviewView,
 )
 
@@ -20,6 +21,7 @@ urlpatterns = [
     path("apps/<int:pk>/start/", PythonAppStartView.as_view(), name="python-app-start"),
     path("apps/<int:pk>/stop/", PythonAppStopView.as_view(), name="python-app-stop"),
     path("apps/<int:pk>/restart/", PythonAppRestartView.as_view(), name="python-app-restart"),
+    path("apps/<int:pk>/sync-wsgi/", PythonAppSyncWsgiView.as_view(), name="python-app-sync-wsgi"),
     path("apps/<int:pk>/install/", PythonAppInstallView.as_view(), name="python-app-install"),
     path("apps/<int:pk>/logs/", PythonAppLogsView.as_view(), name="python-app-logs"),
 ]

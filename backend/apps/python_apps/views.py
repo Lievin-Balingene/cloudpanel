@@ -130,6 +130,33 @@ class PythonAppRestartView(APIView):
         return Response({"success": True, "data": PythonAppSerializer(app).data})
 
 
+class PythonAppSyncWsgiView(APIView):
+    """Réécrit passenger_wsgi.py (corrige le stub Hello) puis redémarre l'app."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request, pk: int) -> Response:
+        from apps.python_apps.services import sync_passenger_wsgi
+
+        app = get_object_or_404(apps_qs(request.user), pk=pk)
+        force = str(request.data.get("force", "true")).lower() in {"1", "true", "yes"}
+        do_restart = str(request.data.get("restart", "true")).lower() in {"1", "true", "yes"}
+        info = sync_passenger_wsgi(app, force=force)
+        if do_restart:
+            app = restart_python_app(app)
+        else:
+            app.refresh_from_db()
+        return Response(
+            {
+                "success": True,
+                "data": {
+                    "app": PythonAppSerializer(app).data,
+                    "sync": info,
+                },
+            }
+        )
+
+
 class PythonAppInstallView(APIView):
     permission_classes = [IsAuthenticated]
 

@@ -17,6 +17,7 @@ import {
   Terminal,
   Trash2,
   Download,
+  Wrench,
   X,
 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
@@ -369,6 +370,15 @@ function AppCard({
             <Terminal className="h-3.5 w-3.5" />
           </IconAction>
           <IconAction
+            label="Réparer WSGI (corrige Hello → Django)"
+            tone="accent"
+            size="sm"
+            disabled={busy}
+            onClick={() => onAction("sync-wsgi")}
+          >
+            <Wrench className="h-3.5 w-3.5" />
+          </IconAction>
+          <IconAction
             label="pip install (requirements + paquet manquant)"
             size="sm"
             disabled={busy}
@@ -488,8 +498,13 @@ export function PythonAppsManager({ title }: { title: string }) {
 
   const action = useMutation({
     mutationFn: ({ id, op, name }: { id: number; op: string; name: string }) =>
-      runWithProgress(`Python ${op} · ${name}`, () =>
-        apiRequest(`/python/apps/${id}/${op}/`, { method: "POST", body: "{}" }),
+      runWithProgress(
+        op === "sync-wsgi" ? `Réparer WSGI · ${name}` : `Python ${op} · ${name}`,
+        () =>
+          apiRequest(`/python/apps/${id}/${op}/`, {
+            method: "POST",
+            body: op === "sync-wsgi" ? JSON.stringify({ force: true, restart: true }) : "{}",
+          }),
       ),
     onSuccess: () => {
       setError(null);

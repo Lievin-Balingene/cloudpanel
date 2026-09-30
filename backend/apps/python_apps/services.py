@@ -84,8 +84,11 @@ import sys
 import traceback
 
 APP_ROOT = os.path.dirname(os.path.abspath(__file__))
-if APP_ROOT not in sys.path:
-    sys.path.insert(0, APP_ROOT)
+_PROJECT_SUB = "{project_subdir}"
+PROJECT_DIR = os.path.join(APP_ROOT, _PROJECT_SUB) if _PROJECT_SUB else APP_ROOT
+for _p in (PROJECT_DIR, APP_ROOT):
+    if _p and _p not in sys.path:
+        sys.path.insert(0, _p)
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "{settings_module}")
 
@@ -121,7 +124,8 @@ except Exception as _vzone_exc:
             + _vzone_tb
             + "\\n"
             "Vérifiez : venv (Django installé), DJANGO_SETTINGS_MODULE={settings_module}, "
-            "et passenger_wsgi.py. Puis Restart depuis le panel.\\n"
+            "manage.py à côté de passenger_wsgi.py (ou sous-dossier), "
+            "puis Restart / Réparer WSGI depuis le panel.\\n"
         ).encode("utf-8", errors="replace")
         start_response(
             "500 Internal Server Error",
@@ -245,21 +249,87 @@ def cpanel_venv_path(owner: User, app_name: str, python_version: str) -> Path:
     return user_home(owner) / "virtualenv" / app_name / version
 
 
-def detect_django_project_package(app_root: Path) -> str:
-    """Trouve le package settings à côté de manage.py (même répertoire que passenger_wsgi)."""
-    if (app_root / "manage.py").exists():
-        for child in sorted(app_root.iterdir()):
-            if not child.is_dir() or child.name.startswith(".") or child.name in {"static", "media", "logs", "public"}:
-                continue
-            if (child / "settings.py").exists():
-                return child.name
+_SKIP_DJANGO_DIRS = frozenset(
+    {"static", "media", "logs", "public", "public_html", "tmp", "venv", ".venv", "node_modules", "__pycache__"}
+)
+
+
+def _package_with_settings(project_dir: Path) -> str | None:
+    """Nom du package contenant settings.py sous project_dir (où se trouve manage.py)."""
+    if not (project_dir / "manage.py").exists():
+        return None
+    for child in sorted(project_dir.iterdir()):
+        if (
+            not child.is_dir()
+            or child.name.startswith(".")
+            or child.name in _SKIP_DJANGO_DIRS
+        ):
+            continue
+        if (child / "settings.py").exists() or (child / "settings").is_dir():
+            return child.name
     return DJANGO_PROJECT_PACKAGE
+
+
+def resolve_django_layout(app_root: Path) -> tuple[str, str]:
+    """
+    Retourne (settings_module, project_subdir).
+    project_subdir vide = manage.py à la racine de l'application root ;
+    sinon sous-dossier relatif où se trouve manage.py.
+    """
+    pkg = _package_with_settings(app_root)
+    if pkg:
+        return f"{pkg}.settings", ""
+    try:
+        children = sorted(app_root.iterdir())
+    except OSError:
+        children = []
+    for child in children:
+        if (
+            not child.is_dir()
+            or child.name.startswith(".")
+            or child.name in _SKIP_DJANGO_DIRS
+            or child.name == "virtualenv"
+        ):
+            continue
+        pkg = _package_with_settings(child)
+        if pkg:
+            return f"{pkg}.settings", child.name
+    return f"{DJANGO_PROJECT_PACKAGE}.settings", ""
+
+
+def detect_django_project_package(app_root: Path) -> str:
+    """Trouve le package settings (manage.py à la racine ou 1 niveau sous l'app root)."""
+    settings_module, _subdir = resolve_django_layout(app_root)
+    return settings_module.split(".", 1)[0]
+
+
+def find_manage_py(app_root: Path) -> Path | None:
+    """Chemin manage.py sous l'application root (racine ou 1 sous-dossier)."""
+    direct = app_root / "manage.py"
+    if direct.is_file():
+        return direct
+    try:
+        children = sorted(app_root.iterdir())
+    except OSError:
+        return None
+    for child in children:
+        if not child.is_dir() or child.name.startswith(".") or child.name in _SKIP_DJANGO_DIRS:
+            continue
+        cand = child / "manage.py"
+        if cand.is_file():
+            return cand
+    return None
+
+
+def is_passenger_hello_stub(text: str) -> bool:
+    """True si passenger_wsgi.py est encore le stub placeholder V-zone."""
+    low = (text or "").lower()
+    return "hello from v-zone" in low
 
 
 def passenger_wsgi_needs_sync(text: str, settings_module: str) -> bool:
     """True si le fichier est un stub Hello / mauvais settings / trop ancien."""
-    low = (text or "").lower()
-    if "hello from v-zone python app" in low:
+    if is_passenger_hello_stub(text):
         return True
     if "get_wsgi_application" not in text:
         return True
@@ -283,8 +353,7 @@ def sync_passenger_wsgi(app: PythonApp, app_root: Path | None = None, *, force: 
     """
     root = app_root or absolute_app_root(app)
     entry = root / "passenger_wsgi.py"
-    pkg = detect_django_project_package(root)
-    settings_module = f"{pkg}.settings"
+    settings_module, project_subdir = resolve_django_layout(root)
     existing = ""
     if entry.is_file():
         try:
@@ -296,16 +365,31 @@ def sync_passenger_wsgi(app: PythonApp, app_root: Path | None = None, *, force: 
             "rewritten": False,
             "path": str(entry),
             "settings_module": settings_module,
+            "project_subdir": project_subdir,
             "reason": "already_ok",
         }
-    content = WSGI_TEMPLATE.format(settings_module=settings_module)
+    content = WSGI_TEMPLATE.format(
+        settings_module=settings_module,
+        project_subdir=project_subdir,
+    )
     if existing:
         bak = root / "passenger_wsgi.py.bak"
         try:
             bak.write_text(existing, encoding="utf-8")
         except OSError:
             pass
-    entry.write_text(content, encoding="utf-8")
+    try:
+        entry.write_text(content, encoding="utf-8")
+    except OSError as exc:
+        raise VZoneAPIException(
+            detail=(
+                f"Impossible d'écrire passenger_wsgi.py ({exc}). "
+                "Vérifiez les permissions du dossier Application root."
+            ),
+            code="passenger_wsgi_write_failed",
+            status_code=500,
+            extra={"path": str(entry)},
+        ) from exc
     try:
         fix_client_paths(app.owner, entry)
     except Exception:  # noqa: BLE001
@@ -314,8 +398,10 @@ def sync_passenger_wsgi(app: PythonApp, app_root: Path | None = None, *, force: 
         "rewritten": True,
         "path": str(entry),
         "settings_module": settings_module,
+        "project_subdir": project_subdir,
         "backup": str(root / "passenger_wsgi.py.bak") if existing else "",
         "reason": "forced" if force else "stub_or_mismatch",
+        "was_hello_stub": is_passenger_hello_stub(existing),
     }
 
 
@@ -522,13 +608,15 @@ def _scaffold(app_root: Path, mode: str, framework: str) -> None:
         entry = app_root / "passenger_wsgi.py"
         # Comme cPanel : créer une seule fois — les modifications utilisateur sont préservées
         if not entry.exists():
-            pkg = (
-                detect_django_project_package(app_root)
-                if framework == PythonApp.Framework.DJANGO
-                else "project"
-            )
+            if framework == PythonApp.Framework.DJANGO:
+                settings_module, project_subdir = resolve_django_layout(app_root)
+            else:
+                settings_module, project_subdir = f"{DJANGO_PROJECT_PACKAGE}.settings", ""
             entry.write_text(
-                WSGI_TEMPLATE.format(settings_module=f"{pkg}.settings"),
+                WSGI_TEMPLATE.format(
+                    settings_module=settings_module,
+                    project_subdir=project_subdir,
+                ),
                 encoding="utf-8",
             )
     readme = app_root / "README.vzone.md"
@@ -536,8 +624,9 @@ def _scaffold(app_root: Path, mode: str, framework: str) -> None:
         readme.write_text(
             "# Application Python V-zone (style cPanel)\n\n"
             f"Mode: {mode}\nFramework: {framework}\n\n"
-            "Le fichier `passenger_wsgi.py` est créé à la création de l'app uniquement.\n"
-            "Vos modifications ne sont jamais écrasées par Start / Restart / Update.\n",
+            "Placez `manage.py` dans ce dossier (Application root), à côté de `passenger_wsgi.py`.\n"
+            "Au Start / Restart, le panel remplace le stub « Hello » par un vrai chargeur Django.\n"
+            "Bouton « Réparer WSGI » : force la réécriture + redémarrage.\n",
             encoding="utf-8",
         )
 
@@ -2282,20 +2371,68 @@ def start_python_app(app: PythonApp) -> PythonApp:
             logger.debug("stop avant start ignoré", exc_info=True)
 
     ensure_runtime_deps(app, app_root, py)
-    # Django : s'assurer que passenger_wsgi.py n'est plus le stub « Hello »
-    if app.mode == PythonApp.Mode.WSGI and (
-        app.framework == PythonApp.Framework.DJANGO or (app_root / "manage.py").exists()
-    ):
-        try:
-            sync_info = sync_passenger_wsgi(app, app_root, force=False)
-            if sync_info.get("rewritten"):
-                logger.info(
-                    "passenger_wsgi resync %s → %s",
-                    app.name,
-                    sync_info.get("settings_module"),
+    # Remplacer le stub « Hello from V-zone » / brancher Django (manage.py racine ou sous-dossier)
+    if app.mode == PythonApp.Mode.WSGI:
+        entry = app_root / "passenger_wsgi.py"
+        stub_text = ""
+        if entry.is_file():
+            try:
+                stub_text = entry.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                stub_text = ""
+        is_hello = is_passenger_hello_stub(stub_text)
+        djangoish = (
+            app.framework == PythonApp.Framework.DJANGO
+            or find_manage_py(app_root) is not None
+        )
+        if is_hello or djangoish:
+            try:
+                sync_info = sync_passenger_wsgi(app, app_root, force=is_hello)
+                if sync_info.get("rewritten"):
+                    logger.info(
+                        "passenger_wsgi resync %s → %s (subdir=%s)",
+                        app.name,
+                        sync_info.get("settings_module"),
+                        sync_info.get("project_subdir") or ".",
+                    )
+            except VZoneAPIException:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("sync_passenger_wsgi a échoué pour %s", app.name)
+                if is_hello:
+                    raise VZoneAPIException(
+                        detail=(
+                            "Le site affiche encore « Hello from V-zone » : "
+                            f"impossible de réécrire passenger_wsgi.py ({exc}). "
+                            "Corrigez les permissions du Application root, "
+                            "puis utilisez Réparer WSGI."
+                        ),
+                        code="passenger_wsgi_sync_failed",
+                        status_code=500,
+                    ) from exc
+        # Garde-fou : si le stub Hello est toujours là, refuser de démarrer
+        if entry.is_file():
+            try:
+                after = entry.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                after = ""
+            if is_passenger_hello_stub(after):
+                manage = find_manage_py(app_root)
+                raise VZoneAPIException(
+                    detail=(
+                        "passenger_wsgi.py est encore le stub « Hello from V-zone Python ». "
+                        + (
+                            f"manage.py trouvé : {manage}. "
+                            if manage
+                            else "Aucun manage.py dans l'Application root (ni 1 niveau en dessous). "
+                        )
+                        + "Placez le projet Django dans l'Application root, "
+                        "puis Redémarrer ou Réparer WSGI."
+                    ),
+                    code="passenger_wsgi_hello_stub",
+                    status_code=400,
+                    extra={"root": str(app_root), "manage_py": str(manage) if manage else ""},
                 )
-        except Exception:  # noqa: BLE001
-            logger.exception("sync_passenger_wsgi a échoué pour %s", app.name)
     _preflight_runtime_module(app, py)
     _preflight_app_import(app, app_root, py, env, venv_dir=venv_dir)
     # Préflight / pip peuvent recréer des fichiers owned par le panel → re-fix
