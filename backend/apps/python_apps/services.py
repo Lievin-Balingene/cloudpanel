@@ -390,6 +390,7 @@ def sync_passenger_wsgi(app: PythonApp, app_root: Path | None = None, *, force: 
             status_code=500,
             extra={"path": str(entry)},
         ) from exc
+    _clear_wsgi_bytecode(root)
     try:
         fix_client_paths(app.owner, entry)
     except Exception:  # noqa: BLE001
@@ -1689,6 +1690,178 @@ def _wait_port(port: int, *, timeout_s: float = 15.0) -> bool:
     return False
 
 
+def _pids_listening_on_port(port: int) -> list[int]:
+    """PIDs qui écoutent sur le port TCP (ss / lsof / fuser)."""
+    if port <= 0:
+        return []
+    pids: set[int] = set()
+    try:
+        out = subprocess.run(
+            ["ss", "-ltnp", f"sport = :{port}"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=False,
+        ).stdout or ""
+        for m in re.finditer(r"pid=(\d+)", out):
+            pids.add(int(m.group(1)))
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        pass
+    if not pids:
+        try:
+            out = subprocess.run(
+                ["lsof", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"],
+                capture_output=True,
+                text=True,
+                timeout=8,
+                check=False,
+            ).stdout or ""
+            for line in out.splitlines():
+                line = line.strip()
+                if line.isdigit():
+                    pids.add(int(line))
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            pass
+    if not pids:
+        try:
+            out = subprocess.run(
+                ["fuser", f"{port}/tcp"],
+                capture_output=True,
+                text=True,
+                timeout=8,
+                check=False,
+            )
+            blob = f"{out.stdout or ''} {out.stderr or ''}"
+            for m in re.finditer(r"(\d+)", blob):
+                pids.add(int(m.group(1)))
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            pass
+    return sorted(pids)
+
+
+def _free_listen_port(port: int) -> None:
+    """Tue tout process qui occupe encore le port (gunicorn orphelin = Hello persistant)."""
+    if port <= 0:
+        return
+    for pid in _pids_listening_on_port(port):
+        logger.info("Libération port %s : kill pid %s", port, pid)
+        _kill_app_pid(pid)
+    # filet fuser -k
+    try:
+        subprocess.run(
+            ["fuser", "-k", f"{port}/tcp"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    deadline = time.time() + 3.0
+    while time.time() < deadline and _port_listening(port):
+        time.sleep(0.15)
+
+
+def _clear_wsgi_bytecode(app_root: Path) -> None:
+    """Supprime les .pyc de passenger_wsgi (évite stub Hello en cache)."""
+    for pattern in ("passenger_wsgi*.pyc", "passenger_wsgi*.pyo"):
+        for p in app_root.glob(pattern):
+            try:
+                p.unlink(missing_ok=True)
+            except OSError:
+                pass
+    cache = app_root / "__pycache__"
+    if cache.is_dir():
+        for p in cache.glob("passenger_wsgi*.pyc"):
+            try:
+                p.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _local_app_response_body(port: int, *, timeout: float = 4.0) -> str:
+    """Corps HTTP de GET / sur 127.0.0.1:port (pour détecter le stub Hello)."""
+    if port <= 0:
+        return ""
+    import urllib.error
+    import urllib.request
+
+    url = f"http://127.0.0.1:{port}/"
+    try:
+        req = urllib.request.Request(url, method="GET", headers={"Host": "127.0.0.1"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read(4096)
+            return raw.decode("utf-8", errors="replace")
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError) as exc:
+        # HTTPError peut contenir un body (500 Django)
+        if isinstance(exc, urllib.error.HTTPError):
+            try:
+                return (exc.read(4096) or b"").decode("utf-8", errors="replace")
+            except OSError:
+                return ""
+        return ""
+
+
+def _response_is_hello_stub(body: str) -> bool:
+    return "hello from v-zone" in (body or "").lower()
+
+
+def _repair_wsgi_for_start(app: PythonApp, app_root: Path) -> dict:
+    """
+    Réécrit passenger_wsgi.py si stub Hello / Django, purge le bytecode.
+    force=True dès qu'un Hello est détecté (sinon sync intelligent).
+    """
+    if app.mode != PythonApp.Mode.WSGI:
+        return {"rewritten": False, "reason": "not_wsgi"}
+    entry = app_root / "passenger_wsgi.py"
+    stub_text = ""
+    if entry.is_file():
+        try:
+            stub_text = entry.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            stub_text = ""
+    is_hello = is_passenger_hello_stub(stub_text)
+    djangoish = (
+        app.framework == PythonApp.Framework.DJANGO
+        or find_manage_py(app_root) is not None
+    )
+    info: dict = {
+        "rewritten": False,
+        "was_hello": is_hello,
+        "path": str(entry),
+    }
+    if not (is_hello or djangoish):
+        return {**info, "reason": "skip_non_django"}
+    # Toujours réécrire pour Django / Hello : un gunicorn orphelin + vieux fichier = Hello éternel
+    info = sync_passenger_wsgi(app, app_root, force=True)
+    after = ""
+    if entry.is_file():
+        try:
+            after = entry.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            after = ""
+    _clear_wsgi_bytecode(app_root)
+    if is_passenger_hello_stub(after):
+        manage = find_manage_py(app_root)
+        raise VZoneAPIException(
+            detail=(
+                "Impossible d'écraser le stub « Hello from V-zone Python app » dans "
+                f"{entry}. "
+                + (
+                    f"manage.py trouvé : {manage}. "
+                    if manage
+                    else "Aucun manage.py dans l'Application root. "
+                )
+                + "Vérifiez les permissions (sudo vzone-fix-app-perms), "
+                "puis Réparer WSGI."
+            ),
+            code="passenger_wsgi_hello_stub",
+            status_code=400,
+            extra={"root": str(app_root), "manage_py": str(manage) if manage else ""},
+        )
+    return info
+
+
 def _kill_app_pid(pid: int | None) -> None:
     if not pid:
         return
@@ -2334,6 +2507,20 @@ def start_python_app(app: PythonApp) -> PythonApp:
     refresh_enter_scripts(app)
     access_log, error_log = _prepare_app_logs(app.owner, app_root)
     _ensure_app_data_writable(app.owner, app_root, venv_dir)
+
+    # Toujours réparer le stub Hello AVANT mock / hosts patch / gunicorn
+    try:
+        _repair_wsgi_for_start(app, app_root)
+    except VZoneAPIException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("repair wsgi start %s", app.name)
+        raise VZoneAPIException(
+            detail=f"Échec réparation passenger_wsgi.py : {exc}",
+            code="passenger_wsgi_sync_failed",
+            status_code=500,
+        ) from exc
+
     _ensure_django_hosts_patch(app, app_root)
     pid_file = app_root / "logs" / "app.pid"
 
@@ -2362,77 +2549,18 @@ def start_python_app(app: PythonApp) -> PythonApp:
         _refresh_domain_routing(app.domain_name)
         return app
 
-    # Arrêter une instance précédente sur le même pid
+    # Arrêter une instance précédente + libérer le port (orphans gunicorn)
     if app.pid or pid_file.exists():
         try:
             stop_python_app(app)
             app.refresh_from_db()
         except Exception:  # noqa: BLE001
             logger.debug("stop avant start ignoré", exc_info=True)
+    _free_listen_port(app.port)
 
     ensure_runtime_deps(app, app_root, py)
-    # Remplacer le stub « Hello from V-zone » / brancher Django (manage.py racine ou sous-dossier)
-    if app.mode == PythonApp.Mode.WSGI:
-        entry = app_root / "passenger_wsgi.py"
-        stub_text = ""
-        if entry.is_file():
-            try:
-                stub_text = entry.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                stub_text = ""
-        is_hello = is_passenger_hello_stub(stub_text)
-        djangoish = (
-            app.framework == PythonApp.Framework.DJANGO
-            or find_manage_py(app_root) is not None
-        )
-        if is_hello or djangoish:
-            try:
-                sync_info = sync_passenger_wsgi(app, app_root, force=is_hello)
-                if sync_info.get("rewritten"):
-                    logger.info(
-                        "passenger_wsgi resync %s → %s (subdir=%s)",
-                        app.name,
-                        sync_info.get("settings_module"),
-                        sync_info.get("project_subdir") or ".",
-                    )
-            except VZoneAPIException:
-                raise
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("sync_passenger_wsgi a échoué pour %s", app.name)
-                if is_hello:
-                    raise VZoneAPIException(
-                        detail=(
-                            "Le site affiche encore « Hello from V-zone » : "
-                            f"impossible de réécrire passenger_wsgi.py ({exc}). "
-                            "Corrigez les permissions du Application root, "
-                            "puis utilisez Réparer WSGI."
-                        ),
-                        code="passenger_wsgi_sync_failed",
-                        status_code=500,
-                    ) from exc
-        # Garde-fou : si le stub Hello est toujours là, refuser de démarrer
-        if entry.is_file():
-            try:
-                after = entry.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                after = ""
-            if is_passenger_hello_stub(after):
-                manage = find_manage_py(app_root)
-                raise VZoneAPIException(
-                    detail=(
-                        "passenger_wsgi.py est encore le stub « Hello from V-zone Python ». "
-                        + (
-                            f"manage.py trouvé : {manage}. "
-                            if manage
-                            else "Aucun manage.py dans l'Application root (ni 1 niveau en dessous). "
-                        )
-                        + "Placez le projet Django dans l'Application root, "
-                        "puis Redémarrer ou Réparer WSGI."
-                    ),
-                    code="passenger_wsgi_hello_stub",
-                    status_code=400,
-                    extra={"root": str(app_root), "manage_py": str(manage) if manage else ""},
-                )
+    # 2e passe : au cas où pip / perms auraient restauré un vieux fichier
+    _repair_wsgi_for_start(app, app_root)
     _preflight_runtime_module(app, py)
     _preflight_app_import(app, app_root, py, env, venv_dir=venv_dir)
     # Préflight / pip peuvent recréer des fichiers owned par le panel → re-fix
@@ -2488,6 +2616,61 @@ def start_python_app(app: PythonApp) -> PythonApp:
         app.status = PythonApp.Status.RUNNING
         app.last_error = ""
         app.last_started_at = timezone.now()
+
+        # Vérifier que le process ne sert plus le stub Hello (gunicorn orphelin)
+        time.sleep(0.4)
+        body = _local_app_response_body(app.port)
+        if _response_is_hello_stub(body):
+            logger.warning(
+                "Port %s répond encore Hello stub pour %s — force rewrite + relaunch",
+                app.port,
+                app.name,
+            )
+            _kill_app_pid(proc.pid)
+            _free_listen_port(app.port)
+            sync_passenger_wsgi(app, app_root, force=True)
+            _clear_wsgi_bytecode(app_root)
+            # Confirmer que le fichier n'est plus Hello
+            entry = app_root / "passenger_wsgi.py"
+            disk = entry.read_text(encoding="utf-8", errors="replace") if entry.is_file() else ""
+            if is_passenger_hello_stub(disk):
+                raise RuntimeError(
+                    "passenger_wsgi.py contient encore « Hello from V-zone Python app » "
+                    f"dans {entry}. Impossible de le réécrire (permissions ?)."
+                )
+            access_f = _open_app_log_append(app.owner, access_log)
+            error_f = _open_app_log_append(app.owner, error_log)
+            log_offset = error_log.stat().st_size if error_log.exists() else 0
+            spawn_cmd = build_runas_cmd(jail, cmd, env=env)
+            proc = subprocess.Popen(
+                spawn_cmd,
+                cwd=str(app_root),
+                stdout=access_f,
+                stderr=error_f,
+                start_new_session=True,
+            )
+            if not _wait_port(app.port, timeout_s=20.0):
+                new_log = _log_bytes_since(error_log, log_offset)
+                _kill_app_pid(proc.pid)
+                raise RuntimeError(
+                    _format_start_failure(returncode=proc.poll(), stderr_new=new_log, port=app.port)
+                )
+            time.sleep(0.4)
+            body2 = _local_app_response_body(app.port)
+            if _response_is_hello_stub(body2):
+                _kill_app_pid(proc.pid)
+                _free_listen_port(app.port)
+                raise RuntimeError(
+                    "Le site répond encore « Hello from V-zone Python app » après réparation. "
+                    f"Vérifiez que gunicorn charge {app_root / 'passenger_wsgi.py'} "
+                    "(Application root / entrypoint), puis Relancer."
+                )
+            try:
+                pid_file.write_text(str(proc.pid), encoding="utf-8")
+            except OSError:
+                _reclaim_app_logs_for_panel(app.owner, pid_file.parent, pid_file)
+                pid_file.write_text(str(proc.pid), encoding="utf-8")
+            app.pid = proc.pid
     except Exception as exc:  # noqa: BLE001
         detail = str(exc)
         if isinstance(exc, VZoneAPIException):
@@ -2541,8 +2724,12 @@ def stop_python_app(app: PythonApp) -> PythonApp:
     pid_file = app_root / "logs" / "app.pid"
     pid = _read_app_pid_file(pid_file, app.pid)
 
-    if provision_mode() != "mock" and pid and should_execute():
-        _kill_app_pid(pid)
+    if provision_mode() != "mock" and should_execute():
+        if pid:
+            _kill_app_pid(pid)
+        # Toujours libérer le port (évite Hello servi par un gunicorn orphelin)
+        if app.port:
+            _free_listen_port(app.port)
 
     _clear_app_pid_file(app.owner, pid_file)
     app.pid = None

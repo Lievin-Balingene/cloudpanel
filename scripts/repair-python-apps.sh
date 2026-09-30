@@ -63,7 +63,7 @@ for home in "${HOME_ROOT}"/*; do
   done < <(find "$home" -maxdepth 3 -type f -name 'passenger_wsgi.py' -print0 2>/dev/null)
 done
 
-echo "[django] reconcile + refresh vhosts"
+echo "[django] reconcile + rewrite Hello stubs + refresh vhosts"
 cd "${VZONE_ROOT}/backend" 2>/dev/null || cd "${REPO_DIR}/backend"
 if [[ -x .venv/bin/python ]]; then
   .venv/bin/python manage.py reconcile_python_apps 2>/dev/null || true
@@ -73,16 +73,39 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "vzone.settings.production")
 django.setup()
 from apps.domains.services import refresh_web_routing
 from apps.python_apps.models import PythonApp
-from apps.python_apps.services import fix_client_paths, absolute_app_root
+from apps.python_apps.services import (
+    absolute_app_root,
+    fix_client_paths,
+    is_passenger_hello_stub,
+    restart_python_app,
+    sync_passenger_wsgi,
+)
 n = 0
+rewrote = 0
+restarted = []
 for app in PythonApp.objects.exclude(status="removed").select_related("owner"):
     try:
         root = absolute_app_root(app)
         fix_client_paths(app.owner, root, required=False, verify_sqlite_in=root)
         n += 1
+        entry = root / "passenger_wsgi.py"
+        text = ""
+        if entry.is_file():
+            text = entry.read_text(encoding="utf-8", errors="replace")
+        if is_passenger_hello_stub(text) or app.framework == "django":
+            info = sync_passenger_wsgi(app, root, force=True)
+            print("sync", app.name, info.get("settings_module"), "rewritten=", info.get("rewritten"))
+            if info.get("rewritten") or is_passenger_hello_stub(text):
+                rewrote += 1
+                if app.status == "running":
+                    try:
+                        restart_python_app(app)
+                        restarted.append(app.name)
+                    except Exception as e:
+                        print("restart fail", app.name, e)
     except Exception as e:
         print("skip", app.name, e)
-print("apps fixed via ORM:", n)
+print("apps fixed via ORM:", n, "wsgi rewrites:", rewrote, "restarted:", restarted)
 refresh_web_routing()
 print("vhosts refreshed")
 PY
