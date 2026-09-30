@@ -50,6 +50,13 @@ const PRESETS: { id: string; label: string; mode: AiProviderMode; base_url: stri
     model_name: "gemini-3.5-flash",
   },
   {
+    id: "gemini-lite",
+    label: "Gemini Lite",
+    mode: "openai_compat",
+    base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+    model_name: "gemini-3.5-flash-lite",
+  },
+  {
     id: "gemini37",
     label: "Gemini 3.7",
     mode: "openai_compat",

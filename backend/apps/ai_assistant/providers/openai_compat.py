@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from typing import Any
 from uuid import uuid4
 
@@ -19,6 +20,8 @@ _MODEL_MIGRATE_RE = re.compile(
     r"(?:update your code to use|use)\s+models/([a-zA-Z0-9._-]+)",
     re.IGNORECASE,
 )
+
+_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 
 
 class OpenAICompatProvider:
@@ -49,6 +52,7 @@ class OpenAICompatProvider:
         )
         default_timeout = int(getattr(settings, "VZONE_AI_TIMEOUT_SEC", 90) or 90)
         self.timeout = int(timeout if timeout is not None else default_timeout)
+        self.max_retries = int(getattr(settings, "VZONE_AI_BYOK_HTTP_RETRIES", 3) or 3)
 
     def is_available(self) -> bool:
         return bool(self.base_url)
@@ -68,7 +72,10 @@ class OpenAICompatProvider:
 
         model = self.model
         last_err = ""
-        for attempt in range(2):
+        model_switched = False
+        attempts = max(2, self.max_retries + 1)
+
+        for attempt in range(attempts):
             payload: dict[str, Any] = {
                 "model": model,
                 "temperature": temperature,
@@ -84,20 +91,28 @@ class OpenAICompatProvider:
                     json=payload,
                     timeout=self.timeout,
                 )
+            except requests.Timeout as exc:
+                last_err = f"Timeout après {self.timeout}s"
+                if attempt < attempts - 1:
+                    time.sleep(min(2**attempt, 8))
+                    continue
+                raise RuntimeError(f"Provider OpenAI-compat indisponible: {last_err}") from exc
             except requests.RequestException as exc:
                 logger.warning("OpenAI-compat chat failed: %s", exc)
                 raise RuntimeError(f"Provider OpenAI-compat indisponible: {exc}") from exc
 
             if resp.status_code < 400:
                 data = resp.json()
-                self.model = model  # mémorise le modèle effectivement utilisé
+                self.model = model
                 return _parse_openai_result(data, self.name, model)
 
             body = (resp.text or "")[:600]
-            last_err = f"HTTP {resp.status_code} sur {self.base_url}/chat/completions — {body}"
+            last_err = _friendly_http_error(resp.status_code, self.base_url, body)
+
+            # 404 modèle retiré → bascule une fois vers le modèle suggéré
             suggested = _extract_suggested_model(body)
             if (
-                attempt == 0
+                not model_switched
                 and resp.status_code == 404
                 and suggested
                 and suggested.lower() != model.lower()
@@ -108,10 +123,40 @@ class OpenAICompatProvider:
                     suggested,
                 )
                 model = suggested
+                model_switched = True
+                continue
+
+            # Surcharge / rate-limit → backoff
+            if resp.status_code in _RETRYABLE_STATUS and attempt < attempts - 1:
+                delay = min(2**attempt, 8)
+                logger.warning(
+                    "OpenAI-compat HTTP %s (tentative %s/%s) — attente %ss",
+                    resp.status_code,
+                    attempt + 1,
+                    attempts,
+                    delay,
+                )
+                time.sleep(delay)
                 continue
             break
 
         raise RuntimeError(last_err)
+
+
+def _friendly_http_error(status: int, base_url: str, body: str) -> str:
+    low = (body or "").lower()
+    if status == 503 or "high demand" in low or "unavailable" in low:
+        return (
+            f"HTTP {status} — Gemini / le provider est temporairement saturé "
+            "(forte demande). Réessayez dans quelques secondes, ou passez à "
+            "`gemini-3.5-flash-lite` / `gemini-3.7-flash` dans ⚙ Mon modèle IA."
+        )
+    if status == 429 or "rate" in low and "limit" in low:
+        return (
+            f"HTTP {status} — quota / rate-limit atteint. Attendez un moment "
+            "ou vérifiez les limites de votre clé API."
+        )
+    return f"HTTP {status} sur {base_url}/chat/completions — {body}"
 
 
 def _extract_suggested_model(body: str) -> str:

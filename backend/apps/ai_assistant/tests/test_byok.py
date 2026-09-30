@@ -98,6 +98,36 @@ def test_openai_compat_retries_suggested_gemini_model(settings):
     assert mock_post.call_args_list[1].kwargs["json"]["model"] == "gemini-3.5-flash"
 
 
+def test_openai_compat_retries_on_503(settings):
+    from unittest.mock import MagicMock, patch
+
+    from apps.ai_assistant.providers import ChatMessage
+    from apps.ai_assistant.providers.openai_compat import OpenAICompatProvider
+
+    p = OpenAICompatProvider(
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+        api_key="test-key",
+        model="gemini-3.5-flash",
+        timeout=5,
+    )
+    p.max_retries = 2
+    busy = MagicMock()
+    busy.status_code = 503
+    busy.text = '{"error":{"message":"high demand","status":"UNAVAILABLE"}}'
+    ok = MagicMock()
+    ok.status_code = 200
+    ok.json.return_value = {
+        "choices": [{"message": {"content": "ok apres retry", "tool_calls": []}}],
+    }
+    with (
+        patch("apps.ai_assistant.providers.openai_compat.requests.post", side_effect=[busy, ok]),
+        patch("apps.ai_assistant.providers.openai_compat.time.sleep") as sleep,
+    ):
+        result = p.chat([ChatMessage(role="user", content="hi")])
+    assert result.content == "ok apres retry"
+    assert sleep.called
+
+
 def test_normalize_openai_compat_gemini_url():
     from apps.ai_assistant.services.provider_resolve import normalize_openai_compat_base_url
 
