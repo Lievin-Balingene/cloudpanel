@@ -2,7 +2,21 @@ from __future__ import annotations
 
 from django.contrib import admin
 
-from apps.ai_assistant.models import AgentActionLog, Conversation, Message, PendingAction
+from apps.ai_assistant.models import (
+    AgentActionLog,
+    Conversation,
+    Message,
+    PendingAction,
+    UserAiProviderSettings,
+)
+
+
+@admin.register(UserAiProviderSettings)
+class UserAiProviderSettingsAdmin(admin.ModelAdmin):
+    list_display = ("owner", "mode", "model_name", "enabled", "last_test_ok", "updated_at")
+    list_filter = ("mode", "enabled", "last_test_ok")
+    search_fields = ("owner__username", "base_url", "model_name")
+    readonly_fields = ("api_key_encrypted", "last_tested_at", "created_at", "updated_at")
 
 
 @admin.register(Conversation)

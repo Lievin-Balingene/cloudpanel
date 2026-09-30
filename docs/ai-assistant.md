@@ -39,6 +39,30 @@ VZONE_AI_OLLAMA_MODEL=llama3.2:1b
 VZONE_AI_PROVIDER=auto
 ```
 
+## BYOK client (Bring Your Own Key)
+
+Chaque client peut brancher **son** modèle depuis l’icône ⚙ du chat V-zone AI :
+
+| Mode | Usage |
+|------|--------|
+| `server` | Provider panel (défaut) |
+| `ollama` | URL Ollama perso (PC/VPS via tunnel HTTPS) |
+| `openai_compat` | OpenAI / OpenRouter / Groq / vLLM / LM Studio |
+
+API :
+- `GET/PUT/DELETE /api/v1/ai/provider/`
+- `POST /api/v1/ai/provider/test/`
+
+Clés API stockées chiffrées (Fernet). URLs privées (`127.0.0.1`, RFC1918) **refusées** sauf :
+
+```bash
+VZONE_AI_BYOK_ENABLED=true
+VZONE_AI_BYOK_ALLOW_PRIVATE_URLS=false   # true seulement si mono-tenant / lab
+VZONE_AI_BYOK_TIMEOUT_SEC=30
+```
+
+Ollama sur le PC du client n’est pas joignable directement depuis le VPS : utilisez un tunnel
+(Cloudflare Tunnel, ngrok, Tailscale Funnel…) vers une URL HTTPS publique.
 
 ## Couverture panneau client
 

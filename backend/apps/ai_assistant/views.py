@@ -9,8 +9,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.ai_assistant.models import Conversation
-from apps.ai_assistant.providers import get_provider
 from apps.ai_assistant.serializers import (
+    AiProviderSettingsSerializer,
+    AiProviderTestSerializer,
     ConfirmActionSerializer,
     ConversationDetailSerializer,
     ConversationSerializer,
@@ -22,6 +23,16 @@ from apps.ai_assistant.services import (
     create_conversation,
     refresh_context,
     send_message,
+)
+from apps.ai_assistant.services.provider_resolve import (
+    byok_feature_enabled,
+    get_or_create_settings,
+    get_provider_for_user,
+    provider_source_for_user,
+    reset_user_provider_settings,
+    settings_public_dict,
+    test_user_provider,
+    update_user_provider_settings,
 )
 from apps.ai_assistant.tools import ensure_tools_loaded, list_tool_specs
 from apps.ai_assistant.services.playbooks import list_playbooks
@@ -41,15 +52,24 @@ class AiStatusView(APIView):
 
     def get(self, request: Request) -> Response:
         ensure_tools_loaded()
-        provider = get_provider()
+        provider = get_provider_for_user(request.user)
         from apps.ai_assistant.providers.ollama import circuit_status
+
+        byok_settings = None
+        if byok_feature_enabled():
+            byok_settings = settings_public_dict(get_or_create_settings(request.user))
 
         return Response(
             {
                 "success": True,
                 "data": {
                     "provider": getattr(provider, "name", "unknown"),
-                    "available": bool(provider.is_available()),
+                    "model": getattr(provider, "model", "") or "",
+                    "available": bool(provider.is_available())
+                    or getattr(provider, "name", "") == "mock",
+                    "provider_source": provider_source_for_user(request.user),
+                    "byok_enabled": byok_feature_enabled(),
+                    "byok": byok_settings,
                     "ollama_circuit": circuit_status(),
                     "tools": [
                         {
@@ -64,6 +84,106 @@ class AiStatusView(APIView):
                 },
             }
         )
+
+
+class AiProviderSettingsView(APIView):
+    """GET/PUT/DELETE — config BYOK du client authentifié."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request) -> Response:
+        data = {
+            "byok_enabled": byok_feature_enabled(),
+            "settings": settings_public_dict(
+                get_or_create_settings(request.user) if byok_feature_enabled() else None
+            ),
+            "provider_source": provider_source_for_user(request.user),
+            "active_provider": getattr(get_provider_for_user(request.user), "name", "unknown"),
+            "active_model": getattr(get_provider_for_user(request.user), "model", "") or "",
+        }
+        return Response({"success": True, "data": data})
+
+    def put(self, request: Request) -> Response:
+        ser = AiProviderSettingsSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        vd = ser.validated_data
+        try:
+            obj = update_user_provider_settings(
+                request.user,
+                mode=vd["mode"],
+                base_url=vd.get("base_url") or "",
+                model_name=vd.get("model_name") or "",
+                api_key=vd.get("api_key") if vd.get("api_key") else None,
+                clear_api_key=bool(vd.get("clear_api_key")),
+                enabled=bool(vd.get("enabled", True)),
+            )
+        except VZoneAPIException as exc:
+            return Response(
+                {
+                    "success": False,
+                    "error": {
+                        "code": getattr(exc, "default_code", None) or "error",
+                        "message": str(exc.detail),
+                    },
+                },
+                status=int(getattr(exc, "status_code", 400) or 400),
+            )
+        provider = get_provider_for_user(request.user)
+        return Response(
+            {
+                "success": True,
+                "data": {
+                    "settings": settings_public_dict(obj),
+                    "provider_source": provider_source_for_user(request.user),
+                    "active_provider": getattr(provider, "name", "unknown"),
+                    "active_model": getattr(provider, "model", "") or "",
+                },
+            }
+        )
+
+    def delete(self, request: Request) -> Response:
+        obj = reset_user_provider_settings(request.user)
+        return Response(
+            {
+                "success": True,
+                "data": {
+                    "settings": settings_public_dict(obj),
+                    "provider_source": "server",
+                },
+            }
+        )
+
+
+class AiProviderTestView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request) -> Response:
+        ser = AiProviderTestSerializer(data=request.data or {})
+        ser.is_valid(raise_exception=True)
+        vd = ser.validated_data
+        draft = None
+        if vd.get("mode") is not None:
+            draft = {
+                "mode": vd.get("mode"),
+                "base_url": vd.get("base_url") or "",
+                "model_name": vd.get("model_name") or "",
+                "api_key": vd.get("api_key") or "",
+                "use_saved_key": bool(vd.get("use_saved_key", True)),
+            }
+        try:
+            result = test_user_provider(request.user, draft=draft)
+        except VZoneAPIException as exc:
+            return Response(
+                {
+                    "success": False,
+                    "error": {
+                        "code": getattr(exc, "default_code", None) or "error",
+                        "message": str(exc.detail),
+                    },
+                },
+                status=int(getattr(exc, "status_code", 400) or 400),
+            )
+        return Response({"success": True, "data": result})
 
 
 class AiPlaybooksView(APIView):

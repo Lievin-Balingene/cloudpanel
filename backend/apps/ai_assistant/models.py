@@ -8,6 +8,49 @@ from django.db import models
 from django.utils import timezone
 
 
+class UserAiProviderSettings(models.Model):
+    """BYOK : chaque client choisit son LLM (Ollama perso ou API OpenAI-compat)."""
+
+    class Mode(models.TextChoices):
+        SERVER = "server", "Serveur (défaut panel)"
+        OLLAMA = "ollama", "Ollama (URL perso)"
+        OPENAI_COMPAT = "openai_compat", "API OpenAI-compatible"
+
+    owner = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="ai_provider_settings",
+    )
+    mode = models.CharField(
+        max_length=32,
+        choices=Mode.choices,
+        default=Mode.SERVER,
+        db_index=True,
+    )
+    # URL publique du endpoint (ex. https://ollama.example.com ou https://api.openai.com/v1)
+    base_url = models.CharField(max_length=512, blank=True, default="")
+    # Clé API chiffrée Fernet (jamais renvoyée en clair)
+    api_key_encrypted = models.TextField(blank=True, default="")
+    model_name = models.CharField(max_length=128, blank=True, default="")
+    enabled = models.BooleanField(default=True)
+    last_test_ok = models.BooleanField(null=True, blank=True)
+    last_test_message = models.CharField(max_length=255, blank=True, default="")
+    last_tested_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "AI provider settings"
+        verbose_name_plural = "AI provider settings"
+
+    def __str__(self) -> str:
+        return f"AI settings@{self.owner_id}:{self.mode}"
+
+    @property
+    def is_byok_active(self) -> bool:
+        return bool(self.enabled and self.mode != self.Mode.SERVER and self.base_url.strip())
+
+
 class Conversation(models.Model):
     """Fil de discussion assistant ↔ client."""
 

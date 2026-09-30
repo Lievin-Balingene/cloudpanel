@@ -1,4 +1,4 @@
-"""Provider Ollama (HTTP local, open source, gratuit)."""
+"""Provider Ollama (HTTP local ou URL BYOK client)."""
 from __future__ import annotations
 
 import json
@@ -14,7 +14,7 @@ from apps.ai_assistant.providers import ChatMessage, ChatResult, ToolCallRequest
 
 logger = logging.getLogger(__name__)
 
-# Coupe-circuit : après timeout/échec chat, ne plus bloquer 90s à chaque message
+# Coupe-circuit serveur uniquement (pas BYOK)
 _circuit_open_until: float = 0.0
 _circuit_reason: str = ""
 
@@ -41,34 +41,59 @@ def circuit_status() -> dict[str, Any]:
 class OllamaProvider:
     name = "ollama"
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str | None = None,
+        model: str | None = None,
+        timeout: int | None = None,
+        use_global_circuit: bool = True,
+    ) -> None:
         self.base_url = (
-            getattr(settings, "VZONE_AI_OLLAMA_URL", "http://127.0.0.1:11434") or ""
+            base_url
+            if base_url is not None
+            else (getattr(settings, "VZONE_AI_OLLAMA_URL", "http://127.0.0.1:11434") or "")
         ).rstrip("/")
-        self.model = getattr(settings, "VZONE_AI_OLLAMA_MODEL", "llama3.2") or "llama3.2"
-        # Timeout court : sur petit VPS Ollama charge le modèle et bloque le chat
-        self.timeout = int(getattr(settings, "VZONE_AI_TIMEOUT_SEC", 8) or 8)
+        self.model = (
+            model
+            if model is not None
+            else (getattr(settings, "VZONE_AI_OLLAMA_MODEL", "llama3.2") or "llama3.2")
+        )
+        default_timeout = int(getattr(settings, "VZONE_AI_TIMEOUT_SEC", 8) or 8)
+        self.timeout = int(timeout if timeout is not None else default_timeout)
+        self.use_global_circuit = use_global_circuit
 
     def is_available(self) -> bool:
         if not self.base_url:
             return False
-        if time.time() < _circuit_open_until:
+        if self.use_global_circuit and time.time() < _circuit_open_until:
             return False
         try:
-            r = requests.get(f"{self.base_url}/api/tags", timeout=2)
+            r = requests.get(f"{self.base_url}/api/tags", timeout=min(5, self.timeout))
             if r.status_code != 200:
                 return False
             data = r.json() if r.content else {}
             models = data.get("models") or []
             if not models:
-                # Daemon up mais aucun modèle → inutilisable pour chat
                 return False
             names = " ".join(str(m.get("name") or "") for m in models if isinstance(m, dict))
-            # Accepte llama3.2, llama3.2:latest, llama3.2:1b…
             short = self.model.split(":")[0]
             return short in names or self.model in names
         except requests.RequestException:
             return False
+
+    def list_models(self) -> list[str]:
+        try:
+            r = requests.get(f"{self.base_url}/api/tags", timeout=min(5, self.timeout))
+            r.raise_for_status()
+            data = r.json() if r.content else {}
+            out: list[str] = []
+            for m in data.get("models") or []:
+                if isinstance(m, dict) and m.get("name"):
+                    out.append(str(m["name"]))
+            return out
+        except requests.RequestException:
+            return []
 
     def chat(
         self,
@@ -77,7 +102,7 @@ class OllamaProvider:
         tools: list[ToolSpec] | None = None,
         temperature: float = 0.2,
     ) -> ChatResult:
-        if time.time() < _circuit_open_until:
+        if self.use_global_circuit and time.time() < _circuit_open_until:
             raise RuntimeError(f"Ollama circuit ouvert: {_circuit_reason or 'échec récent'}")
 
         payload: dict[str, Any] = {
@@ -92,15 +117,17 @@ class OllamaProvider:
             resp = requests.post(
                 f"{self.base_url}/api/chat",
                 json=payload,
-                timeout=(5, self.timeout),  # connect 5s, read timeout
+                timeout=(5, self.timeout),
             )
             resp.raise_for_status()
             data = resp.json()
         except requests.Timeout as exc:
-            _open_circuit(f"timeout ({self.timeout}s): {exc}")
+            if self.use_global_circuit:
+                _open_circuit(f"timeout ({self.timeout}s): {exc}")
             raise RuntimeError(f"Ollama timeout après {self.timeout}s") from exc
         except requests.RequestException as exc:
-            _open_circuit(str(exc))
+            if self.use_global_circuit:
+                _open_circuit(str(exc))
             logger.warning("Ollama chat failed: %s", exc)
             raise RuntimeError(f"Ollama indisponible: {exc}") from exc
 

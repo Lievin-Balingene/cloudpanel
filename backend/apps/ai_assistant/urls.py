@@ -4,6 +4,8 @@ from django.urls import path
 
 from apps.ai_assistant.views import (
     AiPlaybooksView,
+    AiProviderSettingsView,
+    AiProviderTestView,
     AiStatusView,
     ConfirmActionView,
     ConversationDetailView,
@@ -14,6 +16,8 @@ from apps.ai_assistant.views import (
 
 urlpatterns = [
     path("status/", AiStatusView.as_view(), name="ai-status"),
+    path("provider/", AiProviderSettingsView.as_view(), name="ai-provider-settings"),
+    path("provider/test/", AiProviderTestView.as_view(), name="ai-provider-test"),
     path("playbooks/", AiPlaybooksView.as_view(), name="ai-playbooks"),
     path("conversations/", ConversationListCreateView.as_view(), name="ai-conversation-list"),
     path(

@@ -464,6 +464,11 @@ VZONE_AI_TEMPERATURE = float(env("VZONE_AI_TEMPERATURE", "0.65"))
 VZONE_AI_PENDING_TTL_SEC = env_int("VZONE_AI_PENDING_TTL_SEC", 600)
 VZONE_AI_RATE_LIMIT_PER_MIN = env_int("VZONE_AI_RATE_LIMIT_PER_MIN", 20)
 VZONE_AI_OLLAMA_CIRCUIT_SEC = env_int("VZONE_AI_OLLAMA_CIRCUIT_SEC", 600)
+# BYOK client : chaque compte peut brancher Ollama / API OpenAI-compat (clés chiffrées)
+VZONE_AI_BYOK_ENABLED = env_bool("VZONE_AI_BYOK_ENABLED", True)
+# Autoriser URLs privées (127.0.0.1, 10.x…) — déconseillé en multi-tenant public
+VZONE_AI_BYOK_ALLOW_PRIVATE_URLS = env_bool("VZONE_AI_BYOK_ALLOW_PRIVATE_URLS", False)
+VZONE_AI_BYOK_TIMEOUT_SEC = env_int("VZONE_AI_BYOK_TIMEOUT_SEC", 30)
 VZONE_CRON_PROVISION_MODE = env("VZONE_CRON_PROVISION_MODE", "auto")  # auto|live|mock
 VZONE_CRON_RUN_USER = env("VZONE_CRON_RUN_USER", "vzone")
 

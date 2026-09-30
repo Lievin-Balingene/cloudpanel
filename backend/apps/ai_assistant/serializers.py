@@ -56,6 +56,36 @@ class ConfirmActionSerializer(serializers.Serializer):
     confirm = serializers.BooleanField()
 
 
+class AiProviderSettingsSerializer(serializers.Serializer):
+    mode = serializers.ChoiceField(
+        choices=["server", "ollama", "openai_compat"],
+        default="server",
+    )
+    base_url = serializers.CharField(required=False, allow_blank=True, max_length=512, default="")
+    model_name = serializers.CharField(required=False, allow_blank=True, max_length=128, default="")
+    api_key = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=2048,
+        write_only=True,
+        default="",
+    )
+    clear_api_key = serializers.BooleanField(required=False, default=False)
+    enabled = serializers.BooleanField(required=False, default=True)
+
+
+class AiProviderTestSerializer(serializers.Serializer):
+    mode = serializers.ChoiceField(
+        choices=["server", "ollama", "openai_compat"],
+        required=False,
+        allow_null=True,
+    )
+    base_url = serializers.CharField(required=False, allow_blank=True, max_length=512, default="")
+    model_name = serializers.CharField(required=False, allow_blank=True, max_length=128, default="")
+    api_key = serializers.CharField(required=False, allow_blank=True, max_length=2048, default="")
+    use_saved_key = serializers.BooleanField(required=False, default=True)
+
+
 class PendingActionSerializer(serializers.ModelSerializer):
     class Meta:
         model = PendingAction

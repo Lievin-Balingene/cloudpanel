@@ -16,12 +16,14 @@ import {
   Plus,
   Rocket,
   Send,
+  Settings2,
   Sparkles,
   Terminal,
   X,
 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
 import { buildUiPageContext } from "@/lib/aiPageContext";
+import { AiProviderSettingsPanel } from "@/components/AiProviderSettingsPanel";
 
 interface AiMessage {
   id?: number;
@@ -302,11 +304,16 @@ const WELCOME =
   "WordPress, FTP, backups, Git, Docker… Les actions sensibles demandent ta confirmation. " +
   "Mot de passe / 2FA : je guide seulement (pas d'exécution).";
 
-function providerLabel(provider?: string, available?: boolean): { text: string; tone: "ok" | "warn" | "muted" } {
+function providerLabel(
+  provider?: string,
+  available?: boolean,
+  source?: string,
+): { text: string; tone: "ok" | "warn" | "muted" } {
   if (!provider) return { text: "Connexion…", tone: "muted" };
-  if (provider === "mock") return { text: "Mode local", tone: "warn" };
-  if (available) return { text: `${provider} · prêt`, tone: "ok" };
-  return { text: `${provider} · indisponible`, tone: "warn" };
+  const prefix = source === "byok" ? "BYOK · " : "";
+  if (provider === "mock") return { text: `${prefix}Mode local`, tone: "warn" };
+  if (available) return { text: `${prefix}${provider} · prêt`, tone: "ok" };
+  return { text: `${prefix}${provider} · indisponible`, tone: "warn" };
 }
 
 export function AiDeploymentAssistant() {
@@ -317,6 +324,7 @@ export function AiDeploymentAssistant() {
   const [showHistory, setShowHistory] = useState(false);
   const [showGuides, setShowGuides] = useState(false);
   const [showJail, setShowJail] = useState(false);
+  const [showProviderSettings, setShowProviderSettings] = useState(false);
   const [contextDismissed, setContextDismissed] = useState(false);
   const [mockHintDismissed, setMockHintDismissed] = useState(false);
   const [input, setInput] = useState("");
@@ -339,7 +347,15 @@ export function AiDeploymentAssistant() {
     queryFn: () =>
       apiRequest<{
         provider: string;
+        model?: string;
         available: boolean;
+        provider_source?: string;
+        byok_enabled?: boolean;
+        byok?: {
+          mode: string;
+          model_name: string;
+          is_byok_active: boolean;
+        };
         tools: { name: string; dangerous: boolean }[];
         playbooks: Playbook[];
         jail_commands: JailCommand[];
@@ -645,7 +661,11 @@ export function AiDeploymentAssistant() {
 
   const userMsgCount = localMessages.filter((m) => m.role === "user").length;
   const showEmptyStarters = userMsgCount === 0 && !isBusy && pending.length === 0;
-  const status = providerLabel(statusQuery.data?.provider, statusQuery.data?.available);
+  const status = providerLabel(
+    statusQuery.data?.provider,
+    statusQuery.data?.available,
+    statusQuery.data?.provider_source,
+  );
   const showJailBar =
     showJail &&
     jailCommands.length > 0 &&
@@ -722,7 +742,24 @@ export function AiDeploymentAssistant() {
                 </div>
               </div>
               <div className="flex items-center gap-0.5">
-                <IconBtn title="Historique" active={showHistory} onClick={() => setShowHistory((v) => !v)}>
+                <IconBtn
+                  title="Mon modèle IA"
+                  active={showProviderSettings}
+                  onClick={() => {
+                    setShowProviderSettings((v) => !v);
+                    setShowHistory(false);
+                  }}
+                >
+                  <Settings2 className="h-4 w-4" />
+                </IconBtn>
+                <IconBtn
+                  title="Historique"
+                  active={showHistory}
+                  onClick={() => {
+                    setShowHistory((v) => !v);
+                    setShowProviderSettings(false);
+                  }}
+                >
                   <History className="h-4 w-4" />
                 </IconBtn>
                 <IconBtn
@@ -778,6 +815,10 @@ export function AiDeploymentAssistant() {
 
               <div className={`flex min-w-0 flex-1 flex-col ${expanded ? "sm:flex-row" : ""}`}>
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                  {showProviderSettings && statusQuery.data?.byok_enabled !== false && (
+                    <AiProviderSettingsPanel onClose={() => setShowProviderSettings(false)} />
+                  )}
+
                   {!contextDismissed && (
                     <div className="flex items-center gap-2 border-b border-cp-border/80 bg-gradient-to-r from-cp-link-soft/50 to-transparent px-3 py-2 dark:from-white/[0.06]">
                       <MapPin className="h-3.5 w-3.5 shrink-0 text-cp-navy dark:text-cp-link" />

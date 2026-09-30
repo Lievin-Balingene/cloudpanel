@@ -1,4 +1,4 @@
-"""Provider compatible OpenAI (vLLM, LM Studio, OpenRouter gratuit, etc.)."""
+"""Provider compatible OpenAI (vLLM, LM Studio, OpenRouter, clé client BYOK)."""
 from __future__ import annotations
 
 import json
@@ -17,13 +17,31 @@ logger = logging.getLogger(__name__)
 class OpenAICompatProvider:
     name = "openai_compat"
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        model: str | None = None,
+        timeout: int | None = None,
+    ) -> None:
         self.base_url = (
-            getattr(settings, "VZONE_AI_OPENAI_BASE_URL", "") or ""
+            base_url
+            if base_url is not None
+            else (getattr(settings, "VZONE_AI_OPENAI_BASE_URL", "") or "")
         ).rstrip("/")
-        self.api_key = getattr(settings, "VZONE_AI_OPENAI_API_KEY", "") or ""
-        self.model = getattr(settings, "VZONE_AI_OPENAI_MODEL", "gpt-4o-mini") or "gpt-4o-mini"
-        self.timeout = int(getattr(settings, "VZONE_AI_TIMEOUT_SEC", 90) or 90)
+        self.api_key = (
+            api_key
+            if api_key is not None
+            else (getattr(settings, "VZONE_AI_OPENAI_API_KEY", "") or "")
+        )
+        self.model = (
+            model
+            if model is not None
+            else (getattr(settings, "VZONE_AI_OPENAI_MODEL", "gpt-4o-mini") or "gpt-4o-mini")
+        )
+        default_timeout = int(getattr(settings, "VZONE_AI_TIMEOUT_SEC", 90) or 90)
+        self.timeout = int(timeout if timeout is not None else default_timeout)
 
     def is_available(self) -> bool:
         return bool(self.base_url)

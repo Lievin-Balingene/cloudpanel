@@ -22,6 +22,7 @@ from apps.ai_assistant.models import (
     PendingAction,
 )
 from apps.ai_assistant.providers import ChatMessage, get_provider
+from apps.ai_assistant.services.provider_resolve import get_provider_for_user, provider_source_for_user
 from apps.ai_assistant.services.redaction import redact_obj, redact_text, strip_prompt_injection
 from apps.ai_assistant.tools import ensure_tools_loaded, get_tool, list_tool_specs
 
@@ -60,7 +61,8 @@ def run_assistant_turn(
     ui_context: dict | None = None,
 ) -> dict[str, Any]:
     ensure_tools_loaded()
-    provider = get_provider()
+    provider = get_provider_for_user(user)
+    provider_source = provider_source_for_user(user)
     max_rounds = int(getattr(settings, "VZONE_AI_MAX_TOOL_ROUNDS", 4) or 4)
 
     from apps.ai_assistant.services.page_context import describe_ui_context, normalize_ui_context
@@ -416,6 +418,7 @@ def run_assistant_turn(
         metadata={
             "provider": provider_name,
             "model": model_name,
+            "provider_source": provider_source,
             "tool_trace": tool_trace,
             "pending_actions": pending_actions,
             "suggestions": suggestions,
@@ -437,6 +440,7 @@ def run_assistant_turn(
         "tool_trace": tool_trace,
         "provider": provider_name,
         "model": model_name,
+        "provider_source": provider_source,
         "ui_context": ui,
         "suggestions": suggestions,
     }
