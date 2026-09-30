@@ -81,6 +81,7 @@ WSGI_TEMPLATE = '''\
 """Entrée WSGI générée par V-zone Panel (compatible cPanel / passenger_wsgi)."""
 import os
 import sys
+import traceback
 
 APP_ROOT = os.path.dirname(os.path.abspath(__file__))
 if APP_ROOT not in sys.path:
@@ -110,10 +111,23 @@ try:
                     if h not in current:
                         current.append(h)
                 _dj_settings.ALLOWED_HOSTS = current
-except Exception:
+except Exception as _vzone_exc:
+    _vzone_tb = traceback.format_exc()
     def application(environ, start_response):
-        start_response("200 OK", [("Content-Type", "text/plain; charset=utf-8")])
-        return [b"Hello from V-zone Python app\\n"]
+        body = (
+            "V-zone WSGI load error (Django non chargé)\\n\\n"
+            + str(_vzone_exc)
+            + "\\n\\n"
+            + _vzone_tb
+            + "\\n"
+            "Vérifiez : venv (Django installé), DJANGO_SETTINGS_MODULE={settings_module}, "
+            "et passenger_wsgi.py. Puis Restart depuis le panel.\\n"
+        ).encode("utf-8", errors="replace")
+        start_response(
+            "500 Internal Server Error",
+            [("Content-Type", "text/plain; charset=utf-8"), ("Content-Length", str(len(body)))],
+        )
+        return [body]
 '''
 
 ASGI_TEMPLATE = '''\
@@ -240,6 +254,69 @@ def detect_django_project_package(app_root: Path) -> str:
             if (child / "settings.py").exists():
                 return child.name
     return DJANGO_PROJECT_PACKAGE
+
+
+def passenger_wsgi_needs_sync(text: str, settings_module: str) -> bool:
+    """True si le fichier est un stub Hello / mauvais settings / trop ancien."""
+    low = (text or "").lower()
+    if "hello from v-zone python app" in low:
+        return True
+    if "get_wsgi_application" not in text:
+        return True
+    if f'DJANGO_SETTINGS_MODULE", "{settings_module}"' not in text and (
+        f"DJANGO_SETTINGS_MODULE', '{settings_module}'" not in text
+    ):
+        # settings module différent ou absent
+        if "DJANGO_SETTINGS_MODULE" not in text:
+            return True
+        # Si le module détecté n'apparaît pas du tout → resync
+        pkg = settings_module.split(".", 1)[0]
+        if pkg and f"{pkg}.settings" not in text:
+            return True
+    return False
+
+
+def sync_passenger_wsgi(app: PythonApp, app_root: Path | None = None, *, force: bool = False) -> dict:
+    """
+    Réécrit passenger_wsgi.py pour pointer vers le bon package Django.
+    force=True : toujours réécrire (backup .bak). Sinon seulement si stub Hello / settings faux.
+    """
+    root = app_root or absolute_app_root(app)
+    entry = root / "passenger_wsgi.py"
+    pkg = detect_django_project_package(root)
+    settings_module = f"{pkg}.settings"
+    existing = ""
+    if entry.is_file():
+        try:
+            existing = entry.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            existing = ""
+    if not force and existing and not passenger_wsgi_needs_sync(existing, settings_module):
+        return {
+            "rewritten": False,
+            "path": str(entry),
+            "settings_module": settings_module,
+            "reason": "already_ok",
+        }
+    content = WSGI_TEMPLATE.format(settings_module=settings_module)
+    if existing:
+        bak = root / "passenger_wsgi.py.bak"
+        try:
+            bak.write_text(existing, encoding="utf-8")
+        except OSError:
+            pass
+    entry.write_text(content, encoding="utf-8")
+    try:
+        fix_client_paths(app.owner, entry)
+    except Exception:  # noqa: BLE001
+        logger.debug("chown passenger_wsgi skip", exc_info=True)
+    return {
+        "rewritten": True,
+        "path": str(entry),
+        "settings_module": settings_module,
+        "backup": str(root / "passenger_wsgi.py.bak") if existing else "",
+        "reason": "forced" if force else "stub_or_mismatch",
+    }
 
 
 def allocate_port(owner: User) -> int:
@@ -2205,6 +2282,20 @@ def start_python_app(app: PythonApp) -> PythonApp:
             logger.debug("stop avant start ignoré", exc_info=True)
 
     ensure_runtime_deps(app, app_root, py)
+    # Django : s'assurer que passenger_wsgi.py n'est plus le stub « Hello »
+    if app.mode == PythonApp.Mode.WSGI and (
+        app.framework == PythonApp.Framework.DJANGO or (app_root / "manage.py").exists()
+    ):
+        try:
+            sync_info = sync_passenger_wsgi(app, app_root, force=False)
+            if sync_info.get("rewritten"):
+                logger.info(
+                    "passenger_wsgi resync %s → %s",
+                    app.name,
+                    sync_info.get("settings_module"),
+                )
+        except Exception:  # noqa: BLE001
+            logger.exception("sync_passenger_wsgi a échoué pour %s", app.name)
     _preflight_runtime_module(app, py)
     _preflight_app_import(app, app_root, py, env, venv_dir=venv_dir)
     # Préflight / pip peuvent recréer des fichiers owned par le panel → re-fix

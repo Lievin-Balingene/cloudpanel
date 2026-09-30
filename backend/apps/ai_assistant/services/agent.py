@@ -430,6 +430,49 @@ def run_assistant_turn(
             _append_tool_result(messages, conversation, tc, payload)
 
     if not final_content:
+        # Gemini / providers : parfois vide après des tours d'outils → 1 essai texte seul
+        try:
+            messages.append(
+                ChatMessage(
+                    role="user",
+                    content=(
+                        "À partir des résultats d'outils ci-dessus, réponds maintenant en français "
+                        "de façon claire et actionnable. N'appelle plus aucun outil."
+                    ),
+                )
+            )
+            wrap = provider.chat(messages, tools=None, temperature=temperature)
+            if (wrap.content or "").strip():
+                final_content = wrap.content.strip()
+                provider_name = wrap.provider or provider_name
+                model_name = wrap.model or model_name
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("AI wrap-up text-only failed: %s", exc)
+
+    if not final_content and tool_trace:
+        lines = ["Voici ce que j'ai trouvé / exécuté :", ""]
+        for t in tool_trace[-8:]:
+            mark = "✓" if t.get("ok") else "✗"
+            lines.append(f"- {mark} `{t.get('name')}`")
+            summary = t.get("summary")
+            if isinstance(summary, dict):
+                err = summary.get("error") or summary.get("detail")
+                if err:
+                    lines.append(f"  → {err}")
+                elif summary.get("rewritten") is True:
+                    lines.append(
+                        f"  → passenger_wsgi mis à jour → `{summary.get('settings_module')}`"
+                    )
+                elif summary.get("path"):
+                    lines.append(f"  → {summary.get('path')}")
+        lines.append("")
+        lines.append(
+            "Si le site affiche encore « Hello from V-zone », utilisez l'outil "
+            "`sync_python_passenger_wsgi` (force=true, restart=true) puis rechargez le domaine."
+        )
+        final_content = "\n".join(lines)
+
+    if not final_content:
         final_content = (
             "Je n'ai pas pu générer de réponse. Vérifiez la configuration IA "
             "(Ollama / provider) ou reformulez votre demande."

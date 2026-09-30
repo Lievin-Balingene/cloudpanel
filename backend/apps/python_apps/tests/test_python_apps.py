@@ -182,11 +182,48 @@ def test_django_passenger_next_to_existing_project(py_root):
     assert "mysite.settings" in text
     assert "virtualenv" in app.venv_path.replace("\\", "/")
 
-    # Comme cPanel : Start / scaffold ne doivent jamais écraser passenger_wsgi.py
+    # Comme cPanel : Start / scaffold ne doivent jamais écraser passenger_wsgi.py custom
     marker = "# USER CUSTOM PASSENGER\n"
     passenger.write_text(marker + text, encoding="utf-8")
     _scaffold(project, mode="wsgi", framework="django")
     assert passenger.read_text(encoding="utf-8").startswith(marker)
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_sync_passenger_wsgi_replaces_hello_stub(py_root):
+    from apps.python_apps.services import sync_passenger_wsgi
+
+    user = UserFactory(username="pywsgi")
+    home = Path(py_root) / "pywsgi"
+    project = home / "vzone"
+    project.mkdir(parents=True)
+    (project / "manage.py").write_text("# manage", encoding="utf-8")
+    pkg = project / "mysite"
+    pkg.mkdir()
+    (pkg / "settings.py").write_text("SECRET_KEY='x'\nALLOWED_HOSTS=[]\n", encoding="utf-8")
+    stub = (
+        'def application(environ, start_response):\n'
+        '    start_response("200 OK", [("Content-Type", "text/plain")])\n'
+        '    return [b"Hello from V-zone Python app\\n"]\n'
+    )
+    (project / "passenger_wsgi.py").write_text(stub, encoding="utf-8")
+    app = create_python_app(
+        owner=user,
+        name="vzone",
+        framework="django",
+        relative_root="vzone",
+    )
+    # create may have overwritten — re-stub then sync
+    (project / "passenger_wsgi.py").write_text(stub, encoding="utf-8")
+    info = sync_passenger_wsgi(app, project, force=False)
+    assert info["rewritten"] is True
+    assert info["settings_module"] == "mysite.settings"
+    synced = (project / "passenger_wsgi.py").read_text(encoding="utf-8")
+    assert "mysite.settings" in synced
+    assert "get_wsgi_application" in synced
+    assert "Hello from V-zone Python app" not in synced
+    assert (project / "passenger_wsgi.py.bak").exists()
 
 
 @pytest.mark.unit

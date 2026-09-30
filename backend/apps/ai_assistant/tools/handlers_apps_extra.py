@@ -271,3 +271,51 @@ def delete_node_app(user: User, params: dict[str, Any]) -> dict[str, Any]:
         return {"deleted": name}
 
     return run_service(_run)
+
+
+@register_tool(
+    name="sync_python_passenger_wsgi",
+    description=(
+        "Réécrit passenger_wsgi.py d'une app Python/Django pour pointer vers le bon "
+        "package settings (corrige le stub « Hello from V-zone Python app »)."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "app_id": {"type": "integer"},
+            "force": {
+                "type": "boolean",
+                "description": "Toujours réécrire (sinon seulement stub Hello / mauvais settings).",
+            },
+            "restart": {
+                "type": "boolean",
+                "description": "Redémarrer l'app après sync (recommandé).",
+            },
+        },
+        "required": ["app_id"],
+        "additionalProperties": False,
+    },
+    dangerous=True,
+)
+def sync_python_passenger_wsgi(user: User, params: dict[str, Any]) -> dict[str, Any]:
+    from apps.python_apps.services import apps_qs, start_python_app, stop_python_app, sync_passenger_wsgi
+
+    app = apps_qs(user).filter(pk=require_int(params, "app_id")).first()
+    if not app:
+        return err("Application Python introuvable", "not_found")
+    force = bool(params.get("force", False))
+    do_restart = bool(params.get("restart", True))
+
+    def _run():
+        info = sync_passenger_wsgi(app, force=force)
+        restarted = False
+        if do_restart:
+            try:
+                stop_python_app(app)
+            except Exception:  # noqa: BLE001
+                pass
+            start_python_app(app)
+            restarted = True
+        return {**info, "app": _python_summary(app), "restarted": restarted}
+
+    return run_service(_run)
