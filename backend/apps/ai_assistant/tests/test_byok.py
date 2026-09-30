@@ -60,10 +60,42 @@ def test_validate_byok_url_https_public(settings):
 def test_normalize_gemini_model_aliases():
     from apps.ai_assistant.services.provider_resolve import normalize_gemini_model
 
-    assert normalize_gemini_model("gemini-1.5-flash") == "gemini-2.5-flash"
-    assert normalize_gemini_model("models/gemini-2.0-flash") == "gemini-2.5-flash"
-    assert normalize_gemini_model("gemini-2.5-flash") == "gemini-2.5-flash"
-    assert normalize_gemini_model("") == "gemini-2.5-flash"
+    assert normalize_gemini_model("gemini-1.5-flash") == "gemini-3.5-flash"
+    assert normalize_gemini_model("models/gemini-2.0-flash") == "gemini-3.5-flash"
+    assert normalize_gemini_model("gemini-2.5-flash") == "gemini-3.5-flash"
+    assert normalize_gemini_model("gemini-3.5-flash") == "gemini-3.5-flash"
+    assert normalize_gemini_model("") == "gemini-3.5-flash"
+
+
+def test_openai_compat_retries_suggested_gemini_model(settings):
+    from unittest.mock import MagicMock, patch
+
+    from apps.ai_assistant.providers import ChatMessage
+    from apps.ai_assistant.providers.openai_compat import OpenAICompatProvider
+
+    p = OpenAICompatProvider(
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+        api_key="test-key",
+        model="gemini-2.5-flash",
+        timeout=5,
+    )
+    fail = MagicMock()
+    fail.status_code = 404
+    fail.text = (
+        '{"error":{"message":"This model models/gemini-2.5-flash is no longer available '
+        'to new users. Please update your code to use models/gemini-3.5-flash for the latest"}}'
+    )
+    ok = MagicMock()
+    ok.status_code = 200
+    ok.json.return_value = {
+        "choices": [{"message": {"content": "bonjour", "tool_calls": []}}],
+    }
+    with patch("apps.ai_assistant.providers.openai_compat.requests.post", side_effect=[fail, ok]) as mock_post:
+        result = p.chat([ChatMessage(role="user", content="hi")])
+    assert result.content == "bonjour"
+    assert result.model == "gemini-3.5-flash"
+    assert mock_post.call_count == 2
+    assert mock_post.call_args_list[1].kwargs["json"]["model"] == "gemini-3.5-flash"
 
 
 def test_normalize_openai_compat_gemini_url():

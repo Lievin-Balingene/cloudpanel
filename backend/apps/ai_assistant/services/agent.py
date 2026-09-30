@@ -230,7 +230,7 @@ def run_assistant_turn(
                     "Vérifiez dans ⚙ **Mon modèle IA** :\n"
                     "- **Gemini** : URL "
                     "`https://generativelanguage.googleapis.com/v1beta/openai` "
-                    "+ modèle `gemini-2.5-flash` (pas `gemini-1.5-flash`, retiré) + clé API\n"
+                    "+ modèle `gemini-3.5-flash` (pas 1.5 / 2.5 — bloqués aux nouveaux comptes) + clé API\n"
                     "- Bouton **Tester** puis **Enregistrer**\n"
                     "- Ou repassez en « Serveur (défaut panel) »"
                 )

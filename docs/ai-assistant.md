@@ -70,7 +70,7 @@ Ollama sur le PC du client n’est pas joignable directement depuis le VPS : uti
 |-------|--------|
 | Mode | API OpenAI-compatible |
 | URL | `https://generativelanguage.googleapis.com/v1beta/openai` |
-| Modèle | `gemini-2.5-flash` (ou `gemini-3.5-flash`) — **pas** `gemini-1.5-flash` (retiré) |
+| Modèle | `gemini-3.5-flash` (ou `gemini-3.7-flash`) — **pas** 1.5 / 2.5 (bloqués aux nouveaux comptes) |
 | Clé | clé [Google AI Studio](https://aistudio.google.com/apikey) |
 
 Ne mettez **pas** `/v1` derrière `/openai` — le panel normalise correctement.

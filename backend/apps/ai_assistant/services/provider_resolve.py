@@ -58,21 +58,24 @@ def _byok_timeout() -> int:
     return int(getattr(settings, "VZONE_AI_BYOK_TIMEOUT_SEC", 30) or 30)
 
 
-# Anciens IDs Google retirés → modèle Flash actuel (OpenAI-compat / AI Studio)
+# Anciens IDs Google retirés / bloqués aux nouveaux comptes → Flash 3.5 actuel
 GEMINI_MODEL_ALIASES: dict[str, str] = {
-    "gemini-1.5-flash": "gemini-2.5-flash",
-    "gemini-1.5-flash-latest": "gemini-2.5-flash",
-    "gemini-1.5-flash-001": "gemini-2.5-flash",
-    "gemini-1.5-flash-002": "gemini-2.5-flash",
-    "gemini-1.5-pro": "gemini-2.5-pro",
-    "gemini-1.5-pro-latest": "gemini-2.5-pro",
-    "gemini-2.0-flash": "gemini-2.5-flash",
-    "gemini-2.0-flash-001": "gemini-2.5-flash",
-    "gemini-2.0-flash-lite": "gemini-2.5-flash-lite",
-    "gemini-pro": "gemini-2.5-flash",
+    "gemini-1.5-flash": "gemini-3.5-flash",
+    "gemini-1.5-flash-latest": "gemini-3.5-flash",
+    "gemini-1.5-flash-001": "gemini-3.5-flash",
+    "gemini-1.5-flash-002": "gemini-3.5-flash",
+    "gemini-1.5-pro": "gemini-3.5-flash",
+    "gemini-1.5-pro-latest": "gemini-3.5-flash",
+    "gemini-2.0-flash": "gemini-3.5-flash",
+    "gemini-2.0-flash-001": "gemini-3.5-flash",
+    "gemini-2.0-flash-lite": "gemini-3.5-flash-lite",
+    "gemini-2.5-flash": "gemini-3.5-flash",
+    "gemini-2.5-flash-lite": "gemini-3.5-flash-lite",
+    "gemini-2.5-pro": "gemini-3.5-flash",
+    "gemini-pro": "gemini-3.5-flash",
 }
 
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
 
 
 def normalize_gemini_model(model: str) -> str:
