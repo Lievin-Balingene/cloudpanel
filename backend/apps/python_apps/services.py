@@ -1739,14 +1739,39 @@ def _pids_listening_on_port(port: int) -> list[int]:
     return sorted(pids)
 
 
+KILL_PORT = Path("/usr/local/sbin/vzone-kill-port")
+
+
 def _free_listen_port(port: int) -> None:
     """Tue tout process qui occupe encore le port (gunicorn orphelin = Hello persistant)."""
     if port <= 0:
         return
+    # 1) Helper root (seul moyen fiable contre un gunicorn jail)
+    if KILL_PORT.is_file():
+        try:
+            proc = subprocess.run(
+                ["sudo", "-n", str(KILL_PORT), str(int(port))],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            if proc.returncode == 0:
+                logger.info("kill-port %s OK: %s", port, (proc.stdout or "").strip())
+            else:
+                logger.warning(
+                    "kill-port %s rc=%s out=%s err=%s",
+                    port,
+                    proc.returncode,
+                    (proc.stdout or "")[-300:],
+                    (proc.stderr or "")[-300:],
+                )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            logger.warning("kill-port %s failed: %s", port, exc)
+    # 2) Fallback sans root (souvent PermissionError sur PID jail)
     for pid in _pids_listening_on_port(port):
-        logger.info("Libération port %s : kill pid %s", port, pid)
+        logger.info("Libération port %s : kill pid %s (fallback)", port, pid)
         _kill_app_pid(pid)
-    # filet fuser -k
     try:
         subprocess.run(
             ["fuser", "-k", f"{port}/tcp"],
@@ -1757,9 +1782,46 @@ def _free_listen_port(port: int) -> None:
         )
     except (OSError, subprocess.TimeoutExpired):
         pass
-    deadline = time.time() + 3.0
+    deadline = time.time() + 4.0
     while time.time() < deadline and _port_listening(port):
-        time.sleep(0.15)
+        time.sleep(0.2)
+    if _port_listening(port):
+        leftover = _pids_listening_on_port(port)
+        logger.error("Port %s toujours occupé après kill (pids=%s)", port, leftover)
+
+
+def _our_process_owns_port(master_pid: int, port: int) -> bool:
+    """True si master_pid (ou un de ses enfants) écoute sur port."""
+    listeners = set(_pids_listening_on_port(port))
+    if not listeners:
+        # ss sans droits peut ne rien voir — on se fie à proc vivant + port ouvert
+        return _process_alive(master_pid) and _port_listening(port)
+    if master_pid in listeners:
+        return True
+    # Enfants / workers gunicorn
+    try:
+        import os as _os
+
+        for pid in listeners:
+            try:
+                # /proc/<pid>/stat : ppid field
+                stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+                # comm can have spaces in () — split after last )
+                after = stat.rsplit(")", 1)[-1].strip().split()
+                ppid = int(after[1]) if len(after) > 1 else -1
+                if ppid == master_pid or pid == master_pid:
+                    return True
+                # même session/process group
+                try:
+                    if _os.getpgid(pid) == _os.getpgid(master_pid):
+                        return True
+                except OSError:
+                    pass
+            except (OSError, ValueError, IndexError):
+                continue
+    except Exception:  # noqa: BLE001
+        logger.debug("owns_port probe skip", exc_info=True)
+    return False
 
 
 def _clear_wsgi_bytecode(app_root: Path) -> None:
@@ -2595,17 +2657,38 @@ def start_python_app(app: PythonApp) -> PythonApp:
         if not _wait_port(app.port, timeout_s=20.0):
             new_log = _log_bytes_since(error_log, log_offset)
             if proc.poll() is not None:
+                _free_listen_port(app.port)
                 raise RuntimeError(
                     _format_start_failure(returncode=proc.returncode, stderr_new=new_log)
                 )
             _kill_app_pid(proc.pid)
+            _free_listen_port(app.port)
             raise RuntimeError(
                 _format_start_failure(returncode=None, stderr_new=new_log, port=app.port)
             )
+        # Le port peut être « ouvert » par un orphelin : notre process doit être vivant + owner
         if proc.poll() is not None:
             new_log = _log_bytes_since(error_log, log_offset)
+            holders = _pids_listening_on_port(app.port)
+            _free_listen_port(app.port)
+            hint = ""
+            if "Address already in use" in (new_log or "") or "Connection in use" in (new_log or ""):
+                hint = (
+                    f" Port {app.port} était déjà pris"
+                    + (f" (pids {holders})" if holders else "")
+                    + ". Relancez Start après mise à jour (≥ 0.39.11, vzone-kill-port)."
+                )
             raise RuntimeError(
-                _format_start_failure(returncode=proc.returncode, stderr_new=new_log)
+                _format_start_failure(returncode=proc.returncode, stderr_new=new_log) + hint
+            )
+        if not _our_process_owns_port(proc.pid, app.port):
+            holders = _pids_listening_on_port(app.port)
+            _kill_app_pid(proc.pid)
+            _free_listen_port(app.port)
+            raise RuntimeError(
+                f"Port {app.port} occupé par un autre process {holders or '(inconnu)'} "
+                "(souvent un ancien gunicorn Hello). "
+                "Mettez à jour le panel (≥ 0.39.11) puis Redémarrer / Réparer WSGI."
             )
         try:
             pid_file.write_text(str(proc.pid), encoding="utf-8")
@@ -2638,6 +2721,8 @@ def start_python_app(app: PythonApp) -> PythonApp:
                     "passenger_wsgi.py contient encore « Hello from V-zone Python app » "
                     f"dans {entry}. Impossible de le réécrire (permissions ?)."
                 )
+            if _port_listening(app.port):
+                _free_listen_port(app.port)
             access_f = _open_app_log_append(app.owner, access_log)
             error_f = _open_app_log_append(app.owner, error_log)
             log_offset = error_log.stat().st_size if error_log.exists() else 0
@@ -2649,11 +2734,21 @@ def start_python_app(app: PythonApp) -> PythonApp:
                 stderr=error_f,
                 start_new_session=True,
             )
-            if not _wait_port(app.port, timeout_s=20.0):
+            if not _wait_port(app.port, timeout_s=20.0) or proc.poll() is not None:
                 new_log = _log_bytes_since(error_log, log_offset)
                 _kill_app_pid(proc.pid)
+                _free_listen_port(app.port)
                 raise RuntimeError(
                     _format_start_failure(returncode=proc.poll(), stderr_new=new_log, port=app.port)
+                    + " (relance après Hello stub)"
+                )
+            if not _our_process_owns_port(proc.pid, app.port):
+                _kill_app_pid(proc.pid)
+                _free_listen_port(app.port)
+                raise RuntimeError(
+                    f"Port {app.port} toujours pris après kill — "
+                    "exécutez: sudo /usr/local/sbin/vzone-kill-port "
+                    f"{app.port} puis Restart."
                 )
             time.sleep(0.4)
             body2 = _local_app_response_body(app.port)

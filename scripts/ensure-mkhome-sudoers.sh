@@ -34,6 +34,7 @@ install -m 755 "${REPO_DIR}/scripts/vzone-jailterm.sh" /usr/local/sbin/vzone-jai
 install -m 755 "${REPO_DIR}/scripts/vzone-rootterm.sh" /usr/local/sbin/vzone-rootterm
 install -m 755 "${REPO_DIR}/scripts/vzone-runas.sh" /usr/local/sbin/vzone-runas
 install -m 755 "${REPO_DIR}/scripts/vzone-fix-app-perms.sh" /usr/local/sbin/vzone-fix-app-perms
+install -m 755 "${REPO_DIR}/scripts/vzone-kill-port.sh" /usr/local/sbin/vzone-kill-port
 install -m 755 "${REPO_DIR}/scripts/vzone-smtp-restrictions.sh" /usr/local/sbin/vzone-smtp-restrictions
 install -m 755 "${REPO_DIR}/scripts/vzone-resourcectl.sh" /usr/local/sbin/vzone-resourcectl
 
