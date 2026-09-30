@@ -57,6 +57,15 @@ def test_validate_byok_url_https_public(settings):
         raise
 
 
+def test_normalize_gemini_model_aliases():
+    from apps.ai_assistant.services.provider_resolve import normalize_gemini_model
+
+    assert normalize_gemini_model("gemini-1.5-flash") == "gemini-2.5-flash"
+    assert normalize_gemini_model("models/gemini-2.0-flash") == "gemini-2.5-flash"
+    assert normalize_gemini_model("gemini-2.5-flash") == "gemini-2.5-flash"
+    assert normalize_gemini_model("") == "gemini-2.5-flash"
+
+
 def test_normalize_openai_compat_gemini_url():
     from apps.ai_assistant.services.provider_resolve import normalize_openai_compat_base_url
 

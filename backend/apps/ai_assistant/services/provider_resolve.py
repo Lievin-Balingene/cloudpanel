@@ -58,6 +58,35 @@ def _byok_timeout() -> int:
     return int(getattr(settings, "VZONE_AI_BYOK_TIMEOUT_SEC", 30) or 30)
 
 
+# Anciens IDs Google retirés → modèle Flash actuel (OpenAI-compat / AI Studio)
+GEMINI_MODEL_ALIASES: dict[str, str] = {
+    "gemini-1.5-flash": "gemini-2.5-flash",
+    "gemini-1.5-flash-latest": "gemini-2.5-flash",
+    "gemini-1.5-flash-001": "gemini-2.5-flash",
+    "gemini-1.5-flash-002": "gemini-2.5-flash",
+    "gemini-1.5-pro": "gemini-2.5-pro",
+    "gemini-1.5-pro-latest": "gemini-2.5-pro",
+    "gemini-2.0-flash": "gemini-2.5-flash",
+    "gemini-2.0-flash-001": "gemini-2.5-flash",
+    "gemini-2.0-flash-lite": "gemini-2.5-flash-lite",
+    "gemini-pro": "gemini-2.5-flash",
+}
+
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+
+
+def normalize_gemini_model(model: str) -> str:
+    """Remappe les modèles Gemini dépréciés vers un ID encore servi."""
+    name = (model or "").strip()
+    if not name:
+        return DEFAULT_GEMINI_MODEL
+    # Accepte "models/gemini-…" venant de l'API native
+    if name.startswith("models/"):
+        name = name[len("models/") :]
+    low = name.lower()
+    return GEMINI_MODEL_ALIASES.get(low, name)
+
+
 def normalize_openai_compat_base_url(url: str) -> str:
     """
     Normalise la base OpenAI-compat (…/v1) sans casser Gemini / OpenRouter.
@@ -106,6 +135,8 @@ def build_byok_provider(obj: UserAiProviderSettings) -> LLMProvider:
         if not model:
             model = "gpt-4o-mini"
         url = normalize_openai_compat_base_url(url)
+        if "generativelanguage.googleapis.com" in url.lower():
+            model = normalize_gemini_model(model)
         if not api_key:
             raise VZoneAPIException(
                 detail="Clé API requise pour le mode OpenAI-compatible (Gemini, OpenAI…).",

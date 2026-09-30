@@ -44,10 +44,17 @@ const MODE_HELP: Record<AiProviderMode, string> = {
 const PRESETS: { id: string; label: string; mode: AiProviderMode; base_url: string; model_name: string }[] = [
   {
     id: "gemini",
-    label: "Gemini",
+    label: "Gemini 2.5",
     mode: "openai_compat",
     base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
-    model_name: "gemini-2.0-flash",
+    model_name: "gemini-2.5-flash",
+  },
+  {
+    id: "gemini35",
+    label: "Gemini 3.5",
+    mode: "openai_compat",
+    base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+    model_name: "gemini-3.5-flash",
   },
   {
     id: "openai",
