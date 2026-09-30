@@ -64,6 +64,17 @@ VZONE_AI_BYOK_TIMEOUT_SEC=30
 Ollama sur le PC du client n’est pas joignable directement depuis le VPS : utilisez un tunnel
 (Cloudflare Tunnel, ngrok, Tailscale Funnel…) vers une URL HTTPS publique.
 
+### Preset Gemini
+
+| Champ | Valeur |
+|-------|--------|
+| Mode | API OpenAI-compatible |
+| URL | `https://generativelanguage.googleapis.com/v1beta/openai` |
+| Modèle | `gemini-2.0-flash` (ou `gemini-1.5-flash`) |
+| Clé | clé [Google AI Studio](https://aistudio.google.com/apikey) |
+
+Ne mettez **pas** `/v1` derrière `/openai` — le panel normalise correctement.
+
 ## Couverture panneau client
 
 Chaque section `/panel/*` a des tools **lecture** et **écriture** (écriture = confirmation UI).

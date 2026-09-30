@@ -57,6 +57,19 @@ def test_validate_byok_url_https_public(settings):
         raise
 
 
+def test_normalize_openai_compat_gemini_url():
+    from apps.ai_assistant.services.provider_resolve import normalize_openai_compat_base_url
+
+    gemini = "https://generativelanguage.googleapis.com/v1beta/openai"
+    assert normalize_openai_compat_base_url(gemini) == gemini
+    assert normalize_openai_compat_base_url(gemini + "/") == gemini
+    # Racine Google → ajoute /openai (pas /v1)
+    root = "https://generativelanguage.googleapis.com/v1beta"
+    assert normalize_openai_compat_base_url(root) == f"{root}/openai"
+    assert normalize_openai_compat_base_url("https://api.openai.com") == "https://api.openai.com/v1"
+    assert normalize_openai_compat_base_url("https://api.openai.com/v1") == "https://api.openai.com/v1"
+
+
 @pytest.mark.django_db
 def test_update_and_resolve_byok_ollama(settings):
     settings.VZONE_AI_BYOK_ENABLED = True

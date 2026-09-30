@@ -215,10 +215,30 @@ def run_assistant_turn(
         try:
             result = provider.chat(messages, tools=tools, temperature=temperature)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("AI provider error, fallback mock: %s", exc)
+            err_txt = str(exc)[:500]
+            logger.warning(
+                "AI provider error (source=%s provider=%s): %s",
+                provider_source,
+                getattr(provider, "name", "?"),
+                err_txt,
+            )
+            # BYOK : ne pas masquer l'échec derrière le mock « bête »
+            if provider_source == "byok":
+                final_content = (
+                    "**Votre modèle BYOK a échoué** — le panel n'a pas basculé en mode local.\n\n"
+                    f"```\n{err_txt}\n```\n\n"
+                    "Vérifiez dans ⚙ **Mon modèle IA** :\n"
+                    "- **Gemini** : URL "
+                    "`https://generativelanguage.googleapis.com/v1beta/openai` "
+                    "+ modèle `gemini-2.0-flash` (ou `gemini-1.5-flash`) + clé API\n"
+                    "- Bouton **Tester** puis **Enregistrer**\n"
+                    "- Ou repassez en « Serveur (défaut panel) »"
+                )
+                provider_name = getattr(provider, "name", "byok")
+                model_name = getattr(provider, "model", "") or ""
+                break
             provider = get_provider("mock")
             result = provider.chat(messages, tools=tools, temperature=temperature)
-            # Pas de pavé d'erreur dans le chat — le bandeau UI indique déjà le mode local
 
         provider_name = result.provider or provider_name
         model_name = result.model or model_name

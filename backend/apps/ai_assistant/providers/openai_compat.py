@@ -73,7 +73,11 @@ class OpenAICompatProvider:
                 json=payload,
                 timeout=self.timeout,
             )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                body = (resp.text or "")[:400]
+                raise RuntimeError(
+                    f"HTTP {resp.status_code} sur {self.base_url}/chat/completions — {body}"
+                )
             data = resp.json()
         except requests.RequestException as exc:
             logger.warning("OpenAI-compat chat failed: %s", exc)

@@ -58,6 +58,32 @@ def _byok_timeout() -> int:
     return int(getattr(settings, "VZONE_AI_BYOK_TIMEOUT_SEC", 30) or 30)
 
 
+def normalize_openai_compat_base_url(url: str) -> str:
+    """
+    Normalise la base OpenAI-compat (…/v1) sans casser Gemini / OpenRouter.
+
+    Gemini OpenAI-compat :
+      https://generativelanguage.googleapis.com/v1beta/openai
+      → …/chat/completions  (PAS …/openai/v1/chat/completions)
+    """
+    base = (url or "").rstrip("/")
+    if not base:
+        return base
+    low = base.lower()
+    # Déjà un endpoint OpenAI-compat complet
+    if low.endswith("/v1") or low.endswith("/openai") or "/openai/v1" in low:
+        return base
+    # Chemins déjà versionnés (…/v1beta/…, …/v1alpha/…) sans /openai
+    if "/v1beta" in low or "/v1alpha" in low:
+        if "generativelanguage.googleapis.com" in low and not low.endswith("/openai"):
+            return f"{base}/openai"
+        return base
+    # OpenRouter, Groq, OpenAI classiques
+    if "/v1/" in low:
+        return base
+    return f"{base}/v1"
+
+
 def build_byok_provider(obj: UserAiProviderSettings) -> LLMProvider:
     """Construit un provider à partir des réglages BYOK (sans fallback serveur)."""
     from apps.ai_assistant.services.url_safety import validate_byok_url
@@ -79,9 +105,13 @@ def build_byok_provider(obj: UserAiProviderSettings) -> LLMProvider:
     if obj.mode == UserAiProviderSettings.Mode.OPENAI_COMPAT:
         if not model:
             model = "gpt-4o-mini"
-        # Accepte base avec ou sans /v1
-        if not url.endswith("/v1") and "/v1/" not in url:
-            url = f"{url}/v1"
+        url = normalize_openai_compat_base_url(url)
+        if not api_key:
+            raise VZoneAPIException(
+                detail="Clé API requise pour le mode OpenAI-compatible (Gemini, OpenAI…).",
+                code="byok_key_required",
+                status_code=400,
+            )
         return OpenAICompatProvider(
             base_url=url,
             api_key=api_key,

@@ -38,8 +38,32 @@ const MODE_HELP: Record<AiProviderMode, string> = {
   ollama:
     "Votre instance Ollama (PC / VPS). L'URL doit être joignable depuis le serveur (tunnel HTTPS recommandé).",
   openai_compat:
-    "OpenAI, OpenRouter, Groq, vLLM, LM Studio… — endpoint compatible /v1 + clé API.",
+    "OpenAI, Gemini, OpenRouter, Groq, vLLM… — endpoint compatible OpenAI + clé API.",
 };
+
+const PRESETS: { id: string; label: string; mode: AiProviderMode; base_url: string; model_name: string }[] = [
+  {
+    id: "gemini",
+    label: "Gemini",
+    mode: "openai_compat",
+    base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+    model_name: "gemini-2.0-flash",
+  },
+  {
+    id: "openai",
+    label: "OpenAI",
+    mode: "openai_compat",
+    base_url: "https://api.openai.com/v1",
+    model_name: "gpt-4o-mini",
+  },
+  {
+    id: "openrouter",
+    label: "OpenRouter",
+    mode: "openai_compat",
+    base_url: "https://openrouter.ai/api/v1",
+    model_name: "openai/gpt-4o-mini",
+  },
+];
 
 export function AiProviderSettingsPanel({ onClose }: { onClose?: () => void }) {
   const qc = useQueryClient();
@@ -165,6 +189,38 @@ export function AiProviderSettingsPanel({ onClose }: { onClose?: () => void }) {
       </div>
 
       <p className="mb-3 text-[11px] leading-snug text-cp-muted">{MODE_HELP[mode]}</p>
+
+      <div className="mb-3 flex flex-wrap gap-1">
+        {PRESETS.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setMode(p.mode);
+              setBaseUrl(p.base_url);
+              setModelName(p.model_name);
+              setFeedback(`Preset ${p.label} — collez votre clé API puis Tester / Enregistrer.`);
+            }}
+            className="rounded-lg bg-white px-2 py-1 text-[10px] font-medium text-cp-text ring-1 ring-cp-border hover:bg-cp-canvas dark:bg-white/10 dark:text-white"
+          >
+            {p.label}
+          </button>
+        ))}
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => {
+            setMode("server");
+            setBaseUrl("");
+            setModelName("");
+            setFeedback(null);
+          }}
+          className="rounded-lg px-2 py-1 text-[10px] font-medium text-cp-muted hover:bg-black/5 dark:hover:bg-white/5"
+        >
+          Serveur
+        </button>
+      </div>
 
       <label className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-cp-muted">
         Provider
