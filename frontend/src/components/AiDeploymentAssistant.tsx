@@ -6,7 +6,6 @@ import {
   Bug,
   Check,
   ChevronDown,
-  ChevronRight,
   Copy,
   History,
   Loader2,
@@ -108,37 +107,39 @@ function JsonBlock({ raw, lang }: { raw: string; lang?: string }) {
     /* keep raw */
   }
   const lines = pretty.split("\n").length;
-  const collapsed = !open && (isJson || lines > 8);
-  const shown = collapsed ? pretty.split("\n").slice(0, 6).join("\n") + (lines > 6 ? "\n…" : "") : pretty;
+  const collapsed = !open && (isJson || lines > 5);
+  const shown = collapsed
+    ? pretty.split("\n").slice(0, 4).join("\n") + (lines > 4 ? "\n…" : "")
+    : pretty;
 
   return (
-    <div className="vz-ai-codeblock my-2.5 overflow-hidden">
+    <div className="vz-ai-codeblock my-2 overflow-hidden">
       <div className="vz-ai-codeblock-bar">
         <span className="font-mono text-[10px] uppercase tracking-wide opacity-70">
           {lang || (isJson ? "json" : "code")}
         </span>
         <div className="flex items-center gap-1">
-          {(isJson || lines > 8) && (
+          {(isJson || lines > 5) && (
             <button
               type="button"
               className="rounded px-1.5 py-0.5 text-[10px] font-medium hover:bg-white/10"
               onClick={() => setOpen((v) => !v)}
             >
-              {open ? "Réduire" : "Tout voir"}
+              {open ? "Réduire" : lines > 4 ? `${lines} lignes` : "Tout voir"}
             </button>
           )}
         </div>
       </div>
-      <pre className="vz-ai-code overflow-x-auto p-3 text-[11px] leading-relaxed">{shown}</pre>
+      <pre className="vz-ai-code max-h-[220px] overflow-auto p-2.5 text-[11px] leading-snug">{shown}</pre>
     </div>
   );
 }
 
 function renderInline(text: string): ReactNode[] {
-  return text.split(/(\*\*[^*]+\*\*|`[^`]+`|_[^_\n]+_)/g).map((part, i) => {
+  return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((part, i) => {
     if (part.startsWith("**") && part.endsWith("**")) {
       return (
-        <strong key={i} className="font-semibold text-cp-navy dark:text-white">
+        <strong key={i} className="font-semibold text-cp-text dark:text-white">
           {part.slice(2, -2)}
         </strong>
       );
@@ -150,19 +151,141 @@ function renderInline(text: string): ReactNode[] {
         </code>
       );
     }
-    if (part.startsWith("_") && part.endsWith("_") && part.length > 2) {
-      return (
-        <em key={i} className="text-[12px] text-cp-muted not-italic opacity-80">
-          {part.slice(1, -1)}
-        </em>
-      );
-    }
     return <span key={i}>{part}</span>;
   });
 }
 
+/** Parse un bloc texte (hors fences) en sections structurées. */
+function renderTextBlock(block: string, key: string | number) {
+  const lines = block.replace(/\r\n/g, "\n").split("\n");
+  const nodes: ReactNode[] = [];
+  let listBuf: { ordered: boolean; items: string[] } | null = null;
+  let paraBuf: string[] = [];
+
+  const flushPara = () => {
+    if (!paraBuf.length) return;
+    const text = paraBuf.join(" ").replace(/\s+/g, " ").trim();
+    paraBuf = [];
+    if (!text) return;
+    nodes.push(
+      <p key={`p-${nodes.length}`} className="vz-ai-p">
+        {renderInline(text)}
+      </p>,
+    );
+  };
+
+  const flushList = () => {
+    if (!listBuf || !listBuf.items.length) {
+      listBuf = null;
+      return;
+    }
+    const Tag = listBuf.ordered ? "ol" : "ul";
+    const items = listBuf.items;
+    const ordered = listBuf.ordered;
+    listBuf = null;
+    nodes.push(
+      <Tag key={`l-${nodes.length}`} className={`vz-ai-list ${ordered ? "vz-ai-list-ol" : ""}`}>
+        {items.map((item, i) => (
+          <li key={i} className="vz-ai-li">
+            <span className="vz-ai-li-mark" aria-hidden>
+              {ordered ? `${i + 1}.` : "•"}
+            </span>
+            <span className="min-w-0 flex-1">{renderInline(item)}</span>
+          </li>
+        ))}
+      </Tag>,
+    );
+  };
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      flushList();
+      flushPara();
+      continue;
+    }
+
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+      flushList();
+      flushPara();
+      nodes.push(<hr key={`hr-${nodes.length}`} className="vz-ai-hr" />);
+      continue;
+    }
+
+    const heading = trimmed.match(/^(#{1,3})\s+(.+)$/);
+    if (heading) {
+      flushList();
+      flushPara();
+      const level = heading[1].length;
+      const cls = level === 1 ? "vz-ai-h1" : level === 2 ? "vz-ai-h2" : "vz-ai-h3";
+      nodes.push(
+        <p key={`h-${nodes.length}`} className={cls}>
+          {renderInline(heading[2])}
+        </p>,
+      );
+      continue;
+    }
+
+    // Titre markdown alternatif : **Titre** seul sur la ligne
+    if (/^\*\*[^*]+\*\*:?\s*$/.test(trimmed) && trimmed.length < 80) {
+      flushList();
+      flushPara();
+      nodes.push(
+        <p key={`h-${nodes.length}`} className="vz-ai-h3">
+          {renderInline(trimmed.replace(/:$/, ""))}
+        </p>,
+      );
+      continue;
+    }
+
+    const bullet = trimmed.match(/^([-*]|\d+\.)\s+(.+)$/);
+    if (bullet) {
+      flushPara();
+      const ordered = /^\d+\./.test(bullet[1]);
+      if (!listBuf || listBuf.ordered !== ordered) {
+        flushList();
+        listBuf = { ordered, items: [] };
+      }
+      listBuf.items.push(bullet[2]);
+      continue;
+    }
+
+    // Ligne type "Label : valeur" → rangée clé/valeur
+    const kv = trimmed.match(/^(\*\*[^*]+\*\*|[^:]{2,40})\s*:\s+(.+)$/);
+    if (kv && !trimmed.startsWith("http") && kv[2].length < 180) {
+      flushList();
+      flushPara();
+      const label = kv[1].replace(/^\*\*|\*\*$/g, "");
+      nodes.push(
+        <div key={`kv-${nodes.length}`} className="vz-ai-kv">
+          <span className="vz-ai-kv-k">{label}</span>
+          <span className="vz-ai-kv-v">{renderInline(kv[2])}</span>
+        </div>,
+      );
+      continue;
+    }
+
+    flushList();
+    paraBuf.push(trimmed);
+  }
+
+  flushList();
+  flushPara();
+
+  return (
+    <div key={key} className="vz-ai-prose">
+      {nodes}
+    </div>
+  );
+}
+
 function renderContent(text: string) {
-  const cleaned = text.replace(/\n*_\(Mode local\.\)_\s*$/i, "").trimEnd();
+  const cleaned = text
+    .replace(/\n*_\(Mode local\.\)_\s*$/i, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
   const blocks = cleaned.split(/(```[\s\S]*?```)/g);
   return blocks.map((block, bi) => {
     if (block.startsWith("```") && block.endsWith("```")) {
@@ -171,50 +294,8 @@ function renderContent(text: string) {
       const body = (match?.[2] ?? block.replace(/^```\w*\n?/, "").replace(/```$/, "")).replace(/\n$/, "");
       return <JsonBlock key={bi} raw={body} lang={lang} />;
     }
-
-    const paragraphs = block.split(/\n{2,}/);
-    return (
-      <div key={bi} className="space-y-2.5">
-        {paragraphs.map((para, pi) => {
-          const lines = para.split("\n");
-          const isList = lines.every((l) => !l.trim() || /^(\s*)([-*]|\d+\.)\s+/.test(l));
-          if (isList && lines.some((l) => /^(\s*)([-*]|\d+\.)\s+/.test(l))) {
-            return (
-              <ul key={pi} className="vz-ai-list space-y-1.5">
-                {lines.map((line, li) => {
-                  const bullet = line.match(/^(\s*)([-*]|\d+\.)\s+(.*)$/);
-                  if (!bullet) {
-                    return line.trim() ? (
-                      <li key={li} className="list-none">
-                        {renderInline(line)}
-                      </li>
-                    ) : null;
-                  }
-                  return (
-                    <li key={li} className="flex gap-2">
-                      <span className="mt-0.5 select-none text-[11px] text-cp-navy/50 dark:text-white/40">
-                        {bullet[2] === "-" || bullet[2] === "*" ? "•" : bullet[2]}
-                      </span>
-                      <span className="min-w-0 flex-1 leading-relaxed">{renderInline(bullet[3])}</span>
-                    </li>
-                  );
-                })}
-              </ul>
-            );
-          }
-          return (
-            <p key={pi} className="leading-relaxed text-[13px] sm:text-[13.5px]">
-              {lines.map((line, li) => (
-                <span key={li}>
-                  {renderInline(line)}
-                  {li < lines.length - 1 ? <br /> : null}
-                </span>
-              ))}
-            </p>
-          );
-        })}
-      </div>
-    );
+    if (!block.trim()) return null;
+    return renderTextBlock(block, bi);
   });
 }
 
@@ -671,8 +752,8 @@ export function AiDeploymentAssistant() {
     jailCommands.length > 0 &&
     ["terminal", "files", "python", "node"].includes(pageCtx.section);
 
-  const panelWidth = expanded ? "min(960px,96vw)" : "min(420px,94vw)";
-  const panelHeight = expanded ? "min(860px,94vh)" : "min(640px,86vh)";
+  const panelWidth = expanded ? "min(960px,96vw)" : "min(400px,94vw)";
+  const panelHeight = expanded ? "min(860px,94vh)" : "min(620px,84vh)";
 
   return (
     <>
@@ -940,7 +1021,7 @@ export function AiDeploymentAssistant() {
                     </div>
                   )}
 
-                  <div className="vz-ai-thread flex-1 space-y-3.5 overflow-y-auto px-3 py-3 text-sm">
+                  <div className="vz-ai-thread flex-1 space-y-3 overflow-y-auto px-2.5 py-2.5 text-sm sm:px-3">
                     {!conversationId && localMessages.length === 0 ? (
                       <BootSkeleton />
                     ) : null}
@@ -950,55 +1031,56 @@ export function AiDeploymentAssistant() {
                       const tools = Array.isArray(m.metadata?.tool_trace)
                         ? (m.metadata?.tool_trace as { name?: string; ok?: boolean }[])
                         : [];
+                      const shownTools = tools.filter((t) => t.name).slice(0, 4);
+                      const extraTools = Math.max(0, tools.filter((t) => t.name).length - shownTools.length);
                       return (
                         <div
                           key={key}
-                          className={`vz-ai-msg flex gap-2.5 ${isUser ? "flex-row-reverse" : "flex-row"}`}
+                          className={`vz-ai-msg flex gap-2 ${isUser ? "flex-row-reverse" : "flex-row"}`}
                         >
                           {!isUser && (
-                            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-cp-navy to-cp-navy-soft text-white shadow-sm">
-                              <Bot className="h-3.5 w-3.5" />
+                            <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-cp-navy to-cp-navy-soft text-white shadow-sm">
+                              <Bot className="h-3 w-3" />
                             </div>
                           )}
-                          <div className={`min-w-0 max-w-[88%] ${isUser ? "items-end" : "items-start"} flex flex-col`}>
+                          <div className={`min-w-0 max-w-[min(100%,22rem)] sm:max-w-[88%] ${isUser ? "items-end" : "items-start"} flex flex-col`}>
+                            {!isUser && shownTools.length > 0 && (
+                              <div className="mb-1 flex max-w-full flex-wrap items-center gap-1 px-0.5">
+                                {shownTools.map((t, ti) => (
+                                  <span
+                                    key={`${t.name}-${ti}`}
+                                    className={`vz-ai-toolchip ${t.ok === false ? "vz-ai-toolchip-err" : "vz-ai-toolchip-ok"}`}
+                                    title={t.name}
+                                  >
+                                    {t.ok === false ? "✕" : "✓"} {t.name}
+                                  </span>
+                                ))}
+                                {extraTools > 0 && (
+                                  <span className="vz-ai-toolchip">+{extraTools}</span>
+                                )}
+                              </div>
+                            )}
                             <div className={isUser ? "vz-ai-bubble-user" : "vz-ai-bubble-bot"}>
-                              {!isUser && (
-                                <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-cp-navy/55 dark:text-white/45">
-                                  Assistant
-                                </p>
-                              )}
-                              <div className={isUser ? "whitespace-pre-wrap leading-relaxed" : ""}>
+                              <div className={isUser ? "whitespace-pre-wrap break-words leading-snug" : "min-w-0"}>
                                 {isUser ? m.content : renderContent(m.content)}
                               </div>
                             </div>
                             {!isUser && (
-                              <div className="mt-1.5 flex flex-wrap items-center gap-1.5 px-1">
-                                {tools.slice(0, 5).map((t, ti) =>
-                                  t.name ? (
-                                    <span
-                                      key={`${t.name}-${ti}`}
-                                      className={`vz-ai-toolchip ${t.ok === false ? "vz-ai-toolchip-err" : "vz-ai-toolchip-ok"}`}
-                                    >
-                                      {t.ok === false ? "✕" : "✓"} {t.name}
-                                    </span>
-                                  ) : null,
+                              <button
+                                type="button"
+                                className="mt-1 inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-[10px] text-cp-muted opacity-70 transition hover:bg-black/[0.04] hover:opacity-100 dark:hover:bg-white/10"
+                                onClick={() => void copyText(key, m.content)}
+                              >
+                                {copiedId === key ? (
+                                  <>
+                                    <Check className="h-3 w-3 text-emerald-500" /> Copié
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="h-3 w-3" /> Copier
+                                  </>
                                 )}
-                                <button
-                                  type="button"
-                                  className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-cp-muted transition hover:bg-black/[0.04] hover:text-cp-navy dark:hover:bg-white/10"
-                                  onClick={() => void copyText(key, m.content)}
-                                >
-                                  {copiedId === key ? (
-                                    <>
-                                      <Check className="h-3 w-3 text-emerald-500" /> Copié
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Copy className="h-3 w-3" /> Copier
-                                    </>
-                                  )}
-                                </button>
-                              </div>
+                              </button>
                             )}
                           </div>
                         </div>
@@ -1006,7 +1088,7 @@ export function AiDeploymentAssistant() {
                     })}
 
                     {showEmptyStarters && (
-                      <div className="vz-ai-starters grid grid-cols-1 gap-2 pt-1 sm:grid-cols-2">
+                      <div className="vz-ai-starters grid grid-cols-1 gap-1.5 pt-0.5 sm:grid-cols-2">
                         {STARTERS.map((s, i) => (
                           <button
                             key={s.label}
@@ -1019,22 +1101,19 @@ export function AiDeploymentAssistant() {
                             <span className="block text-[12px] font-semibold text-cp-navy dark:text-white">
                               {s.label}
                             </span>
-                            <span className="mt-0.5 block text-[10px] text-cp-muted line-clamp-2">{s.prompt}</span>
+                            <span className="mt-0.5 block text-[10px] text-cp-muted line-clamp-1">{s.prompt}</span>
                           </button>
                         ))}
                       </div>
                     )}
 
                     {streamingText !== null && (
-                      <div className="vz-ai-msg flex gap-2.5">
-                        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-cp-navy to-cp-navy-soft text-white shadow-sm">
-                          <Bot className="h-3.5 w-3.5" />
+                      <div className="vz-ai-msg flex gap-2">
+                        <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-cp-navy to-cp-navy-soft text-white shadow-sm">
+                          <Bot className="h-3 w-3" />
                         </div>
-                        <div className="vz-ai-bubble-bot max-w-[88%]">
-                          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-cp-navy/55 dark:text-white/45">
-                            Assistant
-                          </p>
-                          <div>
+                        <div className="vz-ai-bubble-bot max-w-[min(100%,22rem)] sm:max-w-[88%]">
+                          <div className="min-w-0">
                             {renderContent(streamingText)}
                             <span className="vz-ai-caret ml-0.5 inline-block align-middle" />
                           </div>
@@ -1051,21 +1130,19 @@ export function AiDeploymentAssistant() {
                             ? "text-amber-700 dark:text-amber-200"
                             : "text-sky-700 dark:text-sky-200";
                       return (
-                      <div key={p.token} className="vz-ai-confirm mx-1">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className={`text-[10px] font-bold uppercase tracking-wider ${riskCls}`}>
-                              Command Approval · risque {risk}
-                            </p>
-                            <p className="mt-1 text-sm font-medium">{p.description || p.tool_name}</p>
-                            <pre className="mt-2 overflow-x-auto rounded-md bg-slate-950/85 px-2.5 py-1.5 font-mono text-[11px] text-emerald-300">
-                              {p.command_preview || p.tool_name}
-                            </pre>
-                            <p className="mt-1 font-mono text-[10px] opacity-60">{p.tool_name}</p>
-                          </div>
-                          <ChevronRight className="mt-1 h-4 w-4 shrink-0 opacity-40" />
-                        </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
+                      <div key={p.token} className="vz-ai-confirm">
+                        <p className={`text-[10px] font-bold uppercase tracking-wider ${riskCls}`}>
+                          Confirmation · {risk}
+                        </p>
+                        <p className="mt-1 text-[13px] font-medium leading-snug text-cp-text dark:text-white">
+                          {p.description || p.tool_name}
+                        </p>
+                        {(p.command_preview || p.tool_name) && (
+                          <pre className="vz-ai-confirm-cmd mt-2 overflow-x-auto">
+                            {p.command_preview || p.tool_name}
+                          </pre>
+                        )}
+                        <div className="mt-2.5 flex flex-wrap gap-2">
                           <button
                             type="button"
                             className="inline-flex items-center gap-1 rounded-lg bg-cp-orange px-3 py-1.5 text-xs font-semibold text-white hover:bg-cp-orange-dark disabled:opacity-60"
@@ -1093,17 +1170,21 @@ export function AiDeploymentAssistant() {
                     )}
 
                     {suggestions.length > 0 && !isBusy && (
-                      <div className="flex flex-wrap gap-1.5 pt-0.5">
-                        {suggestions.map((s) => (
-                          <button
-                            key={s}
-                            type="button"
-                            className="rounded-full border border-cp-border bg-white/90 px-2.5 py-1 text-left text-[11px] text-cp-text shadow-sm transition hover:border-cp-navy/40 hover:bg-cp-link-soft dark:bg-black/20"
-                            onClick={() => void onSend(s)}
-                          >
-                            {s.length > 64 ? `${s.slice(0, 64)}…` : s}
-                          </button>
-                        ))}
+                      <div className="vz-ai-suggestions">
+                        <p className="vz-ai-suggestions-label">Continuer</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {suggestions.map((s) => (
+                            <button
+                              key={s}
+                              type="button"
+                              className="vz-ai-suggestion"
+                              onClick={() => void onSend(s)}
+                              title={s}
+                            >
+                              {s.length > 48 ? `${s.slice(0, 48)}…` : s}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     )}
                     <div ref={bottomRef} />
