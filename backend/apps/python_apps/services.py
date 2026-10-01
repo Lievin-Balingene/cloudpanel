@@ -18,6 +18,16 @@ from django.db.models import Q, QuerySet
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.core.app_runtime import (
+    free_listen_port as _free_listen_port,
+    kill_app_pid as _kill_app_pid,
+    normalize_app_domain,
+    our_process_owns_port as _our_process_owns_port,
+    pids_listening_on_port as _pids_listening_on_port,
+    port_listening as _port_listening,
+    process_alive as _process_alive,
+    wait_port as _wait_port,
+)
 from apps.core.exceptions import QuotaExceeded, VZoneAPIException
 from apps.files.services import user_home
 from apps.python_apps.models import PythonApp
@@ -1680,169 +1690,7 @@ def _preflight_runtime_module(app: PythonApp, py: Path) -> None:
         )
 
 
-def _process_alive(pid: int | None) -> bool:
-    if not pid or pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except (ProcessLookupError, PermissionError, OSError):
-        return False
-
-
-def _port_listening(port: int, host: str = "127.0.0.1", timeout: float = 0.4) -> bool:
-    if port <= 0:
-        return False
-    import socket
-
-    try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except OSError:
-        return False
-
-
-def _wait_port(port: int, *, timeout_s: float = 15.0) -> bool:
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
-        if _port_listening(port):
-            return True
-        time.sleep(0.25)
-    return False
-
-
-def _pids_listening_on_port(port: int) -> list[int]:
-    """PIDs qui écoutent sur le port TCP (ss / lsof / fuser)."""
-    if port <= 0:
-        return []
-    pids: set[int] = set()
-    try:
-        out = subprocess.run(
-            ["ss", "-ltnp", f"sport = :{port}"],
-            capture_output=True,
-            text=True,
-            timeout=8,
-            check=False,
-        ).stdout or ""
-        for m in re.finditer(r"pid=(\d+)", out):
-            pids.add(int(m.group(1)))
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        pass
-    if not pids:
-        try:
-            out = subprocess.run(
-                ["lsof", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"],
-                capture_output=True,
-                text=True,
-                timeout=8,
-                check=False,
-            ).stdout or ""
-            for line in out.splitlines():
-                line = line.strip()
-                if line.isdigit():
-                    pids.add(int(line))
-        except (OSError, ValueError, subprocess.TimeoutExpired):
-            pass
-    if not pids:
-        try:
-            out = subprocess.run(
-                ["fuser", f"{port}/tcp"],
-                capture_output=True,
-                text=True,
-                timeout=8,
-                check=False,
-            )
-            blob = f"{out.stdout or ''} {out.stderr or ''}"
-            for m in re.finditer(r"(\d+)", blob):
-                pids.add(int(m.group(1)))
-        except (OSError, ValueError, subprocess.TimeoutExpired):
-            pass
-    return sorted(pids)
-
-
-KILL_PORT = Path("/usr/local/sbin/vzone-kill-port")
-
-
-def _free_listen_port(port: int) -> None:
-    """Tue tout process qui occupe encore le port (gunicorn orphelin = Hello persistant)."""
-    if port <= 0:
-        return
-    # 1) Helper root (seul moyen fiable contre un gunicorn jail)
-    if KILL_PORT.is_file():
-        try:
-            proc = subprocess.run(
-                ["sudo", "-n", str(KILL_PORT), str(int(port))],
-                capture_output=True,
-                text=True,
-                timeout=20,
-                check=False,
-            )
-            if proc.returncode == 0:
-                logger.info("kill-port %s OK: %s", port, (proc.stdout or "").strip())
-            else:
-                logger.warning(
-                    "kill-port %s rc=%s out=%s err=%s",
-                    port,
-                    proc.returncode,
-                    (proc.stdout or "")[-300:],
-                    (proc.stderr or "")[-300:],
-                )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            logger.warning("kill-port %s failed: %s", port, exc)
-    # 2) Fallback sans root (souvent PermissionError sur PID jail)
-    for pid in _pids_listening_on_port(port):
-        logger.info("Libération port %s : kill pid %s (fallback)", port, pid)
-        _kill_app_pid(pid)
-    try:
-        subprocess.run(
-            ["fuser", "-k", f"{port}/tcp"],
-            capture_output=True,
-            text=True,
-            timeout=8,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    deadline = time.time() + 4.0
-    while time.time() < deadline and _port_listening(port):
-        time.sleep(0.2)
-    if _port_listening(port):
-        leftover = _pids_listening_on_port(port)
-        logger.error("Port %s toujours occupé après kill (pids=%s)", port, leftover)
-
-
-def _our_process_owns_port(master_pid: int, port: int) -> bool:
-    """True si master_pid (ou un de ses enfants) écoute sur port."""
-    listeners = set(_pids_listening_on_port(port))
-    if not listeners:
-        # ss sans droits peut ne rien voir — on se fie à proc vivant + port ouvert
-        return _process_alive(master_pid) and _port_listening(port)
-    if master_pid in listeners:
-        return True
-    # Enfants / workers gunicorn
-    try:
-        import os as _os
-
-        for pid in listeners:
-            try:
-                # /proc/<pid>/stat : ppid field
-                stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
-                # comm can have spaces in () — split after last )
-                after = stat.rsplit(")", 1)[-1].strip().split()
-                ppid = int(after[1]) if len(after) > 1 else -1
-                if ppid == master_pid or pid == master_pid:
-                    return True
-                # même session/process group
-                try:
-                    if _os.getpgid(pid) == _os.getpgid(master_pid):
-                        return True
-                except OSError:
-                    pass
-            except (OSError, ValueError, IndexError):
-                continue
-    except Exception:  # noqa: BLE001
-        logger.debug("owns_port probe skip", exc_info=True)
-    return False
+# --- port helpers: apps.core.app_runtime (importés en tête de module) ---
 
 
 def _clear_wsgi_bytecode(app_root: Path) -> None:
@@ -1945,22 +1793,6 @@ def _repair_wsgi_for_start(app: PythonApp, app_root: Path) -> dict:
     return info
 
 
-def _kill_app_pid(pid: int | None) -> None:
-    if not pid:
-        return
-    for sig in (signal.SIGTERM, signal.SIGKILL):
-        try:
-            os.killpg(pid, sig)
-        except (ProcessLookupError, PermissionError, OSError):
-            try:
-                os.kill(pid, sig)
-            except (ProcessLookupError, PermissionError, OSError):
-                return
-        time.sleep(0.35)
-        if not _process_alive(pid):
-            return
-
-
 def _read_app_pid_file(pid_file: Path, fallback: int | None) -> int | None:
     """Lit logs/app.pid sans faire planter le stop/start (perms jail)."""
     try:
@@ -2043,18 +1875,6 @@ def _claim_app_domain(app: PythonApp, domain_name: str) -> None:
         NodeApp.objects.filter(domain_name__iexact=f"www.{name}").update(domain_name="")
     except Exception:  # noqa: BLE001
         pass
-
-
-def normalize_app_domain(value: str) -> str:
-    """Normalise Application URL (sans schéma / chemin / www)."""
-    v = (value or "").strip().lower()
-    for prefix in ("https://", "http://"):
-        if v.startswith(prefix):
-            v = v[len(prefix) :]
-    v = v.split("/")[0].split("?")[0].strip(".")
-    if v.startswith("www."):
-        v = v[4:]
-    return v
 
 
 # Variables d'environnement du panel qui ne doivent PAS fuiter vers les apps clients.
