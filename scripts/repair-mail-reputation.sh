@@ -106,7 +106,7 @@ if [[ -f "${REPO_DIR}/scripts/vzone-mail-reload.sh" ]]; then
   /usr/local/sbin/vzone-mail-reload || true
 fi
 
-# OpenDKIM daemon seulement — JAMAIS activer milters ici (SMTP d'abord)
+# OpenDKIM daemon + sync conf
 if [[ -f "${REPO_DIR}/deploy/opendkim/opendkim.conf" ]]; then
   mkdir -p /etc/opendkim/keys
   install -m 644 "${REPO_DIR}/deploy/opendkim/opendkim.conf" /etc/opendkim.conf
@@ -116,8 +116,16 @@ if [[ -f "${REPO_DIR}/deploy/opendkim/opendkim.conf" ]]; then
   chmod 640 "${MAPS_DIR}/opendkim-KeyTable" "${MAPS_DIR}/opendkim-SigningTable" 2>/dev/null || true
   systemctl restart opendkim 2>/dev/null || true
 fi
-# Ne pas toucher aux milters Postfix ici (évite d'activer/désactiver DKIM au hasard).
-# SMTP: géré par repair-smtp.sh / vzone-smtp-guard. DKIM milter: repair-dkim.sh uniquement.
+
+# Activer milters DKIM (safe) si tables présentes
+if [[ -f "${REPO_DIR}/scripts/repair-dkim.sh" ]] && [[ -s "${MAPS_DIR}/opendkim-KeyTable" ]]; then
+  echo "[dkim] activation milter sortant…"
+  bash "${REPO_DIR}/scripts/repair-dkim.sh" || echo "[warn] repair-dkim a échoué — SMTP reste OK sans signature"
+fi
+
+echo "=== repair-mail-reputation OK ==="
+echo "Vérifiez les enregistrements TXT (_dmarc, selector._domainkey, SPF) dans DNS."
+echo "DKIM sortant: sudo bash ${REPO_DIR}/scripts/repair-dkim.sh"
 if [[ -f "${REPO_DIR}/deploy/systemd/vzone-smtp-guard.timer" ]]; then
   sed "s|/opt/vzone-src|${REPO_DIR}|g" \
     "${REPO_DIR}/deploy/systemd/vzone-smtp-guard.service" > /etc/systemd/system/vzone-smtp-guard.service

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Sync maps OpenDKIM + permissions + reload Postfix/Dovecot/OpenDKIM (root).
-# Ne touche JAMAIS aux milters Postfix (SMTP prioritaire).
+# Préserve les milters Postfix (DKIM sortant).
 set -euo pipefail
 [[ ${EUID:-0} -eq 0 ]] || { echo "Root requis" >&2; exit 1; }
 
@@ -56,4 +56,4 @@ systemctl reload opendkim 2>/dev/null || systemctl restart opendkim 2>/dev/null 
 systemctl reload dovecot 2>/dev/null || true
 systemctl reload postfix 2>/dev/null || true
 
-echo "[vzone] mail maps + OpenDKIM rechargés (${MAPS_DIR}) — milters inchangés"
+echo "[vzone] mail maps + OpenDKIM rechargés (${MAPS_DIR})"

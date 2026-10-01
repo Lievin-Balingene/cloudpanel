@@ -115,13 +115,17 @@ fi
 if [[ -f "${REPO_DIR}/scripts/install-mail.sh" ]]; then
   bash "${REPO_DIR}/scripts/install-mail.sh" || echo "[vzone] Avertissement: install-mail.sh a échoué"
 fi
-# DKIM / SPF / tables OpenDKIM (clés+DNS ; milters OFF — SMTP prioritaire)
+# DKIM / SPF / tables OpenDKIM (clés + DNS)
 if [[ -f "${REPO_DIR}/scripts/repair-mail-reputation.sh" ]]; then
   bash "${REPO_DIR}/scripts/repair-mail-reputation.sh" || echo "[vzone] Avertissement: repair-mail-reputation.sh a échoué"
 fi
-# Ceinture: SMTP sans milters après chaque update
+# SMTP de base (TLS/auth) — peut temporairement vider les milters
 if [[ -f "${REPO_DIR}/scripts/repair-smtp.sh" ]]; then
   bash "${REPO_DIR}/scripts/repair-smtp.sh" || echo "[vzone] Avertissement: repair-smtp.sh a échoué"
+fi
+# Réactiver signature DKIM sortante (submission/smtps) — après SMTP
+if [[ -f "${REPO_DIR}/scripts/repair-dkim.sh" ]]; then
+  bash "${REPO_DIR}/scripts/repair-dkim.sh" || echo "[vzone] Avertissement: repair-dkim.sh a échoué (SMTP reste OK)"
 fi
 
 # phpMyAdmin + MariaDB + PHP-FPM

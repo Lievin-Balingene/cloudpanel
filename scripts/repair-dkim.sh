@@ -31,11 +31,10 @@ rollback_smtp() {
   echo "SMTP rétabli. DKIM NON actif. Voir /tmp/repair-smtp-rollback.log"
 }
 
-echo "=== repair-dkim (0.32.19) — safe + AUTH test + rollback ==="
+echo "=== repair-dkim (0.39.14) — safe + AUTH test + rollback ==="
 
-# 0) Toujours partir d'un master SANS milter (sauvegarde propre)
-install -m 644 "${REPO_DIR}/deploy/postfix/master.cf" /etc/postfix/master.cf
-cp -a /etc/postfix/master.cf "$MASTER_BAK"
+# 0) Sauvegarde master actuel
+cp -a /etc/postfix/master.cf "$MASTER_BAK" 2>/dev/null || true
 postconf -e "smtpd_milters=" "non_smtpd_milters=" "milter_default_action=accept"
 
 # 1) OpenDKIM (tables sous /etc/opendkim — lisibles)
@@ -126,25 +125,11 @@ if journalctl -u opendkim --since "30 sec ago" --no-pager 2>/dev/null | grep -qi
 fi
 echo "opendkim :8891 OK"
 
-# 2) Injecter milter submission/smtps + ORIGINATING
-awk -v milter="$MILTER" '
-  BEGIN { subm=0 }
-  /^[a-zA-Z]/ {
-    if ($1 == "submission" || $1 == "smtps") subm=1
-    else subm=0
-  }
-  /^[ \t]*-o[ \t]+smtpd_milters=/ && subm {
-    print "  -o smtpd_milters=" milter
-    print "  -o milter_macro_daemon_name=ORIGINATING"
-    print "  -o milter_default_action=accept"
-    next
-  }
-  { print }
-' /etc/postfix/master.cf > /tmp/master.cf.dkim
-mv /tmp/master.cf.dkim /etc/postfix/master.cf
+# 2) master.cf avec milters DKIM sur submission/smtps (template panel)
+install -m 644 "${REPO_DIR}/deploy/postfix/master.cf" /etc/postfix/master.cf
 
 if ! grep -qE 'smtpd_milters=inet:127.0.0.1:8891' /etc/postfix/master.cf; then
-  echo "ERREUR: milter non injecté"; rollback_smtp; exit 1
+  echo "ERREUR: milter absent du template master.cf"; rollback_smtp; exit 1
 fi
 
 postconf -e "milter_default_action=accept" "milter_protocol=6" \

@@ -190,6 +190,7 @@ repair_all_safe() {
     repair-roundcube.sh
     repair-mail-auth.sh
     repair-smtp.sh
+    repair-dkim.sh
     ensure-roundcube-sso.sh
   )
 

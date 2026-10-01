@@ -92,7 +92,7 @@ else
   fi
 fi
 
-# --- OpenDKIM (daemon prêt ; milters Postfix OFF par défaut — jamais casser SMTP) ---
+# --- OpenDKIM (signature sortante submission/smtps) ---
 mkdir -p /etc/opendkim/keys
 install -m 644 "${REPO_DIR}/deploy/opendkim/opendkim.conf" /etc/opendkim.conf
 install -m 644 "${REPO_DIR}/deploy/opendkim/TrustedHosts" /etc/opendkim/TrustedHosts
@@ -115,11 +115,14 @@ if [[ -s "$MAPS_DIR/opendkim-KeyTable" ]]; then
   chown opendkim:opendkim /etc/opendkim/KeyTable /etc/opendkim/SigningTable
 fi
 
-# Garantir milters vides + garde SMTP
-postconf -e "smtpd_milters=" "non_smtpd_milters=" "milter_default_action=accept" 2>/dev/null || true
+# master.cf avec milters DKIM (submission/smtps) — accept si daemon down
 if [[ -f "${REPO_DIR}/deploy/postfix/master.cf" ]]; then
   install -m 644 "${REPO_DIR}/deploy/postfix/master.cf" /etc/postfix/master.cf
 fi
+postconf -e "milter_default_action=accept" "milter_protocol=6" \
+  "milter_connect_timeout=5s" "milter_command_timeout=15s" \
+  "smtpd_milters=" "non_smtpd_milters=" 2>/dev/null || true
+
 if [[ -f "${REPO_DIR}/deploy/systemd/vzone-smtp-guard.timer" ]]; then
   sed "s|/opt/vzone-src|${REPO_DIR}|g" \
     "${REPO_DIR}/deploy/systemd/vzone-smtp-guard.service" > /etc/systemd/system/vzone-smtp-guard.service
@@ -175,5 +178,6 @@ systemctl reload postfix || systemctl restart postfix
 
 echo "[vzone] Stack mail active — hostname=${HOSTNAME_FQDN} maps=${MAPS_DIR} ip=${PUBLIC_IP}"
 echo "[vzone] Ports : 25/587/465 (SMTP) · 143/993 (IMAP) · 110/995 (POP3)"
-echo "[vzone] Réputation: SPF/DKIM auto à la création domaine. PTR rDNS à régler chez l'hébergeur."
-echo "[vzone] Réparer: sudo bash ${REPO_DIR}/scripts/repair-mail-reputation.sh"
+echo "[vzone] DKIM: milter submission/smtps → inet:127.0.0.1:8891 (accept si erreur)"
+echo "[vzone] Réputation: SPF/DKIM auto à la création domaine. PTR rDNS chez l'hébergeur."
+echo "[vzone] Réparer: sudo bash ${REPO_DIR}/scripts/repair-mail-reputation.sh && sudo bash ${REPO_DIR}/scripts/repair-dkim.sh"
