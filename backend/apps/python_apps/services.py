@@ -607,19 +607,32 @@ def _scaffold(app_root: Path, mode: str, framework: str) -> None:
             entry.write_text(ASGI_TEMPLATE, encoding="utf-8")
     else:
         entry = app_root / "passenger_wsgi.py"
-        # Comme cPanel : créer une seule fois — les modifications utilisateur sont préservées
+        settings_module, project_subdir = (
+            resolve_django_layout(app_root)
+            if framework == PythonApp.Framework.DJANGO
+            else (f"{DJANGO_PROJECT_PACKAGE}.settings", "")
+        )
+        content = WSGI_TEMPLATE.format(
+            settings_module=settings_module,
+            project_subdir=project_subdir,
+        )
+        # Créer OU remplacer le stub Hello (jamais laisser le placeholder)
         if not entry.exists():
-            if framework == PythonApp.Framework.DJANGO:
-                settings_module, project_subdir = resolve_django_layout(app_root)
-            else:
-                settings_module, project_subdir = f"{DJANGO_PROJECT_PACKAGE}.settings", ""
-            entry.write_text(
-                WSGI_TEMPLATE.format(
-                    settings_module=settings_module,
-                    project_subdir=project_subdir,
-                ),
-                encoding="utf-8",
-            )
+            entry.write_text(content, encoding="utf-8")
+        else:
+            try:
+                existing = entry.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                existing = ""
+            if is_passenger_hello_stub(existing) or (
+                framework == PythonApp.Framework.DJANGO and "get_wsgi_application" not in existing
+            ):
+                try:
+                    (app_root / "passenger_wsgi.py.bak").write_text(existing, encoding="utf-8")
+                except OSError:
+                    pass
+                entry.write_text(content, encoding="utf-8")
+                _clear_wsgi_bytecode(app_root)
     readme = app_root / "README.vzone.md"
     if not readme.exists():
         readme.write_text(
@@ -868,6 +881,14 @@ def create_python_app(
         notes=notes,
         status=PythonApp.Status.STOPPED,
     )
+    # Django : passenger_wsgi déjà correct dès la création (pas de stub Hello)
+    if mode == PythonApp.Mode.WSGI and (
+        framework == PythonApp.Framework.DJANGO or find_manage_py(app_root) is not None
+    ):
+        try:
+            sync_passenger_wsgi(app, app_root, force=True)
+        except Exception:  # noqa: BLE001
+            logger.debug("sync_passenger_wsgi à la création ignoré", exc_info=True)
     if app.domain_name:
         _claim_app_domain(app, app.domain_name)
         app.refresh_from_db()

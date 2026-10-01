@@ -54,6 +54,7 @@ install_packages_debian() {
     build-essential git python3 python3-venv python3-dev python3-pip \
     postgresql postgresql-contrib redis-server nginx \
     libpq-dev libffi-dev libssl-dev pkg-config \
+    psmisc iproute2 lsof util-linux \
     ufw fail2ban
   # Node.js 20 LTS
   if ! command -v node >/dev/null 2>&1; then
@@ -74,6 +75,7 @@ install_packages_rhel() {
     python3 python3-devel python3-pip \
     postgresql-server postgresql-contrib redis nginx \
     libpq-devel openssl-devel libffi-devel \
+    psmisc iproute lsof util-linux \
     firewalld fail2ban
   if ! command -v node >/dev/null 2>&1; then
     curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
@@ -204,6 +206,14 @@ PY
   install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-api.service" /etc/systemd/system/
   install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-worker.service" /etc/systemd/system/
   install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-beat.service" /etc/systemd/system/
+
+  # Helpers panel (runas, fix-perms, kill-port, sudoers) AVANT le 1er démarrage API
+  if [[ -f "${SCRIPT_DIR}/ensure-panel-helpers.sh" ]]; then
+    bash "${SCRIPT_DIR}/ensure-panel-helpers.sh" || log "Avertissement: ensure-panel-helpers.sh a échoué"
+  elif [[ -f "${SCRIPT_DIR}/ensure-mkhome-sudoers.sh" ]]; then
+    bash "${SCRIPT_DIR}/ensure-mkhome-sudoers.sh" || log "Avertissement: ensure-mkhome-sudoers.sh a échoué"
+  fi
+
   bash "${SCRIPT_DIR}/ensure-homes.sh"
   bash "${SCRIPT_DIR}/ensure-nginx.sh" "${VZONE_ROOT}/deploy/nginx/vzone.conf"
   # Accès Docker pour l'utilisateur API (évite permission denied sur docker.sock)

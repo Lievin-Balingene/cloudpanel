@@ -11,6 +11,14 @@ REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VERSION="$(tr -d '[:space:]' < "${REPO_DIR}/VERSION")"
 
 echo "[vzone] Mise à jour vers ${VERSION}"
+
+# Helpers panel en premier (kill-port, runas, fix-perms, sudoers) — avant API restart
+if [[ -f "${REPO_DIR}/scripts/ensure-panel-helpers.sh" ]]; then
+  bash "${REPO_DIR}/scripts/ensure-panel-helpers.sh" || echo "[vzone] Avertissement: ensure-panel-helpers.sh a échoué"
+elif [[ -f "${REPO_DIR}/scripts/ensure-mkhome-sudoers.sh" ]]; then
+  bash "${REPO_DIR}/scripts/ensure-mkhome-sudoers.sh" || echo "[vzone] Avertissement: ensure-mkhome-sudoers.sh a échoué"
+fi
+
 # Ne pas couper l'API pendant tout le build frontend (sinon login = 502).
 # Court stop uniquement autour des migrations (voir plus bas).
 
@@ -166,8 +174,10 @@ if [[ -f "${REPO_DIR}/scripts/ensure-terminal-sudoers.sh" ]]; then
   bash "${REPO_DIR}/scripts/ensure-terminal-sudoers.sh" || echo "[vzone] Avertissement: ensure-terminal-sudoers.sh a échoué"
 fi
 
-# Helper root création /home/<user> (évite Permission denied Errno 13)
-if [[ -f "${REPO_DIR}/scripts/ensure-mkhome-sudoers.sh" ]]; then
+# Helper root création /home/<user> + kill-port + runas (déjà via ensure-panel-helpers en tête)
+if [[ -f "${REPO_DIR}/scripts/ensure-panel-helpers.sh" ]]; then
+  bash "${REPO_DIR}/scripts/ensure-panel-helpers.sh" || echo "[vzone] Avertissement: ensure-panel-helpers.sh a échoué"
+elif [[ -f "${REPO_DIR}/scripts/ensure-mkhome-sudoers.sh" ]]; then
   bash "${REPO_DIR}/scripts/ensure-mkhome-sudoers.sh" || echo "[vzone] Avertissement: ensure-mkhome-sudoers.sh a échoué"
 fi
 

@@ -135,4 +135,4 @@ if id -u "${VZONE_USER}" >/dev/null 2>&1; then
   fi
 fi
 
-echo "[vzone] jail OK → mkhome + jailterm + rootterm + runas + fix-app-perms + /etc/sudoers.d/vzone-panel"
+echo "[vzone] jail OK → mkhome + jailterm + rootterm + runas + fix-app-perms + kill-port + /etc/sudoers.d/vzone-panel"
