@@ -44,9 +44,9 @@ export function roleAllowedOnPortal(
   portal: PortalKind = detectPortalSync(),
 ): boolean {
   if (!role || portal === "shared" || portal === "webmail") return true;
-  // WHM : admin + reseller
+  // Admin (WHM) : administrator + reseller
   if (portal === "admin") return role === "administrator" || role === "reseller";
-  // cPanel : client + reseller (comme cPanel — le revendeur a aussi son cPanel)
+  // V-zone Panel : client + reseller (le revendeur a aussi son panel client)
   if (portal === "client") return role === "client" || role === "reseller";
   return true;
 }
@@ -58,24 +58,24 @@ export function homePathFor(
   if (portal === "admin") return "/whm";
   if (portal === "client") return "/panel";
   if (role === "client") return "/panel";
-  // Shared hostname : reseller → WHM par défaut (peut ouvrir cPanel via le lien)
+  // Shared hostname : reseller → Admin par défaut (peut ouvrir V-zone Panel via le lien)
   return "/whm";
 }
 
 export function portalLabel(portal: PortalKind = detectPortalSync()): string {
-  if (portal === "admin") return "WHM";
-  if (portal === "client") return "cPanel";
-  return "Panel";
+  if (portal === "admin") return "V-zone Admin";
+  if (portal === "client") return "V-zone Panel";
+  return "V-zone";
 }
 
-/** URL vers WHM (port Admin) — pour le bouton « WHM » dans le cPanel du revendeur. */
+/** URL vers V-zone Admin / WHM (port Admin) — depuis le V-zone Panel du revendeur. */
 export function whmPortalUrl(path = "/whm"): string {
   const { protocol, hostname } = window.location;
   const p = path.startsWith("/") ? path : `/${path}`;
   return `${protocol}//${hostname}:9086${p}`;
 }
 
-/** URL vers cPanel (port Client) — pour le bouton « cPanel » dans WHM. */
+/** URL vers V-zone Panel (port Client) — depuis V-zone Admin / WHM. */
 export function cpanelPortalUrl(path = "/panel"): string {
   const { protocol, hostname } = window.location;
   const p = path.startsWith("/") ? path : `/${path}`;

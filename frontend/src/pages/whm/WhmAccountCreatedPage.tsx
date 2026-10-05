@@ -136,7 +136,7 @@ export function WhmAccountCreatedPage() {
             List Accounts
           </Link>
           <Link to="/whm" className="vz-btn-ghost">
-            Go to WHM Home
+            Go to V-zone Admin Home
           </Link>
         </div>
       </div>

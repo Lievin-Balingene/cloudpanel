@@ -184,7 +184,7 @@ export function ClientHomePage() {
             <Server className="h-5 w-5 sm:h-6 sm:w-6" />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-bold text-cp-orange-dark">Espace revendeur (WHM)</p>
+            <p className="text-sm font-bold text-cp-orange-dark">Espace revendeur (V-zone Admin)</p>
             <p className="text-xs text-cp-muted sm:text-sm">
               Créer et gérer les comptes de vos clients.
             </p>

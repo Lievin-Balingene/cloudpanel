@@ -14,6 +14,9 @@ export function AdminLoginView({ onBack }: Props) {
       </div>
 
       <main className="w-full max-w-[360px] rounded border border-[#3d4f63] bg-[#f0f2f5] p-6 shadow-lg">
+        <p className="mb-4 text-center text-xs font-medium uppercase tracking-wider text-slate-500">
+          V-zone Admin
+        </p>
         <LoginFormFields variant="admin" idHint="Username" passwordHint="Password" submitLabel="Log in" />
         {onBack && (
           <button

@@ -9,7 +9,7 @@ export function ClientLoginView({ onBack }: Props) {
       <div className="mb-6 flex items-center gap-2.5">
         <img src="/vzone-mark.svg" alt="" className="h-11 w-11 rounded-lg" width={44} height={44} />
         <span className="text-[1.75rem] font-semibold tracking-tight text-[#1a2f45]">
-          V-<span className="text-[#ff6c2c]">zone</span>
+          V-zone <span className="text-[#ff6c2c]">Panel</span>
         </span>
       </div>
 

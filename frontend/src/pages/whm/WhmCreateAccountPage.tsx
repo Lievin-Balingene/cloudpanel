@@ -218,7 +218,7 @@ export function WhmCreateAccountPage() {
             <div className="flex gap-2 border-b border-cp-border p-4">
               {(
                 [
-                  ["client", "cPanel Account (client)"],
+                  ["client", "V-zone Panel (client)"],
                   ["reseller", "Reseller Account"],
                 ] as const
               ).map(([id, label]) => (
@@ -286,7 +286,7 @@ export function WhmCreateAccountPage() {
         <div className="whm-form-row">
           <div>
             <p className="whm-form-label">Username *</p>
-            <p className="whm-form-hint">System / cPanel style (a-z, 0-9)</p>
+            <p className="whm-form-hint">System / V-zone style (a-z, 0-9)</p>
           </div>
           <input
             className="vz-input font-mono"

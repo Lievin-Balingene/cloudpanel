@@ -34,7 +34,7 @@ export function LoginPage() {
       portal === "admin" || sharedChoice === "admin"
         ? "V-zone Admin"
         : portal === "client" || sharedChoice === "client"
-          ? "V-zone Hosting"
+          ? "V-zone Panel"
           : "V-zone";
     document.title = `Connexion · ${label}`;
   }, [portal, sharedChoice]);

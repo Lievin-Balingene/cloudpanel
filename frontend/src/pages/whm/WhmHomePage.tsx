@@ -250,13 +250,13 @@ export function WhmHomePage() {
         <div className="min-w-0 space-y-5">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-              WebHost Manager
+              V-zone WHM
             </p>
             <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-800 dark:text-ink-50">
-              Accueil WHM
+              Accueil V-zone Admin
             </h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-500">
-              Comptes, packages, DNS, services et sécurité — structure familière WHM.
+              Comptes, packages, DNS, services et sécurité — panneau d'administration V-zone.
             </p>
           </div>
 

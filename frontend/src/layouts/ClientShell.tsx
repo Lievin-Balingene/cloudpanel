@@ -407,7 +407,7 @@ export function ClientShell() {
   }, [location.pathname]);
 
   useEffect(() => {
-    document.title = "Panneau client · V-zone";
+    document.title = "V-zone Panel";
   }, []);
 
   useEffect(() => {
@@ -447,11 +447,11 @@ export function ClientShell() {
                 height={32}
               />
               <div className="min-w-0">
-                <p className="text-sm font-semibold tracking-wide">V-zone</p>
+                <p className="text-sm font-semibold tracking-wide">V-zone Panel</p>
                 <p className="truncate text-[11px] text-white/85">
                   {user?.role === "reseller"
-                    ? "cPanel · Espace client (revendeur)"
-                    : "cPanel · Espace client"}
+                    ? "Espace client · revendeur"
+                    : "Espace client"}
                 </p>
               </div>
             </NavLink>
@@ -461,10 +461,10 @@ export function ClientShell() {
               <a
                 href={whmPortalUrl("/whm")}
                 className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-cp-orange px-2.5 text-xs font-bold uppercase tracking-wide text-white shadow hover:brightness-110 sm:px-3"
-                title="Ouvrir WHM (gestion des comptes)"
+                title="Ouvrir V-zone Admin (WHM)"
               >
                 <Server className="h-3.5 w-3.5" />
-                <span className="hidden xs:inline sm:inline">WHM</span>
+                <span className="hidden xs:inline sm:inline">Admin</span>
               </a>
             )}
             <span className="hidden max-w-[8rem] truncate rounded-full bg-white/15 px-2.5 py-1 text-xs sm:inline">

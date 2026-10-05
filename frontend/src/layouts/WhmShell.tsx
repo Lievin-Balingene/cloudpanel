@@ -292,7 +292,7 @@ const navSections: NavSection[] = [
   },
   {
     id: "cpanel-dev",
-    title: "cPanel & Development",
+    title: "V-zone Panel & Development",
     items: [
       { to: "/whm/files", label: "Browse Account Files", icon: FolderOpen },
       { to: "/whm/terminal", label: "Terminal / API Ops", icon: Terminal },
@@ -462,6 +462,10 @@ export function WhmShell() {
   });
 
   useEffect(() => {
+    document.title = "V-zone WHM · Admin";
+  }, []);
+
+  useEffect(() => {
     function onDoc(e: MouseEvent) {
       if (!headerSearchWrap.current?.contains(e.target as Node)) {
         setHeaderOpen(false);
@@ -604,8 +608,8 @@ export function WhmShell() {
               height={36}
             />
             <div className="min-w-0 flex-1">
-              <p className="select-none font-sans text-[20px] font-bold leading-none tracking-tight text-white">
-                WHM
+              <p className="select-none font-sans text-[17px] font-bold leading-tight tracking-tight text-white">
+                V-zone WHM
               </p>
               <p className="mt-0.5 truncate text-[10px] font-medium uppercase tracking-[0.12em] text-white/55">
                 V-zone Admin
@@ -765,10 +769,10 @@ export function WhmShell() {
                 <a
                   href={cpanelPortalUrl("/panel")}
                   className="inline-flex h-9 items-center gap-1.5 rounded-full border border-cp-orange/40 bg-cp-orange-soft px-2.5 text-xs font-semibold text-cp-orange-dark hover:brightness-105"
-                  title="Ouvrir mon cPanel"
+                  title="Ouvrir V-zone Panel"
                 >
                   <AppWindow className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">cPanel</span>
+                  <span className="hidden sm:inline">V-zone Panel</span>
                 </a>
               )}
               <button
