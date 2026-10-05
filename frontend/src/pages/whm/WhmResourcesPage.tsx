@@ -339,7 +339,7 @@ function ServiceActions({
         label={`Démarrer ${service.name}`}
         size="sm"
         tone="success"
-        disabled={busy || !can || service.active}
+        disabled={busy || !can}
         onClick={() => onAction(service.name, "start")}
       >
         <Play className="h-3.5 w-3.5" />
@@ -348,7 +348,7 @@ function ServiceActions({
         label={`Arrêter ${service.name}`}
         size="sm"
         tone="danger"
-        disabled={busy || !can || !service.active}
+        disabled={busy || !can}
         onClick={() => onAction(service.name, "stop")}
       >
         <Square className="h-3.5 w-3.5" />

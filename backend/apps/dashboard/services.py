@@ -165,65 +165,84 @@ def visitors_for(user: User, hours: int = 24) -> dict[str, Any]:
 
 
 _SERVICE_CANDIDATES: list[tuple[str, list[str], list[str]]] = [
-    # label, systemd units, process name fragments
+    # label (API/UI), unités systemd candidates, fragments processus
     ("nginx", ["nginx"], ["nginx"]),
-    ("postgresql", ["postgresql", "pgsql"], ["postgres", "postgresql"]),
+    ("postgresql", ["postgresql"], ["postgres", "postgresql"]),
     ("mysql", ["mariadb", "mysql", "mysqld"], ["mysqld", "mariadbd"]),
-    ("redis", ["redis", "redis-server"], ["redis-server", "redis"]),
-    ("postfix", ["postfix"], ["master", "postfix"]),
+    ("redis", ["redis-server", "redis"], ["redis-server", "redis"]),
+    ("postfix", ["postfix"], ["postfix"]),
     ("dovecot", ["dovecot"], ["dovecot"]),
     ("opendkim", ["opendkim"], ["opendkim"]),
-    ("fail2ban", ["fail2ban"], ["fail2ban-server", "fail2ban"]),
-    ("sshd", ["sshd", "ssh"], ["sshd", "ssh"]),
+    ("fail2ban", ["fail2ban"], ["fail2ban"]),
+    ("sshd", ["ssh", "sshd"], ["sshd", "ssh"]),
     ("docker", ["docker"], ["dockerd"]),
     ("named", ["named", "bind9"], ["named", "bind"]),
-    ("pure-ftpd", ["pure-ftpd", "vsftpd", "proftpd"], ["pure-ftpd", "vsftpd", "proftpd"]),
-    ("vzone-api", ["vzone-api"], ["daphne", "gunicorn", "uvicorn"]),
-    ("vzone-celery", ["vzone-celery", "vzone-worker"], ["celery"]),
-    ("vzone-worker", ["vzone-beat", "vzone-celerybeat"], ["celery"]),
+    ("pure-ftpd", ["pure-ftpd", "pureftpd", "vsftpd", "proftpd"], ["pure-ftpd", "pureftpd", "vsftpd", "proftpd"]),
+    ("vzone-api", ["vzone-api"], ["daphne"]),
+    ("vzone-worker", ["vzone-worker", "vzone-celery"], ["celery"]),
+    ("vzone-beat", ["vzone-beat", "vzone-celerybeat"], ["celery"]),
 ]
+
+# Alias de noms UI / anciens labels → label canonique
+_SERVICE_ALIASES: dict[str, str] = {
+    "vzone-celery": "vzone-worker",
+    "celery": "vzone-worker",
+    "vzone-celerybeat": "vzone-beat",
+    "celerybeat": "vzone-beat",
+    "pureftpd": "pure-ftpd",
+    "ftp": "pure-ftpd",
+    "mariadb": "mysql",
+    "mysqld": "mysql",
+    "redis-server": "redis",
+    "ssh": "sshd",
+    "bind9": "named",
+}
 
 SVCCTL = Path("/usr/local/sbin/vzone-svcctl")
 ALLOWED_SERVICE_ACTIONS = frozenset({"start", "stop", "restart", "reload"})
 
 
-def _systemd_is_active(unit: str) -> bool | None:
-    """True/False si systemctl répond, None si indisponible."""
-    if "*" in unit:
+def _systemd_unit_active(unit: str) -> bool | None:
+    """True/False si l'unité existe, None si absente / systemctl indisponible.
+
+    Important: ``systemctl is-active`` renvoie souvent ``inactive`` pour une
+    unité *inexistante* — on s'appuie donc sur LoadState.
+    """
+    if not unit or "*" in unit:
         return None
-    name = unit if unit.endswith(".service") else f"{unit}.service"
+    name = unit if "." in unit else f"{unit}.service"
     try:
         proc = subprocess.run(
-            ["systemctl", "is-active", name],
+            ["systemctl", "show", name, "-p", "LoadState", "-p", "ActiveState", "--value"],
             capture_output=True,
             text=True,
-            timeout=2,
+            timeout=3,
             check=False,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return None
-    out = (proc.stdout or "").strip().lower()
-    if out == "active":
-        return True
-    if out in {"inactive", "failed", "deactivating", "activating", "dead"}:
-        return False
-    # unit inconnue
-    err = (proc.stderr or "").lower()
-    if proc.returncode != 0 and ("could not be found" in err or "not-found" in err):
+    lines = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
+    if not lines:
         return None
-    # is-active renvoie inactive avec code 3 souvent
-    if out == "unknown" or "not-found" in out:
+    load_state = lines[0].lower()
+    active_state = lines[1].lower() if len(lines) > 1 else ""
+    if load_state in {"not-found", ""}:
         return None
-    return False if proc.returncode != 0 else True
+    return active_state == "active"
 
 
-def _resolve_unit(label: str, units: list[str]) -> tuple[str | None, bool | None]:
-    """Retourne (unit_name, active) pour le premier unit systemd connu."""
+def _resolve_unit(units: list[str]) -> tuple[str | None, bool | None]:
+    """Retourne (unit_name, active) pour le premier unit systemd réellement chargé."""
     for unit in units:
-        st = _systemd_is_active(unit)
+        st = _systemd_unit_active(unit)
         if st is not None:
             return unit, st
     return None, None
+
+
+def _canonical_service_name(name: str) -> str:
+    key = (name or "").strip().lower()
+    return _SERVICE_ALIASES.get(key, key)
 
 
 def service_statuses() -> list[dict[str, Any]]:
@@ -245,14 +264,38 @@ def service_statuses() -> list[dict[str, Any]]:
     helper_ok = SVCCTL.is_file()
     results: list[dict[str, Any]] = []
     for label, units, names in _SERVICE_CANDIDATES:
-        unit, active = _resolve_unit(label, units)
+        unit, active = _resolve_unit(units)
         source = "systemd" if unit is not None else "process"
         if active is None:
-            active = any(n in proc for proc in running for n in names) or any(
-                n in cmdline_blob for n in names
-            )
-            if label == "postfix" and active:
+            # Fallback processus si l'unité n'est pas installée / visible
+            if label == "vzone-worker":
+                active = False
+                try:
+                    for p in psutil.process_iter(["cmdline"]):
+                        cmd = " ".join(p.info.get("cmdline") or []).lower()
+                        if "celery" in cmd and "beat" not in cmd:
+                            active = True
+                            break
+                except (psutil.Error, OSError):
+                    active = False
+            elif label == "vzone-beat":
+                active = False
+                try:
+                    for p in psutil.process_iter(["cmdline"]):
+                        cmd = " ".join(p.info.get("cmdline") or []).lower()
+                        if "celery" in cmd and "beat" in cmd:
+                            active = True
+                            break
+                except (psutil.Error, OSError):
+                    active = False
+            elif label == "vzone-api":
+                active = any(n in proc for proc in running for n in names) or "daphne" in cmdline_blob
+            elif label == "postfix":
                 active = "postfix" in cmdline_blob
+            else:
+                active = any(n in proc for proc in running for n in names) or any(
+                    n in cmdline_blob for n in names
+                )
             source = "process"
             unit = units[0] if units else None
         results.append(
@@ -270,7 +313,7 @@ def service_statuses() -> list[dict[str, Any]]:
 def control_service(name: str, action: str) -> dict[str, Any]:
     """start|stop|restart|reload d'un service allowlisté via vzone-svcctl."""
     action = (action or "").strip().lower()
-    name = (name or "").strip().lower()
+    name = _canonical_service_name(name)
     if action not in ALLOWED_SERVICE_ACTIONS:
         raise VZoneAPIException(
             detail="Action invalide (start, stop, restart, reload).",
@@ -278,13 +321,12 @@ def control_service(name: str, action: str) -> dict[str, Any]:
             status_code=400,
         )
 
-    unit: str | None = None
-    for label, units, _names in _SERVICE_CANDIDATES:
+    units: list[str] = []
+    for label, candidates, _names in _SERVICE_CANDIDATES:
         if label == name:
-            resolved, _ = _resolve_unit(label, units)
-            unit = resolved or (units[0] if units else None)
+            units = list(candidates)
             break
-    if not unit:
+    if not units:
         raise VZoneAPIException(
             detail=f"Service inconnu: {name}",
             code="unknown_service",
@@ -299,39 +341,61 @@ def control_service(name: str, action: str) -> dict[str, Any]:
             )
         )
 
-    cmd = ["sudo", "-n", str(SVCCTL), action, unit]
-    try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise SystemOperationError(detail=f"Timeout {action} {name}") from exc
-    except OSError as exc:
-        raise SystemOperationError(detail=str(exc)) from exc
+    # Préférer l'unité réellement chargée, sinon essayer chaque candidat
+    resolved, _ = _resolve_unit(units)
+    try_units = [resolved] if resolved else []
+    for u in units:
+        if u not in try_units:
+            try_units.append(u)
 
-    out = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
-    if proc.returncode != 0:
+    last_out = ""
+    last_unit = try_units[0]
+    for unit in try_units:
+        if not unit:
+            continue
+        last_unit = unit
+        cmd = ["sudo", "-n", str(SVCCTL), action, unit]
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=90,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise SystemOperationError(detail=f"Timeout {action} {name}") from exc
+        except OSError as exc:
+            raise SystemOperationError(detail=str(exc)) from exc
+
+        out = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+        last_out = out
+        if proc.returncode == 0:
+            time_module.sleep(0.5)
+            statuses = {s["name"]: s for s in service_statuses()}
+            current = statuses.get(name) or {"name": name, "active": None, "unit": unit}
+            return {
+                "name": name,
+                "action": action,
+                "unit": unit,
+                "active": current.get("active"),
+                "output": out[:800],
+                "service": current,
+            }
+        # Unité introuvable → essayer le candidat suivant
+        if proc.returncode == 5 or "introuvable" in out.lower() or "not-found" in out.lower():
+            logger.info("svcctl %s %s introuvable, essai suivant", action, unit)
+            continue
         logger.warning("svcctl %s %s failed: %s", action, unit, out)
         raise SystemOperationError(
             detail=out or f"Échec {action} sur {name} (code {proc.returncode})",
         )
 
-    # Laisser systemd stabiliser puis relire l'état
-    time_module.sleep(0.4)
-    statuses = {s["name"]: s for s in service_statuses()}
-    current = statuses.get(name) or {"name": name, "active": None, "unit": unit}
-    return {
-        "name": name,
-        "action": action,
-        "unit": unit,
-        "active": current.get("active"),
-        "output": out[:500],
-        "service": current,
-    }
+    raise SystemOperationError(
+        detail=last_out
+        or f"Aucune unité systemd trouvée pour {name} (essayé: {', '.join(try_units)}). "
+        f"Installez le paquet ou vérifiez: systemctl status {last_unit}",
+    )
 
 
 def _bytes_rate(prev: int, curr: int, seconds: float) -> float:
