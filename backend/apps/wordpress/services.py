@@ -10,6 +10,7 @@ import shutil
 import string
 import subprocess
 from pathlib import Path
+from typing import Any
 
 from django.conf import settings
 from django.db.models import Q, QuerySet
@@ -761,9 +762,11 @@ def _upsert_post(site: WordPressSite, slug: str, title: str, excerpt: str, body:
     return int(m.group(1)) if m else 0
 
 
-def _flush_wp_rewrites(site: WordPressSite) -> None:
-    docroot = Path(site.document_root)
+def _flush_wp_rewrites(site: WordPressSite) -> dict[str, Any]:
+    """Force permaliens /%postname%/ + .htaccess (LiteSpeed/Apache) pour éviter les 404."""
+    docroot = Path(site.document_root).resolve()
     php_ver = site.php_version or ""
+    steps: list[str] = []
     for args in (
         ["option", "update", "permalink_structure", "/%postname%/"],
         ["rewrite", "structure", "/%postname%/", "--hard"],
@@ -772,8 +775,103 @@ def _flush_wp_rewrites(site: WordPressSite) -> None:
     ):
         try:
             _run_wp(args, path=docroot, php_version=php_ver)
-        except VZoneAPIException:
+            steps.append(" ".join(args[:2]))
+        except VZoneAPIException as exc:
+            steps.append(f"err:{args[0]}:{exc}")
+
+    htaccess = docroot / ".htaccess"
+    wp_rules = (
+        "# BEGIN WordPress\n"
+        "# Les directives entre « BEGIN WordPress » et « END WordPress » sont\n"
+        "# générées dynamiquement et ne doivent être modifiées que via les filtres WordPress.\n"
+        "# Leur modification peut être écrasée par de prochaines mises à jour.\n"
+        "<IfModule mod_rewrite.c>\n"
+        "RewriteEngine On\n"
+        "RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]\n"
+        "RewriteBase /\n"
+        "RewriteRule ^index\\.php$ - [L]\n"
+        "RewriteCond %{REQUEST_FILENAME} !-f\n"
+        "RewriteCond %{REQUEST_FILENAME} !-d\n"
+        "RewriteRule . /index.php [L]\n"
+        "</IfModule>\n"
+        "# END WordPress\n"
+    )
+    try:
+        existing = htaccess.read_text(encoding="utf-8", errors="ignore") if htaccess.exists() else ""
+    except OSError:
+        existing = ""
+    if "# BEGIN WordPress" in existing and "RewriteRule . /index.php" in existing:
+        # Remplace le bloc WordPress pour garantir des règles valides (LiteSpeed)
+        import re as _re
+
+        new_content = _re.sub(
+            r"# BEGIN WordPress.*?# END WordPress\n?",
+            wp_rules,
+            existing,
+            count=1,
+            flags=_re.DOTALL,
+        )
+        if new_content == existing and "# BEGIN WordPress" in existing:
             pass
+        else:
+            if "# BEGIN WordPress" not in new_content:
+                new_content = existing.rstrip() + "\n\n" + wp_rules
+            htaccess.write_text(new_content, encoding="utf-8")
+            steps.append("htaccess_updated")
+    else:
+        # Conserve d'éventuelles règles hors WordPress
+        prefix = existing.strip()
+        if prefix and "# BEGIN WordPress" not in prefix:
+            htaccess.write_text(prefix + "\n\n" + wp_rules, encoding="utf-8")
+        else:
+            htaccess.write_text(wp_rules, encoding="utf-8")
+        steps.append("htaccess_written")
+    try:
+        os.chmod(htaccess, 0o644)
+    except OSError:
+        pass
+    try:
+        username = (site.owner.username or site.owner.system_username or "").strip()
+        if username:
+            _fix_ownership(docroot, username)
+    except Exception:  # noqa: BLE001
+        logger.debug("chown after permalink flush skip", exc_info=True)
+
+    # Double flush après écriture .htaccess
+    try:
+        _run_wp(["rewrite", "flush", "--hard"], path=docroot, php_version=php_ver)
+        steps.append("rewrite_flush_final")
+    except VZoneAPIException:
+        pass
+
+    return {
+        "permalink_structure": "/%postname%/",
+        "htaccess": str(htaccess),
+        "htaccess_exists": htaccess.is_file(),
+        "steps": steps,
+    }
+
+
+def fix_wordpress_permalinks(site: WordPressSite) -> dict[str, Any]:
+    """Corrige les 404 des pages WP (permaliens + .htaccess LiteSpeed)."""
+    docroot = Path(site.document_root or "")
+    if not docroot.is_dir():
+        raise VZoneAPIException(
+            detail="Document root WordPress introuvable.",
+            code="wp_missing",
+            status_code=404,
+        )
+    result = _flush_wp_rewrites(site)
+    return {
+        "site_id": site.pk,
+        "domain": site.domain.name if site.domain_id else "",
+        "site_url": site.site_url or _site_url(site.domain),
+        "message": (
+            f"Permaliens régénérés pour {site.domain.name}. "
+            "Les pages /a-propos/, /blog/, etc. doivent répondre à nouveau."
+        ),
+        **result,
+    }
 
 
 _NATURE_CSS = """

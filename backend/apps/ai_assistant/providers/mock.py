@@ -2125,6 +2125,34 @@ def _intent_from_scores(
     wp_score = _score_keywords(
         text_n, {"wordpress": 10, "wordpresse": 10, "sites wp": 9, " wp": 4, "wp ": 4}
     )
+    permalink_score = _score_keywords(
+        text_n,
+        {
+            "404": 12,
+            "permalink": 10,
+            "permaliens": 10,
+            "htaccess": 9,
+            "autres pages": 8,
+            "pages renvoient": 9,
+            "not found": 8,
+            "fais le": 3,
+            "directement": 3,
+        },
+    )
+    if permalink_score >= 6 and "fix_wordpress_permalinks" in tool_names:
+        host = _extract_hostname(text) or "nature.7une.info"
+        add(
+            "fix_wp_permalinks",
+            permalink_score + 14,
+            "wordpress",
+            {
+                "say": (
+                    f"Compris — je corrige les **permaliens** de **{host}** "
+                    "(404 LiteSpeed / .htaccess)…"
+                ),
+                "tools": [("fix_wordpress_permalinks", {"domain_name": host})],
+            },
+        )
     beautify_score = _score_keywords(
         text_n,
         {
@@ -2436,6 +2464,33 @@ def _detect_intent(
     page_runtime = (page.get("runtime") or "").lower()
     text_n = _norm_text(last_user_l)
     page_help = _page_help_only(text_n)
+
+    # 404 / permaliens LiteSpeed → outil dédié (jamais jail)
+    permalink_score = _score_keywords(
+        text_n,
+        {
+            "404": 12,
+            "permalink": 10,
+            "permaliens": 10,
+            "htaccess": 9,
+            "rewrite": 7,
+            "not found": 8,
+            "introuvable": 7,
+            "autres pages": 8,
+            "pages renvoient": 9,
+            "fais le": 4,
+            "directement": 4,
+        },
+    )
+    if permalink_score >= 6 and "fix_wordpress_permalinks" in tool_names:
+        host = _extract_hostname(last_user_l) or "nature.7une.info"
+        return {
+            "say": (
+                f"Compris — je corrige les **permaliens / .htaccess** de **{host}** "
+                "(404 LiteSpeed). Clique **Approuver** ensuite."
+            ),
+            "tools": [("fix_wordpress_permalinks", {"domain_name": host})],
+        }
 
     beautify_score = _score_keywords(
         text_n,
@@ -3052,6 +3107,19 @@ def _synthesize_tools(messages: list[ChatMessage]) -> str:
             else:
                 parts.append(
                     f"**Échec beautify** : {data.get('error') or payload.get('error') or 'erreur'}"
+                )
+        elif name == "fix_wordpress_permalinks":
+            payload = _payload(data)
+            if data.get("ok"):
+                parts.append(
+                    f"**Permaliens corrigés** sur {payload.get('domain') or 'le site'}.\n"
+                    f"- Structure : `{payload.get('permalink_structure') or '/%postname%/'}`\n"
+                    f"- `.htaccess` : {'OK' if payload.get('htaccess_exists') else 'manquant'}\n\n"
+                    "Recharge `/a-propos/`, `/blog/`, `/contact/` — plus de 404 LiteSpeed."
+                )
+            else:
+                parts.append(
+                    f"**Échec permaliens** : {data.get('error') or payload.get('error') or 'erreur'}"
                 )
         elif name == "list_ftp_accounts":
             parts.append(_format_simple_list(data, "FTP", "accounts", "username"))

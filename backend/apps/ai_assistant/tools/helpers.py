@@ -106,7 +106,12 @@ def resolve_owner(actor: User, params: dict[str, Any] | None = None) -> User:
             status_code=403,
         )
 
-    return actor
+    # Rôle inconnu / non privilégié : jamais d'escalade
+    raise VZoneAPIException(
+        detail="Ciblage de compte non autorisé pour ce rôle.",
+        code="forbidden_account",
+        status_code=403,
+    )
 
 
 def strip_account_params(params: dict[str, Any] | None) -> dict[str, Any]:
@@ -115,6 +120,93 @@ def strip_account_params(params: dict[str, Any] | None) -> dict[str, Any]:
     data.pop("username", None)
     data.pop("account", None)
     return data
+
+
+def ai_python_apps_qs(user: User):
+    """Apps Python du compte résolu uniquement (pas d'expansion WHM)."""
+    from apps.python_apps.models import PythonApp
+
+    return PythonApp.objects.filter(owner_id=user.pk).select_related("owner")
+
+
+def ai_node_apps_qs(user: User):
+    """Apps Node du compte résolu uniquement."""
+    from apps.node_apps.models import NodeApp
+
+    return NodeApp.objects.filter(owner_id=user.pk).select_related("owner")
+
+
+def ai_domains_qs(user: User):
+    """Domaines du compte résolu uniquement."""
+    from apps.domains.models import Domain
+
+    return Domain.objects.filter(owner_id=user.pk).select_related(
+        "owner", "parent", "dns_zone", "ssl"
+    )
+
+
+def ai_git_repos_qs(user: User):
+    from apps.git_deploy.models import GitRepository
+
+    return GitRepository.objects.filter(owner_id=user.pk).select_related("owner")
+
+
+def ai_wp_sites_qs(user: User):
+    from apps.wordpress.models import WordPressSite
+
+    return WordPressSite.objects.filter(owner_id=user.pk).select_related(
+        "owner", "domain", "database", "db_user", "php_selector"
+    )
+
+
+def ai_mail_domains_qs(user: User):
+    from apps.email.models import MailDomain
+
+    return MailDomain.objects.filter(owner_id=user.pk).select_related("owner", "domain")
+
+
+def ai_mailboxes_qs(user: User):
+    from apps.email.models import Mailbox
+
+    return Mailbox.objects.filter(mail_domain__owner_id=user.pk).select_related(
+        "mail_domain", "mail_domain__owner"
+    )
+
+
+def ai_ftp_accounts_qs(user: User):
+    from apps.ftp.models import FtpAccount
+
+    return FtpAccount.objects.filter(owner_id=user.pk).select_related("owner")
+
+
+def ai_dns_zones_qs(user: User):
+    from apps.dns.models import DnsZone
+
+    return DnsZone.objects.filter(owner_id=user.pk).select_related("owner")
+
+
+def assert_resource_owner(resource: Any, user: User, *, label: str = "ressource") -> None:
+    """Refuse l'accès si la ressource n'appartient pas au compte résolu."""
+    if resource is None:
+        raise VZoneAPIException(
+            detail=f"{label.capitalize()} introuvable.",
+            code="not_found",
+            status_code=404,
+        )
+    owner_id = getattr(resource, "owner_id", None)
+    if owner_id is None:
+        owner = getattr(resource, "owner", None)
+        owner_id = getattr(owner, "pk", None)
+    if owner_id is None and hasattr(resource, "mail_domain"):
+        owner_id = getattr(resource.mail_domain, "owner_id", None)
+    if owner_id is None and hasattr(resource, "domain"):
+        owner_id = getattr(getattr(resource, "domain", None), "owner_id", None)
+    if owner_id != user.pk:
+        raise VZoneAPIException(
+            detail=f"Accès refusé à cette {label} (hors de votre compte).",
+            code="forbidden_resource",
+            status_code=403,
+        )
 
 
 PENDING_DESCRIPTIONS: dict[str, str] = {
@@ -147,6 +239,7 @@ PENDING_DESCRIPTIONS: dict[str, str] = {
     "sync_cron_jobs": "Synchroniser le crontab",
     "install_wordpress": "Installer WordPress",
     "beautify_wordpress_site": "Améliorer le design WordPress",
+    "fix_wordpress_permalinks": "Corriger les permaliens WordPress (404)",
     "delete_wordpress": "Supprimer WordPress",
     "list_files": "Lister des fichiers",
     "mkdir_path": "Créer un dossier",
@@ -247,6 +340,7 @@ HIGH_TOOLS = frozenset(
         "issue_ssl_certificate",
         "install_wordpress",
         "beautify_wordpress_site",
+        "fix_wordpress_permalinks",
     }
 )
 

@@ -15,7 +15,8 @@ from apps.ai_assistant.tools.helpers import err, ok, require_int, require_str, r
 )
 def list_wordpress_sites(user: User, params: dict[str, Any]) -> dict[str, Any]:
     del params
-    from apps.wordpress.services import overview_for, sites_qs
+    from apps.wordpress.services import overview_for
+    from apps.ai_assistant.tools.helpers import ai_wp_sites_qs as sites_qs
 
     sites = [
         {
@@ -54,7 +55,7 @@ def list_wordpress_sites(user: User, params: dict[str, Any]) -> dict[str, Any]:
     dangerous=True,
 )
 def install_wordpress(user: User, params: dict[str, Any]) -> dict[str, Any]:
-    from apps.domains.services import domains_queryset_for
+    from apps.ai_assistant.tools.helpers import ai_domains_qs as domains_queryset_for
     from apps.wordpress.services import install_wordpress as svc
 
     domain_id = require_int(params, "domain_id")
@@ -143,6 +144,45 @@ def beautify_wordpress_site(user: User, params: dict[str, Any]) -> dict[str, Any
 
 
 @register_tool(
+    name="fix_wordpress_permalinks",
+    description=(
+        "Corrige les 404 des pages WordPress (sauf l'accueil) : régénère les permaliens "
+        "/%postname%/ et écrit le .htaccess compatible LiteSpeed/Apache. "
+        "À utiliser quand À propos, Blog, Contact, etc. renvoient 404. "
+        "Cible via site_id ou domain_name."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "site_id": {"type": "integer"},
+            "domain_name": {"type": "string"},
+        },
+        "additionalProperties": False,
+    },
+    dangerous=True,
+)
+def fix_wordpress_permalinks(user: User, params: dict[str, Any]) -> dict[str, Any]:
+    from apps.wordpress.services import fix_wordpress_permalinks as svc
+    from apps.wordpress.services import resolve_site
+
+    site = resolve_site(
+        user,
+        site_id=require_int(params, "site_id"),
+        domain_name=require_str(params, "domain_name", max_len=253),
+    )
+    if not site:
+        return err(
+            "Site WordPress introuvable (passez site_id ou domain_name).",
+            "not_found",
+        )
+
+    def _run():
+        return svc(site)
+
+    return run_service(_run)
+
+
+@register_tool(
     name="delete_wordpress",
     description="Supprime une installation WordPress (confirmation requise).",
     parameters={
@@ -158,7 +198,8 @@ def beautify_wordpress_site(user: User, params: dict[str, Any]) -> dict[str, Any
     dangerous=True,
 )
 def delete_wordpress(user: User, params: dict[str, Any]) -> dict[str, Any]:
-    from apps.wordpress.services import delete_wordpress as svc, sites_qs
+    from apps.wordpress.services import delete_wordpress as svc
+    from apps.ai_assistant.tools.helpers import ai_wp_sites_qs as sites_qs
 
     site = sites_qs(user).filter(pk=require_int(params, "site_id")).first()
     if not site:
