@@ -1,6 +1,7 @@
 """Services WordPress : install wp-cli, MySQL, PHP-FPM, suppression."""
 from __future__ import annotations
 
+import base64
 import logging
 import os
 import re
@@ -601,3 +602,518 @@ def delete_wordpress(
             logger.debug("delete php selector skip", exc_info=True)
 
     _refresh_routing()
+
+
+def resolve_site(
+    user: User,
+    *,
+    site_id: int | None = None,
+    domain_name: str = "",
+) -> WordPressSite | None:
+    qs = sites_qs(user)
+    if site_id:
+        return qs.filter(pk=site_id).first()
+    name = (domain_name or "").strip().lower()
+    if name:
+        return qs.filter(domain__name__iexact=name).first()
+    if qs.count() == 1:
+        return qs.first()
+    return None
+
+
+def _wp_out(proc: subprocess.CompletedProcess) -> str:
+    return ((proc.stdout or "") + (proc.stderr or "")).strip()
+
+
+def _wp_eval(site: WordPressSite, php_code: str, *, timeout: int = 120) -> str:
+    docroot = Path(site.document_root)
+    proc = _run_wp(
+        ["eval", php_code, "--skip-plugins"],
+        path=docroot,
+        php_version=site.php_version or "",
+        timeout=timeout,
+    )
+    return _wp_out(proc)
+
+
+_NATURE_CSS = """
+/* V-zone Nature Design */
+:root {
+  --vz-forest: #1f4d2e;
+  --vz-moss: #2f6b45;
+  --vz-leaf: #4caf70;
+  --vz-sand: #f4efe6;
+  --vz-bark: #5c4033;
+  --vz-mist: #e8f0ea;
+  --vz-ink: #1a2e22;
+}
+html { scroll-behavior: smooth; }
+body {
+  background: var(--vz-sand) !important;
+  color: var(--vz-ink) !important;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif !important;
+  line-height: 1.65;
+}
+h1, h2, h3, .site-title, .entry-title {
+  font-family: Georgia, "Times New Roman", serif !important;
+  color: var(--vz-forest) !important;
+  letter-spacing: -0.02em;
+  font-weight: 600;
+}
+a { color: var(--vz-moss); }
+a:hover { color: var(--vz-leaf); }
+.site-header, header.site-header, .main-header-bar,
+.ast-primary-header-bar, #masthead {
+  background: rgba(255,255,255,0.92) !important;
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(31,77,46,0.08) !important;
+  box-shadow: 0 1px 0 rgba(31,77,46,0.04);
+}
+.main-navigation a, .ast-builder-menu a, .menu-link {
+  font-weight: 500 !important;
+  color: var(--vz-forest) !important;
+  letter-spacing: 0.02em;
+}
+.vz-hero {
+  position: relative;
+  min-height: clamp(420px, 72vh, 720px);
+  display: flex;
+  align-items: flex-end;
+  padding: clamp(2rem, 6vw, 5rem);
+  border-radius: 0 0 2rem 2rem;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(15,40,24,0.15) 0%, rgba(15,40,24,0.78) 100%),
+    url("https://images.unsplash.com/photo-1441974231531-c6227db76b6e?auto=format&fit=crop&w=1800&q=80")
+    center/cover no-repeat;
+  color: #fff;
+  margin: 0 0 2.5rem;
+}
+.vz-hero__inner { max-width: 720px; }
+.vz-hero__eyebrow {
+  display: inline-block;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  opacity: 0.9;
+  margin-bottom: 0.75rem;
+}
+.vz-hero h1 {
+  color: #fff !important;
+  font-size: clamp(2.2rem, 5vw, 3.6rem);
+  line-height: 1.1;
+  margin: 0 0 1rem;
+  text-shadow: 0 2px 24px rgba(0,0,0,0.25);
+}
+.vz-hero p {
+  font-size: clamp(1.05rem, 2vw, 1.25rem);
+  opacity: 0.95;
+  max-width: 36em;
+  margin: 0 0 1.5rem;
+}
+.vz-btn {
+  display: inline-block;
+  background: var(--vz-leaf);
+  color: #fff !important;
+  padding: 0.85rem 1.5rem;
+  border-radius: 999px;
+  text-decoration: none !important;
+  font-weight: 600;
+  box-shadow: 0 10px 30px rgba(47,107,69,0.35);
+  transition: transform .2s ease, background .2s ease;
+}
+.vz-btn:hover { background: #3d9a5c; transform: translateY(-2px); color: #fff !important; }
+.vz-btn--ghost {
+  background: transparent;
+  border: 1.5px solid rgba(255,255,255,0.7);
+  box-shadow: none;
+  margin-left: 0.75rem;
+}
+.vz-section {
+  max-width: 1100px;
+  margin: 0 auto 3rem;
+  padding: 0 1.25rem;
+}
+.vz-section h2 {
+  font-size: clamp(1.6rem, 3vw, 2.2rem);
+  margin-bottom: 0.5rem;
+}
+.vz-lead { color: #3d5346; font-size: 1.1rem; margin-bottom: 1.75rem; }
+.vz-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1.25rem;
+}
+.vz-card {
+  background: #fff;
+  border-radius: 1.25rem;
+  padding: 1.5rem;
+  border: 1px solid rgba(31,77,46,0.08);
+  box-shadow: 0 12px 40px rgba(26,46,34,0.06);
+  transition: transform .2s ease, box-shadow .2s ease;
+}
+.vz-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 18px 48px rgba(26,46,34,0.1);
+}
+.vz-card__icon {
+  width: 2.5rem; height: 2.5rem;
+  border-radius: 0.75rem;
+  background: var(--vz-mist);
+  display: grid; place-items: center;
+  margin-bottom: 1rem;
+  color: var(--vz-moss);
+  font-size: 1.2rem;
+}
+.vz-card h3 { margin: 0 0 0.5rem; font-size: 1.15rem; }
+.vz-card p { margin: 0; color: #4a5d52; font-size: 0.95rem; }
+.vz-cta {
+  background: linear-gradient(135deg, var(--vz-forest), var(--vz-moss));
+  color: #fff;
+  border-radius: 1.5rem;
+  padding: clamp(2rem, 5vw, 3rem);
+  text-align: center;
+  margin: 3rem auto;
+  max-width: 1100px;
+}
+.vz-cta h2 { color: #fff !important; margin-top: 0; }
+.vz-cta p { opacity: 0.92; max-width: 36em; margin: 0.75rem auto 1.5rem; }
+.site-footer, footer, .ast-footer-overlay {
+  background: var(--vz-forest) !important;
+  color: rgba(255,255,255,0.85) !important;
+}
+.site-footer a, footer a { color: #b8e0c4 !important; }
+.entry-content { font-size: 1.05rem; }
+.wp-block-post-title a, .entry-title a { text-decoration: none; }
+@media (max-width: 640px) {
+  .vz-btn--ghost { display: block; margin: 0.75rem 0 0; text-align: center; }
+}
+"""
+
+
+_HOME_HTML = """
+<!-- wp:html -->
+<div class="vz-hero">
+  <div class="vz-hero__inner">
+    <span class="vz-hero__eyebrow">Nature &amp; biodiversite</span>
+    <h1>Echappee Verte</h1>
+    <p>Explorez forets, faune et paysages — un espace immersif pour ressentir, comprendre et proteger le vivant.</p>
+    <p>
+      <a class="vz-btn" href="#decouvrir">Decouvrir</a>
+      <a class="vz-btn vz-btn--ghost" href="/category/nature/">Lire les articles</a>
+    </p>
+  </div>
+</div>
+<div class="vz-section" id="decouvrir">
+  <h2>Notre mission</h2>
+  <p class="vz-lead">Sensibiliser a la beaute du monde naturel et transmettre des gestes concrets pour la biodiversite.</p>
+  <div class="vz-grid">
+    <article class="vz-card">
+      <div class="vz-card__icon">F</div>
+      <h3>Forets &amp; paysages</h3>
+      <p>Reportages immersifs sur les grands espaces, sentiers et canopees.</p>
+    </article>
+    <article class="vz-card">
+      <div class="vz-card__icon">B</div>
+      <h3>Faune &amp; flore</h3>
+      <p>Portraits d'especes, cycles des saisons et interactions du vivant.</p>
+    </article>
+    <article class="vz-card">
+      <div class="vz-card__icon">A</div>
+      <h3>Agir localement</h3>
+      <p>Idees simples pour jardins, balcons et collectivites.</p>
+    </article>
+  </div>
+</div>
+<div class="vz-cta">
+  <h2>Rejoignez l'echappee</h2>
+  <p>Des recits, des images et des pistes concretes pour reconnecter les regards a la nature.</p>
+  <a class="vz-btn" href="/a-propos/">En savoir plus</a>
+</div>
+<!-- /wp:html -->
+"""
+
+_ABOUT_HTML = """
+<!-- wp:html -->
+<div class="vz-section" style="padding-top:2rem">
+  <h2>A propos d'Echappee Verte</h2>
+  <p class="vz-lead">Une invitation a ralentir, observer et celebrer le vivant — temoignages, photographie et vulgarisation accessible.</p>
+  <div class="vz-grid">
+    <article class="vz-card"><h3>Emerveiller</h3><p>Des images et recits qui rappellent pourquoi la nature nous touche.</p></article>
+    <article class="vz-card"><h3>Comprendre</h3><p>Des cles claires sur les ecosystemes, sans jargon inutile.</p></article>
+    <article class="vz-card"><h3>Proteger</h3><p>Des actions concretes, locales et realistes pour chacun.</p></article>
+  </div>
+</div>
+<!-- /wp:html -->
+"""
+
+_GALLERY_HTML = """
+<!-- wp:html -->
+<div class="vz-section" style="padding-top:2rem">
+  <h2>Galerie nature</h2>
+  <p class="vz-lead">Une selection visuelle pour s'impregner des textures, lumieres et silences du dehors.</p>
+  <div class="vz-grid">
+    <div class="vz-card" style="padding:0;overflow:hidden">
+      <img src="https://images.unsplash.com/photo-1511497584788-876760111969?auto=format&amp;fit=crop&amp;w=900&amp;q=80" alt="Foret brumeuse" style="width:100%;height:220px;object-fit:cover;display:block" />
+      <div style="padding:1rem"><h3>Brumes matinales</h3><p>Quand la canopee s'eveille.</p></div>
+    </div>
+    <div class="vz-card" style="padding:0;overflow:hidden">
+      <img src="https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&amp;fit=crop&amp;w=900&amp;q=80" alt="Montagnes" style="width:100%;height:220px;object-fit:cover;display:block" />
+      <div style="padding:1rem"><h3>Cretes &amp; horizons</h3><p>L'appel des grands espaces.</p></div>
+    </div>
+    <div class="vz-card" style="padding:0;overflow:hidden">
+      <img src="https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?auto=format&amp;fit=crop&amp;w=900&amp;q=80" alt="Vallee" style="width:100%;height:220px;object-fit:cover;display:block" />
+      <div style="padding:1rem"><h3>Vallees vertes</h3><p>La mosaique des habitats.</p></div>
+    </div>
+  </div>
+</div>
+<!-- /wp:html -->
+"""
+
+_CONTACT_HTML = """
+<!-- wp:html -->
+<div class="vz-section" style="padding-top:2rem">
+  <h2>Contact</h2>
+  <p class="vz-lead">Une idee d'article, un partenariat local ou simplement un message ?</p>
+  <div class="vz-card" style="max-width:520px">
+    <p><strong>Email</strong><br>contact@nature.local</p>
+    <p style="margin:0;color:#4a5d52">Remplacez cette adresse dans l'admin WordPress (page Contact).</p>
+  </div>
+</div>
+<!-- /wp:html -->
+"""
+
+_POSTS = (
+    (
+        "Les plus belles forets a explorer",
+        "Des sentiers sous canopee aux forets anciennes : pistes pour une echappee respectueuse du vivant.",
+    ),
+    (
+        "Proteger la biodiversite pres de chez soi",
+        "Haies, mares, plantes locales : gestes simples qui font une vraie difference pour les especes.",
+    ),
+    (
+        "Faune et flore : observer sans deranger",
+        "Conseils de terrain pour photographier et decouvrir la nature en douceur.",
+    ),
+)
+
+
+def beautify_wordpress_site(
+    site: WordPressSite,
+    *,
+    style: str = "nature",
+    theme: str = "astra",
+) -> dict:
+    """Applique un design immersif (theme + pages + CSS + menu + articles)."""
+    del style
+    if site.status != WordPressSite.Status.ACTIVE:
+        raise VZoneAPIException(
+            detail=f"Site WordPress non actif (status={site.status}).",
+            code="wp_not_active",
+            status_code=400,
+        )
+    docroot = Path(site.document_root or "")
+    if not docroot.is_dir() or not (docroot / "wp-config.php").is_file():
+        raise VZoneAPIException(
+            detail="Installation WordPress introuvable sur le disque.",
+            code="wp_missing",
+            status_code=404,
+        )
+
+    if not should_execute():
+        css_path = docroot / "wp-content" / "vz-nature.css"
+        css_path.parent.mkdir(parents=True, exist_ok=True)
+        css_path.write_text(_NATURE_CSS, encoding="utf-8")
+        return {
+            "mode": "mock",
+            "site_id": site.pk,
+            "domain": site.domain.name,
+            "note": "wp-cli indisponible — CSS depose uniquement.",
+            "css": str(css_path),
+        }
+
+    php_ver = site.php_version or ""
+    theme_slug = (theme or "astra").strip().lower() or "astra"
+    if not re.fullmatch(r"[a-z0-9-]{2,40}", theme_slug):
+        theme_slug = "astra"
+
+    steps: list[str] = []
+
+    try:
+        _run_wp(
+            ["theme", "install", theme_slug, "--activate", "--force"],
+            path=docroot,
+            php_version=php_ver,
+            timeout=300,
+        )
+        steps.append(f"theme:{theme_slug}")
+    except VZoneAPIException:
+        _run_wp(
+            ["theme", "activate", "twentytwentyfour"],
+            path=docroot,
+            php_version=php_ver,
+        )
+        theme_slug = "twentytwentyfour"
+        steps.append("theme:twentytwentyfour")
+
+    title = (site.title or "Echappee Verte").strip() or "Echappee Verte"
+    tagline = "Nature, biodiversite & paysages"
+    _run_wp(["option", "update", "blogname", title], path=docroot, php_version=php_ver)
+    _run_wp(["option", "update", "blogdescription", tagline], path=docroot, php_version=php_ver)
+    _run_wp(["option", "update", "timezone_string", "Europe/Paris"], path=docroot, php_version=php_ver)
+    steps.append("identity")
+
+    css_b64 = base64.b64encode(_NATURE_CSS.encode("utf-8")).decode("ascii")
+    css_php = (
+        f"$css = base64_decode('{css_b64}');\n"
+        "if (function_exists('wp_update_custom_css_post')) {\n"
+        "  $r = wp_update_custom_css_post($css);\n"
+        "  if (is_wp_error($r)) { echo 'css_err:'.$r->get_error_message(); }\n"
+        "  else { echo 'css_ok:'.$r->ID; }\n"
+        "} else { echo 'css_unavailable'; }\n"
+    )
+    steps.append("css:" + (_wp_eval(site, css_php) or "done")[:80])
+
+    def _upsert_page(slug: str, page_title: str, content: str) -> int:
+        b64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
+        php = (
+            f"$slug = {slug!r};\n"
+            f"$title = {page_title!r};\n"
+            f"$content = base64_decode('{b64}');\n"
+            "$existing = get_page_by_path($slug);\n"
+            "if ($existing) {\n"
+            "  wp_update_post(array('ID'=>$existing->ID,'post_title'=>$title,"
+            "'post_content'=>$content,'post_status'=>'publish'));\n"
+            "  echo (int)$existing->ID;\n"
+            "} else {\n"
+            "  $id = wp_insert_post(array(\n"
+            "    'post_title'=>$title,'post_name'=>$slug,'post_content'=>$content,\n"
+            "    'post_status'=>'publish','post_type'=>'page','post_author'=>1\n"
+            "  ));\n"
+            "  echo (int)$id;\n"
+            "}\n"
+        )
+        out = _wp_eval(site, php).strip()
+        m = re.search(r"(\d+)", out or "")
+        return int(m.group(1)) if m else 0
+
+    home_id = _upsert_page("accueil", "Accueil", _HOME_HTML)
+    about_id = _upsert_page("a-propos", "A propos", _ABOUT_HTML)
+    gallery_id = _upsert_page("galerie", "Galerie", _GALLERY_HTML)
+    contact_id = _upsert_page("contact", "Contact", _CONTACT_HTML)
+    steps.append(f"pages:{home_id},{about_id},{gallery_id},{contact_id}")
+
+    if home_id:
+        _run_wp(["option", "update", "show_on_front", "page"], path=docroot, php_version=php_ver)
+        _run_wp(["option", "update", "page_on_front", str(home_id)], path=docroot, php_version=php_ver)
+        steps.append("front_page")
+
+    _wp_eval(
+        site,
+        "$term = term_exists('nature', 'category');\n"
+        "if (!$term) { wp_insert_term('Nature', 'category', array('slug'=>'nature')); }\n"
+        "echo 'cat_ok';\n",
+    )
+    posts_created = 0
+    for ptitle, excerpt in _POSTS:
+        body = (
+            f"<p>{excerpt}</p>"
+            "<p>La nature nous rappelle que chaque detail participe a un equilibre fragile. "
+            "Prenez le temps d observer et de transmettre.</p>"
+        )
+        b64 = base64.b64encode(body.encode("utf-8")).decode("ascii")
+        php = (
+            f"$title = {ptitle!r};\n"
+            f"$excerpt = {excerpt!r};\n"
+            f"$content = base64_decode('{b64}');\n"
+            "global $wpdb;\n"
+            "$id = (int)$wpdb->get_var($wpdb->prepare(\n"
+            "  \"SELECT ID FROM {$wpdb->posts} WHERE post_title=%s AND post_type='post' "
+            "AND post_status='publish' LIMIT 1\", $title));\n"
+            "if ($id) { echo $id; }\n"
+            "else {\n"
+            "  $nid = wp_insert_post(array(\n"
+            "    'post_title'=>$title,'post_content'=>$content,'post_excerpt'=>$excerpt,\n"
+            "    'post_status'=>'publish','post_type'=>'post','post_author'=>1\n"
+            "  ));\n"
+            "  if ($nid && !is_wp_error($nid)) {\n"
+            "    $cat = get_cat_ID('Nature');\n"
+            "    if ($cat) { wp_set_post_categories($nid, array($cat)); }\n"
+            "    echo (int)$nid;\n"
+            "  } else { echo 0; }\n"
+            "}\n"
+        )
+        out = (_wp_eval(site, php) or "").strip()
+        if out.isdigit() and int(out) > 0:
+            posts_created += 1
+    steps.append(f"posts:{posts_created}")
+
+    menu_php = (
+        f"$menu_name = 'Principal';\n"
+        "$menu = wp_get_nav_menu_object($menu_name);\n"
+        "if (!$menu) { $menu_id = wp_create_nav_menu($menu_name); }\n"
+        "else {\n"
+        "  $menu_id = (int)$menu->term_id;\n"
+        "  $items = wp_get_nav_menu_items($menu_id);\n"
+        "  if ($items) { foreach ($items as $item) { wp_delete_post($item->ID, true); } }\n"
+        "}\n"
+        f"$pages = array({int(home_id)}, {int(about_id)}, {int(gallery_id)}, {int(contact_id)});\n"
+        "$pos = 1;\n"
+        "foreach ($pages as $pid) {\n"
+        "  if (!$pid) continue;\n"
+        "  wp_update_nav_menu_item($menu_id, 0, array(\n"
+        "    'menu-item-object-id' => $pid,\n"
+        "    'menu-item-object' => 'page',\n"
+        "    'menu-item-type' => 'post_type',\n"
+        "    'menu-item-status' => 'publish',\n"
+        "    'menu-item-position' => $pos++,\n"
+        "  ));\n"
+        "}\n"
+        "$locations = get_theme_mod('nav_menu_locations');\n"
+        "if (!is_array($locations)) { $locations = array(); }\n"
+        "foreach (array('primary','menu-1','main','primary-menu','header-menu') as $loc) {\n"
+        "  $locations[$loc] = $menu_id;\n"
+        "}\n"
+        "set_theme_mod('nav_menu_locations', $locations);\n"
+        "echo 'menu:'.$menu_id;\n"
+    )
+    steps.append((_wp_eval(site, menu_php) or "menu")[:40])
+
+    try:
+        _run_wp(
+            ["rewrite", "structure", "/%postname%/", "--hard"],
+            path=docroot,
+            php_version=php_ver,
+        )
+    except VZoneAPIException:
+        pass
+    try:
+        username = (site.owner.username or site.owner.system_username or "").strip()
+        if username:
+            _fix_ownership(docroot, username)
+    except Exception:  # noqa: BLE001
+        logger.debug("chown after beautify skip", exc_info=True)
+
+    site.title = title
+    site.save(update_fields=["title", "updated_at"])
+
+    return {
+        "site_id": site.pk,
+        "domain": site.domain.name,
+        "site_url": site.site_url or _site_url(site.domain),
+        "theme": theme_slug,
+        "style": "nature",
+        "pages": {
+            "accueil": home_id,
+            "a_propos": about_id,
+            "galerie": gallery_id,
+            "contact": contact_id,
+        },
+        "posts_created": posts_created,
+        "steps": steps,
+        "message": (
+            f"Design nature applique sur {site.domain.name} "
+            f"(theme {theme_slug}, pages, articles, menu, CSS)."
+        ),
+    }

@@ -27,6 +27,8 @@ def run_service(fn: Callable[[], Any]) -> dict[str, Any]:
         return ok(result=result if not isinstance(result, dict) else result)
     except VZoneAPIException as exc:
         return err(str(exc.detail), getattr(exc, "default_code", None) or "error")
+    except IndexError as exc:
+        return err(f"Paramètre ou chemin invalide ({exc})", "invalid_params")
     except Exception as exc:  # noqa: BLE001
         return err(str(exc))
 
@@ -134,6 +136,7 @@ PENDING_DESCRIPTIONS: dict[str, str] = {
     "delete_cron_job": "Supprimer une tâche cron",
     "sync_cron_jobs": "Synchroniser le crontab",
     "install_wordpress": "Installer WordPress",
+    "beautify_wordpress_site": "Améliorer le design WordPress",
     "delete_wordpress": "Supprimer WordPress",
     "list_files": "Lister des fichiers",
     "mkdir_path": "Créer un dossier",
@@ -233,6 +236,7 @@ HIGH_TOOLS = frozenset(
         "write_file",
         "issue_ssl_certificate",
         "install_wordpress",
+        "beautify_wordpress_site",
     }
 )
 
