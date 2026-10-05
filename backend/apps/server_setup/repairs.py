@@ -113,6 +113,13 @@ REPAIR_CATALOG: dict[str, dict] = {
         "category": "panel",
         "risk": "safe",
     },
+    "ftp": {
+        "script": "repair-ftp.sh",
+        "title": "Installer / réparer FTP",
+        "description": "Installe Pure-FTPd + auth V-zone (ExtAuth). Requis si « Aucun serveur FTP ».",
+        "category": "ftp",
+        "risk": "safe",
+    },
 }
 
 

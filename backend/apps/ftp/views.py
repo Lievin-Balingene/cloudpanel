@@ -52,6 +52,26 @@ def _check_ftp_secret(request: Request) -> bool:
     return _secrets.compare_digest(secret, configured)
 
 
+def _ftp_posix_ids(account: FtpAccount) -> dict[str, int]:
+    """UID/GID Linux pour Pure-FTPd ExtAuth (home du propriétaire)."""
+    import pwd
+
+    owner = account.owner
+    for name in (
+        (getattr(owner, "system_username", None) or "").strip(),
+        (owner.username or "").strip(),
+        "vzone",
+    ):
+        if not name:
+            continue
+        try:
+            pw = pwd.getpwnam(name)
+            return {"uid": int(pw.pw_uid), "gid": int(pw.pw_gid)}
+        except KeyError:
+            continue
+    return {"uid": 0, "gid": 0}
+
+
 class FtpAccountListCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -175,6 +195,7 @@ class FtpAuthView(APIView):
                     "can_write": account.can_write,
                     "quota_mb": account.quota_mb,
                     "bandwidth_kbs": account.bandwidth_kbs,
+                    **_ftp_posix_ids(account),
                 },
             }
         )
@@ -218,6 +239,7 @@ class FtpStatsView(APIView):
         accounts = accounts_queryset_for(request.user)
         logs = logs_queryset_for(request.user)
         since = timezone.now() - timedelta(hours=24)
+        daemon = _ftp_daemon_status()
         return Response(
             {
                 "success": True,
@@ -229,6 +251,67 @@ class FtpStatsView(APIView):
                         event_type=FtpLog.EventType.LOGIN_FAILED,
                         created_at__gte=since,
                     ).count(),
+                    "daemon": daemon,
                 },
             }
         )
+
+
+def _ftp_daemon_status() -> dict:
+    """État Pure-FTPd / vsftpd pour l'UI (sans exiger root)."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    units = ("pure-ftpd", "pure-ftpd.service", "vsftpd", "proftpd")
+    active = False
+    unit = ""
+    installed = bool(
+        shutil.which("pure-ftpd")
+        or shutil.which("pure-ftpd-wrapper")
+        or Path("/usr/sbin/pure-ftpd").is_file()
+        or Path("/usr/sbin/vsftpd").is_file()
+    )
+    for name in units:
+        try:
+            proc = subprocess.run(
+                ["systemctl", "is-active", name],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+            if (proc.stdout or "").strip() == "active":
+                active = True
+                unit = name
+                installed = True
+                break
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+    authd = False
+    try:
+        proc = subprocess.run(
+            ["systemctl", "is-active", "vzone-ftp-authd.service"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+        authd = (proc.stdout or "").strip() == "active"
+    except (OSError, subprocess.TimeoutExpired):
+        authd = False
+    return {
+        "installed": installed,
+        "active": active,
+        "unit": unit or None,
+        "authd_active": authd,
+        "message": (
+            None
+            if installed and active
+            else (
+                "Aucun serveur FTP installé (Pure-FTPd). "
+                "WHM → Réparations → « Installer / réparer FTP », "
+                "ou : sudo bash /opt/vzone-src/scripts/install-ftp.sh"
+            )
+        ),
+    }

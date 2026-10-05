@@ -21,6 +21,8 @@ if command -v ufw >/dev/null 2>&1; then
   ufw allow OpenSSH || ufw allow 22/tcp || true
   ufw allow 80/tcp || true
   ufw allow 443/tcp || true
+  ufw allow 21/tcp || true
+  ufw allow 30000:30100/tcp || true
   ufw allow "${ADMIN_PORT}/tcp" || true
   ufw allow "${CLIENT_PORT}/tcp" || true
   ufw allow "${WEBMAIL_PORT}/tcp" || true

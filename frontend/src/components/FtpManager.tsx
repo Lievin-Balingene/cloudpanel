@@ -1,10 +1,12 @@
 import { FormEvent, useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, FolderKey, PauseCircle, PlayCircle, Plus, Trash2 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
 import { IconAction } from "@/components/ui/IconAction";
 import { Modal } from "@/components/ui/Modal";
 import { EmptyState, PageHeader, StatusDot, Tabs } from "@/components/ui/PageChrome";
+import { useAuthStore } from "@/stores/auth";
 
 interface FtpAccount {
   id: number;
@@ -40,10 +42,19 @@ interface FtpStats {
   accounts_active: number;
   accounts_suspended: number;
   failed_logins_24h: number;
+  daemon?: {
+    installed: boolean;
+    active: boolean;
+    unit?: string | null;
+    authd_active?: boolean;
+    message?: string | null;
+  };
 }
 
 export function FtpManager({ title }: { title: string }) {
   const qc = useQueryClient();
+  const role = useAuthStore((s) => s.user?.role);
+  const isAdmin = role === "administrator";
   const { data: accounts = [], isLoading } = useQuery({
     queryKey: ["ftp-accounts"],
     queryFn: () => apiRequest<FtpAccount[]>("/ftp/accounts/"),
@@ -56,6 +67,9 @@ export function FtpManager({ title }: { title: string }) {
     queryKey: ["ftp-stats"],
     queryFn: () => apiRequest<FtpStats>("/ftp/stats/"),
   });
+
+  const daemonOk = Boolean(stats?.daemon?.installed && stats?.daemon?.active);
+  const daemonMsg = stats?.daemon?.message;
 
   const [form, setForm] = useState({
     username: "",

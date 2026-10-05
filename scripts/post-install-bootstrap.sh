@@ -72,6 +72,7 @@ install_all_modules() {
 
   local scripts=(
     install-mail.sh
+    install-ftp.sh
     install-phpmyadmin.sh
     install-postgresql.sh
     install-roundcube.sh

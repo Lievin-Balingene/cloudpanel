@@ -29,6 +29,7 @@ ALLOWED = {
     "external-access": "repair-external-access.sh",
     "full-bootstrap": "repair-full-bootstrap.sh",
     "update-agent": "install-update-agent.sh",
+    "ftp": "repair-ftp.sh",
 }
 
 

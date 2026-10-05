@@ -115,6 +115,10 @@ fi
 if [[ -f "${REPO_DIR}/scripts/install-mail.sh" ]]; then
   bash "${REPO_DIR}/scripts/install-mail.sh" || echo "[vzone] Avertissement: install-mail.sh a échoué"
 fi
+# Pure-FTPd + ExtAuth V-zone (comptes FTP panneau)
+if [[ -f "${REPO_DIR}/scripts/install-ftp.sh" ]]; then
+  bash "${REPO_DIR}/scripts/install-ftp.sh" || echo "[vzone] Avertissement: install-ftp.sh a échoué"
+fi
 # DKIM / SPF / tables OpenDKIM (clés + DNS)
 if [[ -f "${REPO_DIR}/scripts/repair-mail-reputation.sh" ]]; then
   bash "${REPO_DIR}/scripts/repair-mail-reputation.sh" || echo "[vzone] Avertissement: repair-mail-reputation.sh a échoué"
