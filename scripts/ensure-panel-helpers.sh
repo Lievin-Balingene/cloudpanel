@@ -74,6 +74,7 @@ vzone-fix-app-perms|vzone-fix-app-perms.sh
 vzone-kill-port|vzone-kill-port.sh
 vzone-smtp-restrictions|vzone-smtp-restrictions.sh
 vzone-resourcectl|vzone-resourcectl.sh
+vzone-svcctl|vzone-svcctl.sh
 EOF
 
 # Sudoers (au cas où ensure-mkhome a échoué avant la copie)

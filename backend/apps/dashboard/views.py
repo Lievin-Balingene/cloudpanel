@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 from apps.core.permissions import IsAdministrator
 from apps.dashboard.services import (
     capture_snapshot,
+    control_service,
     full_server_status,
     history,
     overview_for,
@@ -51,6 +52,18 @@ class DashboardServerStatusView(APIView):
 
     def get(self, request: Request) -> Response:
         return Response({"success": True, "data": full_server_status()})
+
+
+class DashboardServiceControlView(APIView):
+    """Start / stop / restart d'un service système (WHM)."""
+
+    permission_classes = [IsAuthenticated, IsAdministrator]
+
+    def post(self, request: Request) -> Response:
+        name = str(request.data.get("name") or "").strip()
+        action = str(request.data.get("action") or "").strip()
+        data = control_service(name=name, action=action)
+        return Response({"success": True, "data": data})
 
 
 class DashboardCaptureView(APIView):

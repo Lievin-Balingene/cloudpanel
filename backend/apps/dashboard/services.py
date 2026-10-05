@@ -20,6 +20,7 @@ from django.db.models import Count
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.core.exceptions import SystemOperationError, VZoneAPIException
 from apps.core.services import collect_system_metrics
 from apps.dashboard.models import ResourceSnapshot
 
@@ -166,7 +167,7 @@ def visitors_for(user: User, hours: int = 24) -> dict[str, Any]:
 _SERVICE_CANDIDATES: list[tuple[str, list[str], list[str]]] = [
     # label, systemd units, process name fragments
     ("nginx", ["nginx"], ["nginx"]),
-    ("postgresql", ["postgresql", "postgresql@*", "pgsql"], ["postgres", "postgresql"]),
+    ("postgresql", ["postgresql", "pgsql"], ["postgres", "postgresql"]),
     ("mysql", ["mariadb", "mysql", "mysqld"], ["mysqld", "mariadbd"]),
     ("redis", ["redis", "redis-server"], ["redis-server", "redis"]),
     ("postfix", ["postfix"], ["master", "postfix"]),
@@ -174,22 +175,26 @@ _SERVICE_CANDIDATES: list[tuple[str, list[str], list[str]]] = [
     ("opendkim", ["opendkim"], ["opendkim"]),
     ("fail2ban", ["fail2ban"], ["fail2ban-server", "fail2ban"]),
     ("sshd", ["sshd", "ssh"], ["sshd", "ssh"]),
-    ("docker", ["docker", "docker.service"], ["dockerd"]),
+    ("docker", ["docker"], ["dockerd"]),
     ("named", ["named", "bind9"], ["named", "bind"]),
     ("pure-ftpd", ["pure-ftpd", "vsftpd", "proftpd"], ["pure-ftpd", "vsftpd", "proftpd"]),
-    ("vzone-api", ["vzone-api", "vzone"], ["daphne", "gunicorn", "uvicorn"]),
-    ("vzone-celery", ["vzone-celery", "celery"], ["celery"]),
-    ("vzone-worker", ["vzone-celerybeat", "vzone-beat"], ["celery"]),
+    ("vzone-api", ["vzone-api"], ["daphne", "gunicorn", "uvicorn"]),
+    ("vzone-celery", ["vzone-celery", "vzone-worker"], ["celery"]),
+    ("vzone-worker", ["vzone-beat", "vzone-celerybeat"], ["celery"]),
 ]
+
+SVCCTL = Path("/usr/local/sbin/vzone-svcctl")
+ALLOWED_SERVICE_ACTIONS = frozenset({"start", "stop", "restart", "reload"})
 
 
 def _systemd_is_active(unit: str) -> bool | None:
     """True/False si systemctl répond, None si indisponible."""
     if "*" in unit:
         return None
+    name = unit if unit.endswith(".service") else f"{unit}.service"
     try:
         proc = subprocess.run(
-            ["systemctl", "is-active", unit],
+            ["systemctl", "is-active", name],
             capture_output=True,
             text=True,
             timeout=2,
@@ -203,9 +208,22 @@ def _systemd_is_active(unit: str) -> bool | None:
     if out in {"inactive", "failed", "deactivating", "activating", "dead"}:
         return False
     # unit inconnue
-    if proc.returncode != 0 and "could not be found" in (proc.stderr or "").lower():
+    err = (proc.stderr or "").lower()
+    if proc.returncode != 0 and ("could not be found" in err or "not-found" in err):
+        return None
+    # is-active renvoie inactive avec code 3 souvent
+    if out == "unknown" or "not-found" in out:
         return None
     return False if proc.returncode != 0 else True
+
+
+def _resolve_unit(label: str, units: list[str]) -> tuple[str | None, bool | None]:
+    """Retourne (unit_name, active) pour le premier unit systemd connu."""
+    for unit in units:
+        st = _systemd_is_active(unit)
+        if st is not None:
+            return unit, st
+    return None, None
 
 
 def service_statuses() -> list[dict[str, Any]]:
@@ -224,26 +242,96 @@ def service_statuses() -> list[dict[str, Any]]:
     except (psutil.Error, OSError):
         pass
 
+    helper_ok = SVCCTL.is_file()
     results: list[dict[str, Any]] = []
     for label, units, names in _SERVICE_CANDIDATES:
-        active: bool | None = None
-        source = "process"
-        for unit in units:
-            st = _systemd_is_active(unit)
-            if st is not None:
-                active = st
-                source = "systemd"
-                break
+        unit, active = _resolve_unit(label, units)
+        source = "systemd" if unit is not None else "process"
         if active is None:
             active = any(n in proc for proc in running for n in names) or any(
                 n in cmdline_blob for n in names
             )
-            # postfix master is generic — require "postfix" in cmdline
             if label == "postfix" and active:
                 active = "postfix" in cmdline_blob
             source = "process"
-        results.append({"name": label, "active": bool(active), "source": source})
+            unit = units[0] if units else None
+        results.append(
+            {
+                "name": label,
+                "active": bool(active),
+                "source": source,
+                "unit": unit,
+                "manageable": bool(helper_ok and unit),
+            }
+        )
     return results
+
+
+def control_service(name: str, action: str) -> dict[str, Any]:
+    """start|stop|restart|reload d'un service allowlisté via vzone-svcctl."""
+    action = (action or "").strip().lower()
+    name = (name or "").strip().lower()
+    if action not in ALLOWED_SERVICE_ACTIONS:
+        raise VZoneAPIException(
+            detail="Action invalide (start, stop, restart, reload).",
+            code="invalid_action",
+            status_code=400,
+        )
+
+    unit: str | None = None
+    for label, units, _names in _SERVICE_CANDIDATES:
+        if label == name:
+            resolved, _ = _resolve_unit(label, units)
+            unit = resolved or (units[0] if units else None)
+            break
+    if not unit:
+        raise VZoneAPIException(
+            detail=f"Service inconnu: {name}",
+            code="unknown_service",
+            status_code=404,
+        )
+
+    if not SVCCTL.is_file():
+        raise SystemOperationError(
+            detail=(
+                "Helper vzone-svcctl absent. "
+                "Exécutez: sudo bash /opt/vzone-src/scripts/ensure-panel-helpers.sh"
+            )
+        )
+
+    cmd = ["sudo", "-n", str(SVCCTL), action, unit]
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise SystemOperationError(detail=f"Timeout {action} {name}") from exc
+    except OSError as exc:
+        raise SystemOperationError(detail=str(exc)) from exc
+
+    out = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+    if proc.returncode != 0:
+        logger.warning("svcctl %s %s failed: %s", action, unit, out)
+        raise SystemOperationError(
+            detail=out or f"Échec {action} sur {name} (code {proc.returncode})",
+        )
+
+    # Laisser systemd stabiliser puis relire l'état
+    time_module.sleep(0.4)
+    statuses = {s["name"]: s for s in service_statuses()}
+    current = statuses.get(name) or {"name": name, "active": None, "unit": unit}
+    return {
+        "name": name,
+        "action": action,
+        "unit": unit,
+        "active": current.get("active"),
+        "output": out[:500],
+        "service": current,
+    }
 
 
 def _bytes_rate(prev: int, curr: int, seconds: float) -> float:

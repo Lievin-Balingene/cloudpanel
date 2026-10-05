@@ -44,3 +44,6 @@ vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-smtp-restrictions --check
 
 # V-zone Pulse — Resource Governor (cgroups / systemd slices)
 vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-resourcectl *
+
+# Contrôle services WHM (start/stop/restart — allowlist dans le helper)
+vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-svcctl, /usr/local/sbin/vzone-svcctl *

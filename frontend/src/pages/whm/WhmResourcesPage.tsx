@@ -10,8 +10,11 @@ import {
   HardDrive,
   MemoryStick,
   Network,
+  Play,
   RefreshCw,
+  RotateCcw,
   Server,
+  Square,
   Thermometer,
   Users,
   Wifi,
@@ -29,8 +32,19 @@ import {
   YAxis,
 } from "recharts";
 import { apiRequest } from "@/lib/api";
+import { IconAction } from "@/components/ui/IconAction";
 import { EmptyState, PageHeader, StatusDot, Tabs } from "@/components/ui/PageChrome";
 import type { HistoryPoint } from "@/types";
+
+type ServiceAction = "start" | "stop" | "restart";
+
+interface ServiceInfo {
+  name: string;
+  active: boolean;
+  source?: string;
+  unit?: string | null;
+  manageable?: boolean;
+}
 
 interface ServerStatus {
   health: "healthy" | "degraded" | "critical" | string;
@@ -110,7 +124,7 @@ interface ServerStatus {
     top_cpu: ProcessRow[];
     top_memory: ProcessRow[];
   };
-  services: { name: string; active: boolean; source?: string }[];
+  services: ServiceInfo[];
   services_down: string[];
   temperatures: { chip: string; label: string; current: number; high: number | null; critical: number | null }[];
   fans: { chip: string; label: string; rpm: number }[];
@@ -309,12 +323,57 @@ function ProgressRow({
   );
 }
 
+function ServiceActions({
+  service,
+  busy,
+  onAction,
+}: {
+  service: ServiceInfo;
+  busy: boolean;
+  onAction: (name: string, action: ServiceAction) => void;
+}) {
+  const can = service.manageable !== false;
+  return (
+    <div className="flex shrink-0 items-center gap-0.5">
+      <IconAction
+        label={`Démarrer ${service.name}`}
+        size="sm"
+        tone="success"
+        disabled={busy || !can || service.active}
+        onClick={() => onAction(service.name, "start")}
+      >
+        <Play className="h-3.5 w-3.5" />
+      </IconAction>
+      <IconAction
+        label={`Arrêter ${service.name}`}
+        size="sm"
+        tone="danger"
+        disabled={busy || !can || !service.active}
+        onClick={() => onAction(service.name, "stop")}
+      >
+        <Square className="h-3.5 w-3.5" />
+      </IconAction>
+      <IconAction
+        label={`Redémarrer ${service.name}`}
+        size="sm"
+        tone="accent"
+        disabled={busy || !can}
+        onClick={() => onAction(service.name, "restart")}
+      >
+        <RotateCcw className={`h-3.5 w-3.5 ${busy ? "animate-spin" : ""}`} />
+      </IconAction>
+    </div>
+  );
+}
+
 export function WhmResourcesPage() {
   const qc = useQueryClient();
   const [tab, setTab] = useState("overview");
   const [hours, setHours] = useState(24);
   const [refreshMs, setRefreshMs] = useState(10000);
   const [procSort, setProcSort] = useState<"cpu" | "mem">("cpu");
+  const [busyService, setBusyService] = useState<string | null>(null);
+  const [svcError, setSvcError] = useState<string | null>(null);
 
   const { data: server, isLoading, isFetching, dataUpdatedAt } = useQuery({
     queryKey: ["dashboard-server"],
@@ -336,6 +395,37 @@ export function WhmResourcesPage() {
       void qc.invalidateQueries({ queryKey: ["dashboard-overview"] });
     },
   });
+
+  const serviceControl = useMutation({
+    mutationFn: ({ name, action }: { name: string; action: ServiceAction }) =>
+      apiRequest("/dashboard/services/control/", {
+        method: "POST",
+        body: JSON.stringify({ name, action }),
+      }),
+    onMutate: ({ name }) => {
+      setBusyService(name);
+      setSvcError(null);
+    },
+    onSuccess: () => {
+      setSvcError(null);
+      void qc.invalidateQueries({ queryKey: ["dashboard-server"] });
+      void qc.invalidateQueries({ queryKey: ["monitoring-overview"] });
+    },
+    onError: (err: Error) => setSvcError(err.message),
+    onSettled: () => setBusyService(null),
+  });
+
+  function onServiceAction(name: string, action: ServiceAction) {
+    if (action === "stop" && (name === "sshd" || name === "vzone-api")) {
+      const ok = window.confirm(
+        name === "sshd"
+          ? "Arrêter SSH peut vous couper l’accès distant. Continuer ?"
+          : "Arrêter vzone-api va couper le panneau jusqu’à un redémarrage manuel. Continuer ?",
+      );
+      if (!ok) return;
+    }
+    serviceControl.mutate({ name, action });
+  }
 
   const chartData = useMemo(
     () =>
@@ -552,6 +642,11 @@ export function WhmResourcesPage() {
       {tab === "overview" && (
         <div className="grid gap-4 xl:grid-cols-2">
           <SectionCard title="Services critiques" icon={Server}>
+            {svcError ? (
+              <p className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+                {svcError}
+              </p>
+            ) : null}
             {isLoading && !server ? (
               <p className="text-sm text-cp-muted">Chargement…</p>
             ) : (
@@ -563,11 +658,13 @@ export function WhmResourcesPage() {
                   >
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-cp-text">{s.name}</p>
-                      <p className="text-[10px] uppercase tracking-wide text-cp-muted">
-                        {s.source || "check"}
-                      </p>
+                      <StatusDot status={s.active ? "ok" : "error"} label={s.active ? "UP" : "DOWN"} />
                     </div>
-                    <StatusDot status={s.active ? "ok" : "error"} label={s.active ? "UP" : "DOWN"} />
+                    <ServiceActions
+                      service={s}
+                      busy={busyService === s.name}
+                      onAction={onServiceAction}
+                    />
                   </div>
                 ))}
               </div>
@@ -1008,6 +1105,11 @@ export function WhmResourcesPage() {
             </Link>
           }
         >
+          {svcError ? (
+            <p className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+              {svcError}
+            </p>
+          ) : null}
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {(server?.services || []).map((s) => (
               <div
@@ -1019,10 +1121,21 @@ export function WhmResourcesPage() {
                 }`}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <p className="font-medium text-cp-text">{s.name}</p>
+                  <div className="min-w-0">
+                    <p className="truncate font-medium text-cp-text">{s.name}</p>
+                    <p className="mt-0.5 text-[11px] text-cp-muted">
+                      {s.unit ? `${s.unit}.service` : s.source || "process"}
+                    </p>
+                  </div>
                   <StatusDot status={s.active ? "ok" : "error"} label={s.active ? "Actif" : "Arrêté"} />
                 </div>
-                <p className="mt-1 text-[11px] text-cp-muted">Détection via {s.source || "process"}</p>
+                <div className="mt-2.5 flex items-center justify-end border-t border-cp-border/50 pt-2 dark:border-ink-800">
+                  <ServiceActions
+                    service={s}
+                    busy={busyService === s.name}
+                    onAction={onServiceAction}
+                  />
+                </div>
               </div>
             ))}
           </div>

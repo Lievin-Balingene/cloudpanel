@@ -7,6 +7,7 @@ from apps.dashboard.views import (
     DashboardHistoryView,
     DashboardOverviewView,
     DashboardServerStatusView,
+    DashboardServiceControlView,
     MetricsVisitorsView,
 )
 
@@ -14,6 +15,11 @@ urlpatterns = [
     path("overview/", DashboardOverviewView.as_view(), name="dashboard-overview"),
     path("history/", DashboardHistoryView.as_view(), name="dashboard-history"),
     path("server/", DashboardServerStatusView.as_view(), name="dashboard-server-status"),
+    path(
+        "services/control/",
+        DashboardServiceControlView.as_view(),
+        name="dashboard-service-control",
+    ),
     path("metrics/visitors/", MetricsVisitorsView.as_view(), name="dashboard-metrics-visitors"),
     path("capture/", DashboardCaptureView.as_view(), name="dashboard-capture"),
 ]

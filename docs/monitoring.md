@@ -34,10 +34,14 @@ Accès : administrateur / revendeur (ACL).
 - Sessions utilisateurs
 - Compteurs d'alertes ouvertes
 
-## Configuration alertes
+## Contrôle des services
 
-- `VZONE_ALERT_COOLDOWN_MINUTES`
-- `VZONE_ALERT_DEFAULT_RECIPIENTS`
+`POST /api/v1/dashboard/services/control/` — body `{ "name": "nginx", "action": "restart" }`
+
+Actions : `start` | `stop` | `restart` | `reload`
+
+Helper root allowlisté : `/usr/local/sbin/vzone-svcctl` (installé via `ensure-panel-helpers.sh`).
+
 
 ## Tâches Celery
 
