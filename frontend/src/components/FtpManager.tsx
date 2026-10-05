@@ -149,6 +149,38 @@ export function FtpManager({ title }: { title: string }) {
         </p>
       )}
 
+      {stats?.daemon && !daemonOk && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+          <p className="font-semibold">Aucun serveur FTP</p>
+          <p className="mt-1 text-xs opacity-90">
+            {daemonMsg ||
+              "Pure-FTPd n'est pas installé. Les comptes panneau ne pourront pas se connecter tant que le démon n'est pas actif."}
+          </p>
+          {isAdmin ? (
+            <p className="mt-2 text-xs">
+              <Link to="/whm/repairs" className="font-semibold underline">
+                WHM → Réparations → Installer / réparer FTP
+              </Link>
+              {" · "}
+              ou en SSH :{" "}
+              <code className="rounded bg-black/5 px-1 dark:bg-white/10">
+                sudo bash /opt/vzone-src/scripts/install-ftp.sh
+              </code>
+            </p>
+          ) : (
+            <p className="mt-2 text-xs">Contactez l&apos;administrateur pour installer Pure-FTPd.</p>
+          )}
+        </div>
+      )}
+
+      {stats?.daemon && daemonOk && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-100">
+          Serveur FTP actif
+          {stats.daemon.unit ? ` (${stats.daemon.unit})` : ""}
+          {stats.daemon.authd_active ? " · auth V-zone OK" : " · authd à vérifier"}
+        </div>
+      )}
+
       <div className="vz-panel overflow-hidden">
         <Tabs
           tabs={[
