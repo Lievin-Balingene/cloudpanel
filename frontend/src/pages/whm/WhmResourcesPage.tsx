@@ -45,6 +45,8 @@ interface ServiceInfo {
   source?: string;
   unit?: string | null;
   manageable?: boolean;
+  installed?: boolean;
+  note?: string | null;
 }
 
 interface ServerStatus {

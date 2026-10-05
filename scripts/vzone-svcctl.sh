@@ -35,7 +35,8 @@ normalize="${UNIT%.service}"
 case "$normalize" in
   vzone-celery|celery) normalize="vzone-worker" ;;
   vzone-celerybeat|celerybeat) normalize="vzone-beat" ;;
-  pureftpd) normalize="pure-ftpd" ;;
+  pureftpd|pure-ftpd-mysql|pure-ftpd-ldap) normalize="pure-ftpd" ;;
+  vsftpd|proftpd) normalize="$normalize" ;;  # géré via candidats FTP partagés
   redis-server) normalize="redis" ;;
   ssh) normalize="sshd" ;;
   bind9) normalize="named" ;;
@@ -62,8 +63,11 @@ ALLOWED=(
   bind9
   pure-ftpd
   pureftpd
+  pure-ftpd-mysql
+  pure-ftpd-ldap
   vsftpd
   proftpd
+  ftp
   vzone-api
   vzone-celery
   vzone-celerybeat
@@ -122,8 +126,16 @@ case "$normalize" in
   named)
     candidates=("named.service" "bind9.service")
     ;;
-  pure-ftpd)
-    candidates=("pure-ftpd.service" "pureftpd.service" "pure-ftpd.socket")
+  pure-ftpd|pureftpd|pure-ftpd-mysql|pure-ftpd-ldap|vsftpd|proftpd|ftp)
+    candidates=(
+      "pure-ftpd.service"
+      "pure-ftpd-mysql.service"
+      "pure-ftpd-ldap.service"
+      "pureftpd.service"
+      "vsftpd.service"
+      "proftpd.service"
+      "pure-ftpd.socket"
+    )
     ;;
   fail2ban)
     candidates=("fail2ban.service")
@@ -164,7 +176,14 @@ if [[ -z "$TARGET" ]]; then
 fi
 
 if [[ "$(unit_load_state "$TARGET")" == "not-found" ]] && ! "$SYSTEMCTL" cat "$TARGET" >/dev/null 2>&1; then
-  echo "unité introuvable: ${TARGET} (candidats: ${candidates[*]})" >&2
+  case "$normalize" in
+    pure-ftpd|pureftpd|vsftpd|proftpd|ftp|pure-ftpd-mysql|pure-ftpd-ldap)
+      echo "Aucun serveur FTP installé (pure-ftpd / vsftpd / proftpd). Ex.: sudo apt install pure-ftpd" >&2
+      ;;
+    *)
+      echo "unité introuvable: ${TARGET} (candidats: ${candidates[*]})" >&2
+      ;;
+  esac
   exit 5
 fi
 

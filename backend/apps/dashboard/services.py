@@ -177,7 +177,7 @@ _SERVICE_CANDIDATES: list[tuple[str, list[str], list[str]]] = [
     ("sshd", ["ssh", "sshd"], ["sshd", "ssh"]),
     ("docker", ["docker"], ["dockerd"]),
     ("named", ["named", "bind9"], ["named", "bind"]),
-    ("pure-ftpd", ["pure-ftpd", "pureftpd", "vsftpd", "proftpd"], ["pure-ftpd", "pureftpd", "vsftpd", "proftpd"]),
+    ("ftp", ["pure-ftpd", "pure-ftpd-mysql", "pure-ftpd-ldap", "pureftpd", "vsftpd", "proftpd"], ["pure-ftpd", "pureftpd", "vsftpd", "proftpd"]),
     ("vzone-api", ["vzone-api"], ["daphne"]),
     ("vzone-worker", ["vzone-worker", "vzone-celery"], ["celery"]),
     ("vzone-beat", ["vzone-beat", "vzone-celerybeat"], ["celery"]),
@@ -189,8 +189,11 @@ _SERVICE_ALIASES: dict[str, str] = {
     "celery": "vzone-worker",
     "vzone-celerybeat": "vzone-beat",
     "celerybeat": "vzone-beat",
-    "pureftpd": "pure-ftpd",
-    "ftp": "pure-ftpd",
+    "pure-ftpd": "ftp",
+    "pureftpd": "ftp",
+    "pure-ftpd-mysql": "ftp",
+    "vsftpd": "ftp",
+    "proftpd": "ftp",
     "mariadb": "mysql",
     "mysqld": "mysql",
     "redis-server": "redis",
@@ -266,6 +269,7 @@ def service_statuses() -> list[dict[str, Any]]:
     for label, units, names in _SERVICE_CANDIDATES:
         unit, active = _resolve_unit(units)
         source = "systemd" if unit is not None else "process"
+        installed = unit is not None
         if active is None:
             # Fallback processus si l'unité n'est pas installée / visible
             if label == "vzone-worker":
@@ -297,14 +301,23 @@ def service_statuses() -> list[dict[str, Any]]:
                     n in cmdline_blob for n in names
                 )
             source = "process"
-            unit = units[0] if units else None
+            # Ne pas inventer une unité absente pour le contrôle
+            unit = None
+        note = None
+        if not installed:
+            if label == "ftp":
+                note = "Aucun serveur FTP installé (pure-ftpd / vsftpd / proftpd)."
+            else:
+                note = "Unité systemd non installée sur ce serveur."
         results.append(
             {
                 "name": label,
                 "active": bool(active),
                 "source": source,
                 "unit": unit,
-                "manageable": bool(helper_ok and unit),
+                "installed": installed,
+                "manageable": bool(helper_ok and installed and unit),
+                "note": note,
             }
         )
     return results
@@ -353,11 +366,28 @@ def control_service(name: str, action: str) -> dict[str, Any]:
             )
         )
 
-    # Préférer l'unité réellement chargée, sinon essayer chaque candidat
+    # Préférer l'unité réellement chargée — si aucune n'existe, message clair
     resolved, _ = _resolve_unit(units)
-    try_units = [resolved] if resolved else []
+    if not resolved:
+        if name == "ftp":
+            raise SystemOperationError(
+                detail=(
+                    "Aucun serveur FTP installé sur ce serveur "
+                    "(pure-ftpd, vsftpd ou proftpd). "
+                    "Installez-en un, par ex. : sudo apt install pure-ftpd"
+                )
+            )
+        raise SystemOperationError(
+            detail=(
+                f"Aucune unité systemd trouvée pour « {name} » "
+                f"(candidats: {', '.join(units)}). "
+                "Le paquet n'est probablement pas installé."
+            )
+        )
+
+    try_units = [resolved]
     for u in units:
-        if u not in try_units:
+        if u and u not in try_units:
             try_units.append(u)
 
     last_out = ""
@@ -403,10 +433,17 @@ def control_service(name: str, action: str) -> dict[str, Any]:
             detail=out or f"Échec {action} sur {name} (code {proc.returncode})",
         )
 
+    if name == "ftp":
+        raise SystemOperationError(
+            detail=(
+                "Aucun serveur FTP installé (pure-ftpd / vsftpd / proftpd). "
+                "Exemple : sudo apt install pure-ftpd && sudo systemctl enable --now pure-ftpd"
+            )
+        )
     raise SystemOperationError(
         detail=last_out
-        or f"Aucune unité systemd trouvée pour {name} (essayé: {', '.join(try_units)}). "
-        f"Installez le paquet ou vérifiez: systemctl status {last_unit}",
+        or f"Aucune unité systemd trouvée pour {name} (essayé: {', '.join(u for u in try_units if u)}). "
+        f"Vérifiez: systemctl status {last_unit}",
     )
 
 
