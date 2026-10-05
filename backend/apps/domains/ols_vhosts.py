@@ -116,12 +116,41 @@ def _php_version_for_domain(domain: Domain) -> str:
     return "8.2"
 
 
+def _needs_php_front_controller(docroot: str) -> bool:
+    """True si le docroot a besoin du front-controller (WordPress / PHP apps)."""
+    root = Path(docroot or "")
+    if not root.is_dir():
+        return False
+    if (root / "wp-config.php").is_file() or (root / "wp-admin").is_dir():
+        return True
+    return (root / "index.php").is_file()
+
+
 def render_vhconf(*, domain: Domain, docroot: str, php_version: str) -> str:
     ext_name, lsphp_bin = _lsphp_path(php_version)
     sock = f"/tmp/lshttpd/{ext_name}-{_safe_vh_name(domain.name)}.sock"
     aliases = ""
     if domain.domain_type in {Domain.DomainType.PRIMARY, Domain.DomainType.ADDON}:
         aliases = f"www.{domain.name}"
+
+    # Rewrite natives OLS (pas seulement .htaccess) — corrige les 404 WP sous LiteSpeed
+    if _needs_php_front_controller(docroot):
+        rewrite_block = """rewrite  {
+  enable                  1
+  autoLoadHtaccess        1
+  rules                   <<<END_WP_REWRITE
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule . /index.php [L]
+END_WP_REWRITE
+}"""
+    else:
+        rewrite_block = """rewrite  {
+  enable                  1
+  autoLoadHtaccess        1
+}"""
+
     # docRoot absolu (sous vhRoot = home) — index.php en premier pour WordPress / PHP
     return f"""# V-zone OLS vhconf — {domain.name}
 docRoot                   {docroot.rstrip('/')}/
@@ -170,10 +199,7 @@ extprocessor {ext_name} {{
   procHardLimit           500
 }}
 
-rewrite  {{
-  enable                  1
-  autoLoadHtaccess        1
-}}
+{rewrite_block}
 
 accessControl  {{
   allow                   *

@@ -146,10 +146,10 @@ def beautify_wordpress_site(user: User, params: dict[str, Any]) -> dict[str, Any
 @register_tool(
     name="fix_wordpress_permalinks",
     description=(
-        "Corrige les 404 des pages WordPress (sauf l'accueil) : régénère les permaliens "
-        "/%postname%/ et écrit le .htaccess compatible LiteSpeed/Apache. "
-        "À utiliser quand À propos, Blog, Contact, etc. renvoient 404. "
-        "Cible via site_id ou domain_name."
+        "Corrige DÉFINITIVEMENT les 404 des pages WordPress sous LiteSpeed/OLS : "
+        "permaliens /%postname%/, .htaccess, ET règles rewrite natives dans le vhost OLS "
+        "(pas seulement .htaccess). À utiliser quand l'accueil marche mais /a-propos/, "
+        "/blog/, etc. renvoient Not Found LiteSpeed. Cible via site_id ou domain_name."
     ),
     parameters={
         "type": "object",

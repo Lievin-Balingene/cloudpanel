@@ -3112,10 +3112,14 @@ def _synthesize_tools(messages: list[ChatMessage]) -> str:
             payload = _payload(data)
             if data.get("ok"):
                 parts.append(
-                    f"**Permaliens corrigés** sur {payload.get('domain') or 'le site'}.\n"
+                    f"**Permaliens + routage LiteSpeed corrigés** sur "
+                    f"{payload.get('domain') or 'le site'}.\n"
                     f"- Structure : `{payload.get('permalink_structure') or '/%postname%/'}`\n"
-                    f"- `.htaccess` : {'OK' if payload.get('htaccess_exists') else 'manquant'}\n\n"
-                    "Recharge `/a-propos/`, `/blog/`, `/contact/` — plus de 404 LiteSpeed."
+                    f"- `.htaccess` : {'OK' if payload.get('htaccess_exists') else 'manquant'}\n"
+                    f"- Engine : `{payload.get('web_engine') or '?'}`\n"
+                    f"- Rewrite OLS natives : "
+                    f"{'oui' if payload.get('ols_native_rewrite') else 'non / Nginx'}\n\n"
+                    "Rechargez `/a-propos/`, `/blog/`, `/contact/` (Ctrl+F5)."
                 )
             else:
                 parts.append(

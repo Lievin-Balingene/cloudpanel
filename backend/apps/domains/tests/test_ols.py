@@ -48,14 +48,26 @@ def test_render_nginx_proxy_to_ols(settings):
 
 
 @pytest.mark.django_db
-def test_ols_vhconf_contains_lsphp():
+def test_ols_vhconf_contains_lsphp(tmp_path):
     owner = UserFactory(username="olsowner2")
     domain = create_domain(name="lsphp.test", owner=owner)
-    text = render_vhconf(domain=domain, docroot="/home/u/public_html", php_version="8.2")
+    # Sans index.php → pas de règles front-controller
+    text = render_vhconf(domain=domain, docroot=str(tmp_path / "empty"), php_version="8.2")
     assert "docRoot" in text
     assert "lsapi:" in text
     assert "autoLoadHtaccess" in text
     assert "index.php, index.html, index.htm" in text
+    assert "END_WP_REWRITE" not in text
+
+    # Avec WordPress markers → rewrite natives
+    wp_root = tmp_path / "wp"
+    wp_root.mkdir()
+    (wp_root / "index.php").write_text("<?php\n", encoding="utf-8")
+    (wp_root / "wp-config.php").write_text("<?php\n", encoding="utf-8")
+    text_wp = render_vhconf(domain=domain, docroot=str(wp_root), php_version="8.2")
+    assert "END_WP_REWRITE" in text_wp
+    assert "RewriteRule . /index.php [L]" in text_wp
+
     block = render_virtualhost_block(domain=domain, docroot="/home/u/public_html")
     assert "virtualhost" in block
     assert "setUIDMode              2" in block

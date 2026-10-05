@@ -853,7 +853,7 @@ def _flush_wp_rewrites(site: WordPressSite) -> dict[str, Any]:
 
 
 def fix_wordpress_permalinks(site: WordPressSite) -> dict[str, Any]:
-    """Corrige les 404 des pages WP (permaliens + .htaccess LiteSpeed)."""
+    """Corrige les 404 des pages WP (permaliens + .htaccess + rewrite OLS natives)."""
     docroot = Path(site.document_root or "")
     if not docroot.is_dir():
         raise VZoneAPIException(
@@ -862,13 +862,35 @@ def fix_wordpress_permalinks(site: WordPressSite) -> dict[str, Any]:
             status_code=404,
         )
     result = _flush_wp_rewrites(site)
+    ols_synced = False
+    web_engine = ""
+    try:
+        domain = site.domain
+        web_engine = str(getattr(domain, "web_engine", "") or "")
+        from apps.domains.ols_vhosts import uses_ols_engine
+        from apps.domains.vhosts import sync_domain_vhost
+
+        # Resync Nginx + OLS vhconf (règles rewrite natives dans le vhost LiteSpeed)
+        sync_domain_vhost(domain)
+        ols_synced = bool(uses_ols_engine(domain))
+        result["steps"] = list(result.get("steps") or []) + [
+            "vhost_synced",
+            f"ols_native_rewrite:{ols_synced}",
+        ]
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("vhost resync after permalink fix failed")
+        result["steps"] = list(result.get("steps") or []) + [f"routing_err:{exc}"]
+
     return {
         "site_id": site.pk,
         "domain": site.domain.name if site.domain_id else "",
         "site_url": site.site_url or _site_url(site.domain),
+        "web_engine": web_engine,
+        "ols_native_rewrite": ols_synced,
         "message": (
-            f"Permaliens régénérés pour {site.domain.name}. "
-            "Les pages /a-propos/, /blog/, etc. doivent répondre à nouveau."
+            f"Permaliens + routage LiteSpeed corrigés pour {site.domain.name} "
+            f"(engine={web_engine or '?'}, ols_rewrite={ols_synced}). "
+            "Rechargez /a-propos/, /blog/, /contact/ (Ctrl+F5)."
         ),
         **result,
     }
@@ -1786,6 +1808,13 @@ def _beautify_wordpress_site_inner(site: WordPressSite, *, theme: str = "astra")
 
     _flush_wp_rewrites(site)
     steps.append("rewrite_flush")
+    try:
+        from apps.domains.vhosts import sync_domain_vhost
+
+        sync_domain_vhost(site.domain)
+        steps.append("vhost_synced_ols_rewrite")
+    except Exception:  # noqa: BLE001
+        logger.debug("vhost sync after beautify skip", exc_info=True)
 
     try:
         username = (site.owner.username or site.owner.system_username or "").strip()
