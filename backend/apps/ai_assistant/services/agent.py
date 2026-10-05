@@ -106,6 +106,31 @@ def _apply_working_account_side_effects(
         conversation.save(update_fields=["context", "updated_at"])
 
 
+def _user_insists_execute_now(text: str) -> bool:
+    """True si l'utilisateur refuse de cliquer Approuver et exige l'exécution immédiate."""
+    t = (text or "").lower()
+    needles = (
+        "toi meme",
+        "toi-même",
+        "toi même",
+        "toi-meme",
+        "je ne veux pas",
+        "je ne veux plus",
+        "sans que je",
+        "sans cliquer",
+        "sans validation",
+        "fais le toi",
+        "fais-le toi",
+        "ajoute la page",
+        "directement sur",
+        "execute maintenant",
+        "exécute maintenant",
+        "auto approve",
+        "auto-approuv",
+    )
+    return any(n in t for n in needles)
+
+
 def _safe_tool_handler(tool: Any, owner: User, params: dict[str, Any]) -> dict[str, Any]:
     """Jamais d'exception brute vers l'UI (ex. string index out of range)."""
     try:
@@ -177,8 +202,10 @@ SYSTEM_PROMPT = """Tu es **V-zone AI**, assistant premium du panneau d'hébergem
   (réécrit .htaccess + règles rewrite natives OLS + reload). Pas de jail, pas de beautify pour ça.
   **Interdit** : `run_jail_command`, `list_files`, `read_file_content`, `write_file`, wp-cli via jail.
 - Actions sensibles : l'utilisateur doit cliquer **Approuver** dans la fenêtre modale orange —
-  ou taper `approuver` / `oui`. **Interdit** de proposer des étapes manuelles wp-admin / thèmes
+  ou taper `approuver` / `oui` / `toi meme`. **Interdit** de proposer des étapes manuelles wp-admin / thèmes
   à la place. Pas « Continuer ».
+- Si l'utilisateur dit **toi meme**, **je ne veux pas cliquer**, **fais le toi**, **ajoute la page** :
+  l'outil dangereux s'exécute **immédiatement** (`auto_confirmed: true`, `executed: true`) — confirme le résultat réel.
 - Si un outil renvoie `pending_confirmation: true` ou `executed: false` : l'action **n'a PAS été appliquée**.
   Dis clairement d'**Approuver** ; **interdit** de dire « c'est fait », « modifié », « appliqué », « terminé ».
 - Ne dis jamais « c'est fait » sans tool **réellement exécuté** (`executed: true` ou résultat sans `pending_confirmation`).
@@ -620,6 +647,44 @@ def run_assistant_turn(
                 )
 
             if tool.dangerous:
+                # L'utilisateur exige l'exécution sans clic Approuver → exécuter tout de suite
+                if _user_insists_execute_now(safe_user) or _user_insists_execute_now(history_text):
+                    result = _safe_tool_handler(tool, owner, cleaned_args)
+                    if isinstance(result, dict) and result.get("ok"):
+                        _apply_working_account_side_effects(conversation, result)
+                    _log_action(
+                        user,
+                        conversation,
+                        tool.spec.name,
+                        cleaned_args,
+                        json.dumps(redact_obj(result), ensure_ascii=False)[:1500],
+                        success=bool(isinstance(result, dict) and result.get("ok")),
+                        requires_confirmation=True,
+                        confirmed=True,
+                        ip_address=ip_address,
+                    )
+                    payload = result if isinstance(result, dict) else {"ok": True, "result": result}
+                    if isinstance(payload, dict):
+                        payload = {
+                            **payload,
+                            "executed": bool(payload.get("ok")),
+                            "auto_confirmed": True,
+                            "message": (
+                                payload.get("message")
+                                or "Action exécutée immédiatement (demande explicite sans Approuver)."
+                            ),
+                        }
+                    _append_tool_result(messages, conversation, tc, payload)
+                    tool_trace.append(
+                        {
+                            "name": tool.spec.name,
+                            "ok": bool(isinstance(result, dict) and result.get("ok")),
+                            "pending": False,
+                            "auto_confirmed": True,
+                        }
+                    )
+                    continue
+
                 action = _create_pending(
                     user, conversation, tool.spec.name, pending_args, ip_address
                 )

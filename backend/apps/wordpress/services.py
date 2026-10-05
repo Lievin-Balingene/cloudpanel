@@ -1558,6 +1558,37 @@ _ABOUT_HTML = """
 <!-- /wp:html -->
 """
 
+_LIEVIN_HTML = """
+<!-- wp:html -->
+<div class="vz-section" style="padding-top:2rem">
+  <p class="vz-kicker">Portrait</p>
+  <h2>Lievin</h2>
+  <p class="vz-lead">
+    Lievin accompagne Echappee Verte : regard attentif sur le vivant, gout des sentiers
+    et envie de transmettre des gestes simples pour proteger la nature au quotidien.
+  </p>
+  <div class="vz-grid">
+    <article class="vz-card">
+      <h3>Observer</h3>
+      <p>Un pas de cote pour voir les details — lumiere, habitats, petites vies du bord de chemin.</p>
+    </article>
+    <article class="vz-card">
+      <h3>Partager</h3>
+      <p>Des recits accessibles, sans jargon, pour reconnecter regards et territoires.</p>
+    </article>
+    <article class="vz-card">
+      <h3>Agir</h3>
+      <p>Des idees locales et realistes : moins d'impact, plus de lien avec le vivant.</p>
+    </article>
+  </div>
+  <p style="margin-top:1.5rem">
+    <a class="vz-btn" href="/contact/">Ecrire a l'equipe</a>
+    <a class="vz-btn vz-btn--ghost" href="/a-propos/">A propos du projet</a>
+  </p>
+</div>
+<!-- /wp:html -->
+"""
+
 _GALLERY_HTML = """
 <!-- wp:html -->
 <div class="vz-section" style="padding-top:2rem">
@@ -1889,6 +1920,7 @@ def _beautify_wordpress_site_inner(site: WordPressSite, *, theme: str = "astra")
         ("accueil", "Accueil", _HOME_HTML),
         ("blog", "Blog", _BLOG_HTML),
         ("a-propos", "A propos", _ABOUT_HTML),
+        ("lievin", "Lievin", _LIEVIN_HTML),
         ("biodiversite", "La Biodiversite", _BIODIV_HTML),
         ("randonnees", "Randonnees", _RANDONNEES_HTML),
         ("galerie", "Galerie", _GALLERY_HTML),
@@ -1906,7 +1938,7 @@ def _beautify_wordpress_site_inner(site: WordPressSite, *, theme: str = "astra")
             steps.append(f"page_err_{slug}:{exc}")
     steps.append("pages:" + ",".join(f"{k}={v}" for k, v in page_ids.items()))
 
-    required_slugs = ("accueil", "a-propos", "blog", "contact")
+    required_slugs = ("accueil", "a-propos", "blog", "contact", "lievin")
     missing = [s for s in required_slugs if not page_ids.get(s)]
     if missing:
         raise VZoneAPIException(
@@ -1960,6 +1992,7 @@ def _beautify_wordpress_site_inner(site: WordPressSite, *, theme: str = "astra")
     ordered = [
         page_ids.get("accueil") or 0,
         page_ids.get("blog") or 0,
+        page_ids.get("lievin") or 0,
         page_ids.get("biodiversite") or 0,
         page_ids.get("randonnees") or 0,
         page_ids.get("galerie") or 0,

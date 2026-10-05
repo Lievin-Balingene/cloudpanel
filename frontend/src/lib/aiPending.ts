@@ -75,12 +75,46 @@ export function pendingFromToolTrace(trace: ToolTraceItem[] | undefined): Pendin
   return out;
 }
 
+/** Récupère un jeton d'approbation collé dans le texte assistant (JSON / message). */
+export function pendingFromAssistantText(text: string): PendingAction | null {
+  const raw = text || "";
+  const m =
+    raw.match(/"action_token"\s*:\s*"([^"]{16,})"/) ||
+    raw.match(/action_token["']?\s*[:=]\s*["']([A-Za-z0-9_-]{16,})["']/i) ||
+    raw.match(/ACTION NON EXÉCUTÉE[\s\S]{0,400}?([A-Za-z0-9_-]{32,})/);
+  if (!m?.[1] || m[1].includes("REDACTED")) return null;
+  const tool =
+    raw.match(/"tool_name"\s*:\s*"([^"]+)"/)?.[1] ||
+    raw.match(/`([a-z0-9_]+)` est en attente/)?.[1] ||
+    "action";
+  return {
+    action_token: m[1],
+    token: m[1],
+    tool_name: tool,
+    description: `Approuver \`${tool}\``,
+    risk: "high",
+    command_preview: tool,
+  };
+}
+
 const APPROVE_RE =
-  /^(oui|ok|okay|approuver|approve|valider|confirmer|vas-?y|go|lance|exécuter|executer)\s*[.!]?$/i;
+  /^(oui|ok|okay|approuver|approve|valider|confirmer|vas-?y|go|lance|exécuter|executer|toi[-\s]?m[eê]me|fais[-\s]?le(\s+toi)?)\s*[.!]?\s*$/i;
 
 /** True si le message utilisateur veut approuver l'action en attente. */
 export function isApproveShortcut(text: string): boolean {
-  return APPROVE_RE.test((text || "").trim());
+  const t = (text || "").trim();
+  if (APPROVE_RE.test(t)) return true;
+  const lower = t.toLowerCase();
+  return (
+    lower.includes("toi meme") ||
+    lower.includes("toi-même") ||
+    lower.includes("toi même") ||
+    lower.includes("je ne veux pas") ||
+    lower.includes("sans cliquer") ||
+    lower.includes("fais le toi") ||
+    lower.includes("execute maintenant") ||
+    lower.includes("exécute maintenant")
+  );
 }
 
 const REFUSE_RE = /^(non|refuser|annuler|cancel|refuse)\s*[.!]?$/i;

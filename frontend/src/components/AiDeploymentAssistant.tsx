@@ -27,6 +27,7 @@ import {
   isRefuseShortcut,
   mergePendingActions,
   pendingActionToken,
+  pendingFromAssistantText,
   pendingFromToolTrace,
   type PendingAction,
 } from "@/lib/aiPending";
@@ -425,31 +426,36 @@ export function AiDeploymentAssistant() {
     queryKey: ["ai-pending-actions"],
     queryFn: () =>
       apiRequest<{ pending_actions: PendingAction[]; count: number }>("/ai/actions/pending/"),
-    enabled: open,
-    refetchInterval: open ? 4000 : false,
-    staleTime: 2000,
-  });
-
-  const pendingBadgeQuery = useQuery({
-    queryKey: ["ai-pending-actions"],
-    queryFn: () =>
-      apiRequest<{ pending_actions: PendingAction[]; count: number }>("/ai/actions/pending/"),
-    enabled: !open,
-    refetchInterval: !open ? 15000 : false,
-    staleTime: 5000,
+    enabled: true,
+    refetchInterval: pending.length > 0 || open ? 3000 : 8000,
+    staleTime: 1500,
   });
 
   useEffect(() => {
     const incoming = pendingQuery.data?.pending_actions;
-    if (!incoming?.length) return;
-    setPending((prev) => mergePendingActions(prev, incoming));
+    if (!incoming) return;
+    if (incoming.length) {
+      setPending((prev) => mergePendingActions(prev, incoming));
+      setOpen(true);
+    } else if (pendingQuery.data?.count === 0) {
+      // Ne pas vider si on a un jeton local non encore sync
+    }
   }, [pendingQuery.data]);
 
+  // Récupère le jeton depuis le texte assistant si l'API pending est vide
   useEffect(() => {
-    const incoming = pendingBadgeQuery.data?.pending_actions;
-    if (open || !incoming?.length) return;
-    setPending((prev) => mergePendingActions(prev, incoming));
-  }, [open, pendingBadgeQuery.data]);
+    if (pending.length > 0) return;
+    for (let i = localMessages.length - 1; i >= 0; i -= 1) {
+      const m = localMessages[i];
+      if (m.role !== "assistant") continue;
+      const recovered = pendingFromAssistantText(m.content || "");
+      if (recovered) {
+        setPending([recovered]);
+        setOpen(true);
+        break;
+      }
+    }
+  }, [localMessages, pending.length]);
 
   const statusQuery = useQuery({
     queryKey: ["ai-status"],
@@ -580,8 +586,11 @@ export function AiDeploymentAssistant() {
     onSuccess: (data) => {
       const fromResp = data.pending_actions || [];
       const fromTrace = pendingFromToolTrace(data.tool_trace as never);
-      const nextPending = mergePendingActions(fromResp, fromTrace);
+      const fromText = pendingFromAssistantText(data.message?.content || "");
+      let nextPending = mergePendingActions(fromResp, fromTrace);
+      if (fromText) nextPending = mergePendingActions(nextPending, [fromText]);
       setPending((prev) => mergePendingActions(prev, nextPending));
+      if (nextPending.length) setOpen(true);
       setSuggestions(nextPending.length ? [] : data.suggestions || []);
       void qc.invalidateQueries({ queryKey: ["ai-pending-actions"] });
       void apiRequest<{ pending_actions: PendingAction[] }>("/ai/actions/pending/")
@@ -590,6 +599,7 @@ export function AiDeploymentAssistant() {
           if (fromApi.length) {
             setPending((prev) => mergePendingActions(prev, fromApi));
             setSuggestions([]);
+            setOpen(true);
           }
         })
         .catch(() => undefined);
@@ -852,9 +862,7 @@ export function AiDeploymentAssistant() {
   }
 
   const userMsgCount = localMessages.filter((m) => m.role === "user").length;
-  const pendingCount = open
-    ? pending.length
-    : Math.max(pending.length, pendingBadgeQuery.data?.count ?? 0);
+  const pendingCount = Math.max(pending.length, pendingQuery.data?.count ?? 0);
   const showEmptyStarters = userMsgCount === 0 && !isBusy && pending.length === 0;
 
   function confirmPending(action: PendingAction, approve: boolean) {
@@ -887,6 +895,74 @@ export function AiDeploymentAssistant() {
 
   return (
     <>
+      {/* Toujours visible dès qu'une action attend — même chat fermé */}
+      {pending.length > 0 && (
+        <div
+          className="fixed inset-0 z-[80] flex items-end justify-center bg-black/50 p-3 sm:items-center"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Confirmation d'action"
+        >
+          <div className="w-full max-w-md overflow-hidden rounded-2xl border border-amber-300/60 bg-white shadow-2xl dark:border-amber-700/50 dark:bg-slate-900">
+            <div className="bg-gradient-to-r from-cp-orange to-amber-500 px-4 py-3 text-white">
+              <p className="text-sm font-bold">Action en attente d&apos;approbation</p>
+              <p className="text-[11px] text-white/90">
+                Cliquez Approuver (ou tapez oui / toi meme) — rien n&apos;est appliqué avant
+              </p>
+            </div>
+            <div className="max-h-[60vh] space-y-3 overflow-y-auto p-4">
+              {pending.map((p) => {
+                const token = pendingActionToken(p);
+                return (
+                  <div
+                    key={token || p.tool_name}
+                    className="rounded-xl border border-cp-border/80 bg-cp-canvas/50 p-3 dark:bg-black/20"
+                  >
+                    <p className="font-mono text-[11px] text-cp-muted">{p.tool_name}</p>
+                    <p className="mt-1 text-sm font-semibold text-cp-text dark:text-white">
+                      {p.description || p.tool_name}
+                    </p>
+                    {(p.command_preview || p.tool_name) && (
+                      <pre className="vz-ai-confirm-cmd mt-2 overflow-x-auto">
+                        {p.command_preview || p.tool_name}
+                      </pre>
+                    )}
+                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                      <button
+                        type="button"
+                        className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-cp-orange px-4 py-3 text-sm font-bold text-white shadow-md hover:bg-cp-orange-dark disabled:opacity-60"
+                        disabled={confirmMut.isPending || !token}
+                        onClick={() => confirmPending(p, true)}
+                      >
+                        {confirmMut.isPending ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Check className="h-4 w-4" />
+                        )}
+                        Approuver
+                      </button>
+                      <button
+                        type="button"
+                        className="inline-flex items-center justify-center rounded-xl border border-cp-border px-4 py-3 text-sm font-medium disabled:opacity-60"
+                        disabled={confirmMut.isPending || !token}
+                        onClick={() => confirmPending(p, false)}
+                      >
+                        Refuser
+                      </button>
+                    </div>
+                    {!token ? (
+                      <p className="mt-2 text-[11px] text-rose-600">
+                        Jeton manquant — reformulez ou actualisez la page.
+                      </p>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       {!open && (
         <button
           type="button"
@@ -906,7 +982,9 @@ export function AiDeploymentAssistant() {
           </span>
           <span className="hidden flex-col items-start leading-tight sm:flex">
             <span>V-zone AI</span>
-            <span className="text-[10px] font-normal text-white/70">Assistant intelligent</span>
+            <span className="text-[10px] font-normal text-white/70">
+              {pendingCount > 0 ? "Approuver requis" : "Assistant intelligent"}
+            </span>
           </span>
         </button>
       )}
@@ -916,7 +994,7 @@ export function AiDeploymentAssistant() {
           <button
             type="button"
             className={`fixed inset-0 z-40 bg-black/25 backdrop-blur-[2px] transition ${
-              expanded || pending.length > 0 ? "opacity-100" : "opacity-0 pointer-events-none sm:opacity-0"
+              expanded ? "opacity-100" : "opacity-0 pointer-events-none sm:opacity-0"
             }`}
             aria-label="Fermer l'arrière-plan"
             onClick={() => {
@@ -925,68 +1003,6 @@ export function AiDeploymentAssistant() {
               else setOpen(false);
             }}
           />
-
-          {pending.length > 0 && (
-            <div
-              className="fixed inset-0 z-[60] flex items-end justify-center bg-black/45 p-3 sm:items-center"
-              role="dialog"
-              aria-modal="true"
-              aria-label="Confirmation d'action"
-            >
-              <div className="w-full max-w-md overflow-hidden rounded-2xl border border-amber-300/60 bg-white shadow-2xl dark:border-amber-700/50 dark:bg-slate-900">
-                <div className="bg-gradient-to-r from-cp-orange to-amber-500 px-4 py-3 text-white">
-                  <p className="text-sm font-bold">Action en attente d'approbation</p>
-                  <p className="text-[11px] text-white/90">
-                    Rien n'est appliqué tant que vous n'avez pas cliqué Approuver
-                  </p>
-                </div>
-                <div className="max-h-[60vh] space-y-3 overflow-y-auto p-4">
-                  {pending.map((p) => {
-                    const token = pendingActionToken(p);
-                    return (
-                      <div key={token || p.tool_name} className="rounded-xl border border-cp-border/80 bg-cp-canvas/50 p-3 dark:bg-black/20">
-                        <p className="font-mono text-[11px] text-cp-muted">{p.tool_name}</p>
-                        <p className="mt-1 text-sm font-semibold text-cp-text dark:text-white">
-                          {p.description || p.tool_name}
-                        </p>
-                        {(p.command_preview || p.tool_name) && (
-                          <pre className="vz-ai-confirm-cmd mt-2 overflow-x-auto">
-                            {p.command_preview || p.tool_name}
-                          </pre>
-                        )}
-                        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                          <button
-                            type="button"
-                            className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-cp-orange px-4 py-3 text-sm font-bold text-white shadow-md hover:bg-cp-orange-dark disabled:opacity-60"
-                            disabled={confirmMut.isPending || !token}
-                            onClick={() => confirmPending(p, true)}
-                          >
-                            {confirmMut.isPending ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Check className="h-4 w-4" />
-                            )}
-                            Approuver
-                          </button>
-                          <button
-                            type="button"
-                            className="inline-flex items-center justify-center rounded-xl border border-cp-border px-4 py-3 text-sm font-medium disabled:opacity-60"
-                            disabled={confirmMut.isPending || !token}
-                            onClick={() => confirmPending(p, false)}
-                          >
-                            Refuser
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                <p className="border-t border-cp-border/60 px-4 py-2 text-center text-[10px] text-cp-muted">
-                  Astuce : vous pouvez aussi taper <strong>approuver</strong> ou <strong>oui</strong> dans le chat
-                </p>
-              </div>
-            </div>
-          )}
 
           <div
             className="vz-ai-panel fixed bottom-3 right-3 z-50 flex flex-col overflow-hidden sm:bottom-5 sm:right-5"
