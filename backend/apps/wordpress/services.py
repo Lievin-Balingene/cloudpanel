@@ -1107,20 +1107,132 @@ button:hover, .wp-block-button__link:hover, .ast-button:hover {
 }
 .vz-stat strong { display: block; font-size: 1.75rem; color: var(--vz-moss); }
 .vz-stat span { font-size: 0.85rem; color: #4a5d52; }
-.vz-blog-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.25rem; }
-.vz-blog-card {
-  background: #fff;
-  border-radius: 1.25rem;
-  overflow: hidden;
-  border: 1px solid rgba(31,77,46,0.08);
-  box-shadow: 0 10px 32px rgba(26,46,34,0.06);
-  transition: transform .2s ease;
+.vz-blog-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.5rem;
 }
-.vz-blog-card:hover { transform: translateY(-3px); }
-.vz-blog-card img { width: 100%; height: 160px; object-fit: cover; display: block; }
-.vz-blog-card div { padding: 1.15rem; }
-.vz-blog-card h3 { margin: 0 0 0.35rem; font-size: 1.05rem; }
-.vz-blog-card p { margin: 0; font-size: 0.9rem; color: #4a5d52; }
+@media (max-width: 720px) {
+  .vz-blog-grid { grid-template-columns: 1fr; }
+}
+.vz-blog-card {
+  display: flex;
+  flex-direction: column;
+  background: #fff !important;
+  border-radius: 1.35rem !important;
+  overflow: hidden;
+  border: 1px solid rgba(31,77,46,0.1) !important;
+  box-shadow: 0 16px 40px rgba(26,46,34,0.08) !important;
+  transition: transform .25s ease, box-shadow .25s ease;
+  text-decoration: none !important;
+  color: inherit !important;
+  height: 100%;
+}
+.vz-blog-card:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 22px 48px rgba(26,46,34,0.14) !important;
+}
+.vz-blog-card__media {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  background: var(--vz-mist);
+}
+.vz-blog-card__media img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  display: block !important;
+  margin: 0 !important;
+  transition: transform .45s ease;
+}
+.vz-blog-card:hover .vz-blog-card__media img { transform: scale(1.06); }
+.vz-blog-card__tag {
+  position: absolute;
+  top: 0.85rem;
+  left: 0.85rem;
+  z-index: 1;
+  background: rgba(255,255,255,0.92);
+  color: var(--vz-forest) !important;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+}
+.vz-blog-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 1.25rem 1.3rem 1.35rem;
+  flex: 1;
+}
+.vz-blog-card__body h3 {
+  margin: 0 !important;
+  font-size: 1.2rem !important;
+  line-height: 1.3 !important;
+  color: var(--vz-forest) !important;
+}
+.vz-blog-card__body p {
+  margin: 0 !important;
+  font-size: 0.95rem !important;
+  line-height: 1.55 !important;
+  color: #4a5d52 !important;
+  flex: 1;
+}
+.vz-blog-card__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.35rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(31,77,46,0.08);
+  font-size: 0.8rem;
+  color: #6b7c72;
+}
+.vz-blog-card__cta {
+  color: var(--vz-moss) !important;
+  font-weight: 700 !important;
+  text-decoration: none !important;
+}
+.vz-blog-card--featured {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+  min-height: 320px;
+}
+.vz-blog-card--featured .vz-blog-card__media {
+  aspect-ratio: auto;
+  min-height: 280px;
+  height: 100%;
+}
+.vz-blog-card--featured .vz-blog-card__body {
+  justify-content: center;
+  padding: 2rem 1.75rem;
+}
+.vz-blog-card--featured .vz-blog-card__body h3 {
+  font-size: clamp(1.45rem, 3vw, 1.9rem) !important;
+}
+@media (max-width: 720px) {
+  .vz-blog-card--featured {
+    grid-template-columns: 1fr;
+  }
+  .vz-blog-card--featured .vz-blog-card__media {
+    min-height: 200px;
+  }
+}
+.entry-content .vz-blog-card,
+.entry-content .vz-blog-card a,
+.ast-article-single .vz-blog-card {
+  text-decoration: none !important;
+  box-shadow: none;
+}
+.entry-content .vz-blog-grid a {
+  border-bottom: 0 !important;
+}
 .vz-hero {
   position: relative;
   min-height: clamp(520px, 88vh, 820px);
@@ -1350,24 +1462,78 @@ _HOME_HTML = """
   <h2><span class="vz-leaf"></span>Derniers articles</h2>
   <p class="vz-lead">Le blog nature : recits, conseils et inspirations pour explorer sans abimer.</p>
   <div class="vz-blog-grid">
-    <a class="vz-blog-card" href="/forets-a-explorer/" style="text-decoration:none;color:inherit">
-      <img src="https://images.unsplash.com/photo-1441974231531-c6227db76b6e?auto=format&amp;fit=crop&amp;w=600&amp;q=80" alt="Foret" />
-      <div><h3>Les plus belles forets</h3><p>Sentiers sous canopee et forets anciennes.</p></div>
-    </a>
-    <a class="vz-blog-card" href="/biodiversite-locale/" style="text-decoration:none;color:inherit">
-      <img src="https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?auto=format&amp;fit=crop&amp;w=600&amp;q=80" alt="Vallee" />
-      <div><h3>Proteger pres de chez soi</h3><p>Haies, mares et plantes locales.</p></div>
-    </a>
-    <a class="vz-blog-card" href="/observer-nature/" style="text-decoration:none;color:inherit">
-      <img src="https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&amp;fit=crop&amp;w=600&amp;q=80" alt="Montagne" />
-      <div><h3>Observer sans deranger</h3><p>Photographier la faune en douceur.</p></div>
-    </a>
-    <a class="vz-blog-card" href="/randonnee-leave-no-trace/" style="text-decoration:none;color:inherit">
-      <img src="https://images.unsplash.com/photo-1551632811-561732d1e306?auto=format&amp;fit=crop&amp;w=600&amp;q=80" alt="Randonnee" />
-      <div><h3>Randonner proprement</h3><p>Checklist leave-no-trace.</p></div>
-    </a>
+    <article class="vz-blog-card vz-blog-card--featured">
+      <div class="vz-blog-card__media">
+        <span class="vz-blog-card__tag">A la une</span>
+        <img src="https://images.unsplash.com/photo-1441974231531-c6227db76b6e?auto=format&amp;fit=crop&amp;w=1200&amp;q=80" alt="Foret" loading="lazy" />
+      </div>
+      <div class="vz-blog-card__body">
+        <h3>Les plus belles forets a explorer</h3>
+        <p>Des sentiers sous canopee aux forets anciennes : pistes pour une echappee respectueuse du vivant, entre silence et lumiere filtree.</p>
+        <div class="vz-blog-card__meta">
+          <span>8 min de lecture</span>
+          <a class="vz-blog-card__cta" href="/forets-a-explorer/">Lire l'article →</a>
+        </div>
+      </div>
+    </article>
+    <article class="vz-blog-card">
+      <div class="vz-blog-card__media">
+        <span class="vz-blog-card__tag">Biodiversite</span>
+        <img src="https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?auto=format&amp;fit=crop&amp;w=800&amp;q=80" alt="Vallee" loading="lazy" />
+      </div>
+      <div class="vz-blog-card__body">
+        <h3>Proteger la biodiversite locale</h3>
+        <p>Haies, mares et plantes locales : gestes simples qui changent vraiment la donne.</p>
+        <div class="vz-blog-card__meta">
+          <span>5 min</span>
+          <a class="vz-blog-card__cta" href="/biodiversite-locale/">Lire →</a>
+        </div>
+      </div>
+    </article>
+    <article class="vz-blog-card">
+      <div class="vz-blog-card__media">
+        <span class="vz-blog-card__tag">Observation</span>
+        <img src="https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&amp;fit=crop&amp;w=800&amp;q=80" alt="Montagne" loading="lazy" />
+      </div>
+      <div class="vz-blog-card__body">
+        <h3>Observer sans deranger</h3>
+        <p>Photographier et decouvrir la faune en douceur, avec respect du terrain.</p>
+        <div class="vz-blog-card__meta">
+          <span>6 min</span>
+          <a class="vz-blog-card__cta" href="/observer-nature/">Lire →</a>
+        </div>
+      </div>
+    </article>
+    <article class="vz-blog-card">
+      <div class="vz-blog-card__media">
+        <span class="vz-blog-card__tag">Randonnee</span>
+        <img src="https://images.unsplash.com/photo-1551632811-561732d1e306?auto=format&amp;fit=crop&amp;w=800&amp;q=80" alt="Randonnee" loading="lazy" />
+      </div>
+      <div class="vz-blog-card__body">
+        <h3>Randonner sans laisser de trace</h3>
+        <p>Checklist leave-no-trace pour preparer une sortie propre et legere.</p>
+        <div class="vz-blog-card__meta">
+          <span>4 min</span>
+          <a class="vz-blog-card__cta" href="/randonnee-leave-no-trace/">Lire →</a>
+        </div>
+      </div>
+    </article>
+    <article class="vz-blog-card">
+      <div class="vz-blog-card__media">
+        <span class="vz-blog-card__tag">Saisons</span>
+        <img src="https://images.unsplash.com/photo-1511497584788-876760111969?auto=format&amp;fit=crop&amp;w=800&amp;q=80" alt="Brume" loading="lazy" />
+      </div>
+      <div class="vz-blog-card__body">
+        <h3>Quand la canopee s'eveille</h3>
+        <p>Brumes matinales, lumieres dorees et petits rituels pour ralentir en foret.</p>
+        <div class="vz-blog-card__meta">
+          <span>7 min</span>
+          <a class="vz-blog-card__cta" href="/blog/">Voir plus →</a>
+        </div>
+      </div>
+    </article>
   </div>
-  <p style="margin-top:1.5rem"><a class="vz-btn" href="/blog/">Voir tout le blog</a></p>
+  <p style="margin-top:1.75rem;text-align:center"><a class="vz-btn" href="/blog/">Voir tout le blog</a></p>
 </div>
 <div class="vz-cta">
   <h2>Rejoignez l'echappee</h2>
@@ -1495,22 +1661,53 @@ _BLOG_HTML = """
   <h2><span class="vz-leaf"></span>Blog Nature</h2>
   <p class="vz-lead">Articles, guides et recits pour explorer le vivant avec curiosite et respect.</p>
   <div class="vz-blog-grid">
-    <a class="vz-blog-card" href="/forets-a-explorer/" style="text-decoration:none;color:inherit">
-      <img src="https://images.unsplash.com/photo-1441974231531-c6227db76b6e?auto=format&amp;fit=crop&amp;w=600&amp;q=80" alt="" />
-      <div><h3>Les plus belles forets a explorer</h3><p>Canopees, sentiers et silence.</p></div>
-    </a>
-    <a class="vz-blog-card" href="/biodiversite-locale/" style="text-decoration:none;color:inherit">
-      <img src="https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?auto=format&amp;fit=crop&amp;w=600&amp;q=80" alt="" />
-      <div><h3>Proteger la biodiversite locale</h3><p>Gestes concrets au quotidien.</p></div>
-    </a>
-    <a class="vz-blog-card" href="/observer-nature/" style="text-decoration:none;color:inherit">
-      <img src="https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&amp;fit=crop&amp;w=600&amp;q=80" alt="" />
-      <div><h3>Observer sans deranger</h3><p>Ethique et technique photo.</p></div>
-    </a>
-    <a class="vz-blog-card" href="/randonnee-leave-no-trace/" style="text-decoration:none;color:inherit">
-      <img src="https://images.unsplash.com/photo-1551632811-561732d1e306?auto=format&amp;fit=crop&amp;w=600&amp;q=80" alt="" />
-      <div><h3>Randonner leave-no-trace</h3><p>Preparer sa sortie nature.</p></div>
-    </a>
+    <article class="vz-blog-card vz-blog-card--featured">
+      <div class="vz-blog-card__media">
+        <span class="vz-blog-card__tag">A la une</span>
+        <img src="https://images.unsplash.com/photo-1441974231531-c6227db76b6e?auto=format&amp;fit=crop&amp;w=1200&amp;q=80" alt="Foret" loading="lazy" />
+      </div>
+      <div class="vz-blog-card__body">
+        <h3>Les plus belles forets a explorer</h3>
+        <p>Canopees, sentiers et silence — une invitation a ralentir sous les arbres.</p>
+        <div class="vz-blog-card__meta">
+          <span>8 min</span>
+          <a class="vz-blog-card__cta" href="/forets-a-explorer/">Lire l'article →</a>
+        </div>
+      </div>
+    </article>
+    <article class="vz-blog-card">
+      <div class="vz-blog-card__media">
+        <span class="vz-blog-card__tag">Local</span>
+        <img src="https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?auto=format&amp;fit=crop&amp;w=800&amp;q=80" alt="" loading="lazy" />
+      </div>
+      <div class="vz-blog-card__body">
+        <h3>Proteger la biodiversite locale</h3>
+        <p>Gestes concrets au quotidien pour le vivant pres de chez vous.</p>
+        <div class="vz-blog-card__meta"><span>5 min</span><a class="vz-blog-card__cta" href="/biodiversite-locale/">Lire →</a></div>
+      </div>
+    </article>
+    <article class="vz-blog-card">
+      <div class="vz-blog-card__media">
+        <span class="vz-blog-card__tag">Terrain</span>
+        <img src="https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&amp;fit=crop&amp;w=800&amp;q=80" alt="" loading="lazy" />
+      </div>
+      <div class="vz-blog-card__body">
+        <h3>Observer sans deranger</h3>
+        <p>Ethique et technique pour photographier la nature en douceur.</p>
+        <div class="vz-blog-card__meta"><span>6 min</span><a class="vz-blog-card__cta" href="/observer-nature/">Lire →</a></div>
+      </div>
+    </article>
+    <article class="vz-blog-card">
+      <div class="vz-blog-card__media">
+        <span class="vz-blog-card__tag">Guide</span>
+        <img src="https://images.unsplash.com/photo-1551632811-561732d1e306?auto=format&amp;fit=crop&amp;w=800&amp;q=80" alt="" loading="lazy" />
+      </div>
+      <div class="vz-blog-card__body">
+        <h3>Randonner leave-no-trace</h3>
+        <p>Preparer sa sortie nature sans laisser de trace.</p>
+        <div class="vz-blog-card__meta"><span>4 min</span><a class="vz-blog-card__cta" href="/randonnee-leave-no-trace/">Lire →</a></div>
+      </div>
+    </article>
   </div>
 </div>
 <!-- /wp:html -->

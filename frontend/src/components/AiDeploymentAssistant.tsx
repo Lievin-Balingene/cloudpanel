@@ -23,8 +23,11 @@ import {
 import { apiRequest } from "@/lib/api";
 import { buildUiPageContext } from "@/lib/aiPageContext";
 import {
+  isApproveShortcut,
+  isRefuseShortcut,
   mergePendingActions,
   pendingActionToken,
+  pendingFromToolTrace,
   type PendingAction,
 } from "@/lib/aiPending";
 import { AiProviderSettingsPanel } from "@/components/AiProviderSettingsPanel";
@@ -60,7 +63,7 @@ interface Playbook {
 interface SendResult {
   message: AiMessage;
   pending_actions: PendingAction[];
-  tool_trace?: { name?: string; ok?: boolean }[];
+  tool_trace?: { name?: string; ok?: boolean; pending?: boolean; action_token?: string; summary?: Record<string, unknown> }[];
   provider?: string;
   model?: string;
   ui_context?: { label?: string; section?: string; path?: string };
@@ -575,9 +578,10 @@ export function AiDeploymentAssistant() {
       });
     },
     onSuccess: (data) => {
-      const nextPending = data.pending_actions || [];
+      const fromResp = data.pending_actions || [];
+      const fromTrace = pendingFromToolTrace(data.tool_trace as never);
+      const nextPending = mergePendingActions(fromResp, fromTrace);
       setPending((prev) => mergePendingActions(prev, nextPending));
-      // Jamais de « Continuer » si une approbation est requise
       setSuggestions(nextPending.length ? [] : data.suggestions || []);
       void qc.invalidateQueries({ queryKey: ["ai-pending-actions"] });
       void apiRequest<{ pending_actions: PendingAction[] }>("/ai/actions/pending/")
@@ -724,6 +728,21 @@ export function AiDeploymentAssistant() {
     if (raw === undefined) setInput("");
     setSuggestions([]);
     setShowGuides(false);
+
+    // Raccourci : taper « oui » / « approuver » si une carte Approuver est ouverte
+    if (pending.length > 0 && isApproveShortcut(text)) {
+      const action = pending[0];
+      setLocalMessages((prev) => [...prev, { role: "user", content: text }]);
+      confirmPending(action, true);
+      return;
+    }
+    if (pending.length > 0 && isRefuseShortcut(text)) {
+      const action = pending[0];
+      setLocalMessages((prev) => [...prev, { role: "user", content: text }]);
+      confirmPending(action, false);
+      return;
+    }
+
     const convId = forcedConvId ?? (await ensureConv());
     if (!convId) return;
     setLocalMessages((prev) => [...prev, { role: "user", content: text }]);
@@ -897,11 +916,77 @@ export function AiDeploymentAssistant() {
           <button
             type="button"
             className={`fixed inset-0 z-40 bg-black/25 backdrop-blur-[2px] transition ${
-              expanded ? "opacity-100" : "opacity-0 pointer-events-none sm:opacity-0"
+              expanded || pending.length > 0 ? "opacity-100" : "opacity-0 pointer-events-none sm:opacity-0"
             }`}
             aria-label="Fermer l'arrière-plan"
-            onClick={() => (expanded ? setExpanded(false) : setOpen(false))}
+            onClick={() => {
+              if (pending.length > 0) return;
+              if (expanded) setExpanded(false);
+              else setOpen(false);
+            }}
           />
+
+          {pending.length > 0 && (
+            <div
+              className="fixed inset-0 z-[60] flex items-end justify-center bg-black/45 p-3 sm:items-center"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Confirmation d'action"
+            >
+              <div className="w-full max-w-md overflow-hidden rounded-2xl border border-amber-300/60 bg-white shadow-2xl dark:border-amber-700/50 dark:bg-slate-900">
+                <div className="bg-gradient-to-r from-cp-orange to-amber-500 px-4 py-3 text-white">
+                  <p className="text-sm font-bold">Action en attente d'approbation</p>
+                  <p className="text-[11px] text-white/90">
+                    Rien n'est appliqué tant que vous n'avez pas cliqué Approuver
+                  </p>
+                </div>
+                <div className="max-h-[60vh] space-y-3 overflow-y-auto p-4">
+                  {pending.map((p) => {
+                    const token = pendingActionToken(p);
+                    return (
+                      <div key={token || p.tool_name} className="rounded-xl border border-cp-border/80 bg-cp-canvas/50 p-3 dark:bg-black/20">
+                        <p className="font-mono text-[11px] text-cp-muted">{p.tool_name}</p>
+                        <p className="mt-1 text-sm font-semibold text-cp-text dark:text-white">
+                          {p.description || p.tool_name}
+                        </p>
+                        {(p.command_preview || p.tool_name) && (
+                          <pre className="vz-ai-confirm-cmd mt-2 overflow-x-auto">
+                            {p.command_preview || p.tool_name}
+                          </pre>
+                        )}
+                        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                          <button
+                            type="button"
+                            className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-cp-orange px-4 py-3 text-sm font-bold text-white shadow-md hover:bg-cp-orange-dark disabled:opacity-60"
+                            disabled={confirmMut.isPending || !token}
+                            onClick={() => confirmPending(p, true)}
+                          >
+                            {confirmMut.isPending ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Check className="h-4 w-4" />
+                            )}
+                            Approuver
+                          </button>
+                          <button
+                            type="button"
+                            className="inline-flex items-center justify-center rounded-xl border border-cp-border px-4 py-3 text-sm font-medium disabled:opacity-60"
+                            disabled={confirmMut.isPending || !token}
+                            onClick={() => confirmPending(p, false)}
+                          >
+                            Refuser
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="border-t border-cp-border/60 px-4 py-2 text-center text-[10px] text-cp-muted">
+                  Astuce : vous pouvez aussi taper <strong>approuver</strong> ou <strong>oui</strong> dans le chat
+                </p>
+              </div>
+            </div>
+          )}
 
           <div
             className="vz-ai-panel fixed bottom-3 right-3 z-50 flex flex-col overflow-hidden sm:bottom-5 sm:right-5"
@@ -1345,7 +1430,9 @@ export function AiDeploymentAssistant() {
                       </button>
                     </form>
                     <p className="mt-1.5 px-0.5 text-[10px] text-cp-muted">
-                      Shift+Entrée = ligne · Échap = fermer · actions sensibles = confirmation
+                      {pending.length > 0
+                        ? "Action en attente — Approuver dans la fenêtre, ou tapez « oui » / « approuver »"
+                        : "Shift+Entrée = ligne · Échap = fermer · actions sensibles = confirmation"}
                     </p>
                   </div>
                 </div>

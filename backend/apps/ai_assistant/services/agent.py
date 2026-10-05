@@ -176,7 +176,9 @@ SYSTEM_PROMPT = """Tu es **V-zone AI**, assistant premium du panneau d'hébergem
   **404 pages LiteSpeed** (accueil OK, autres Not Found) : **uniquement** `fix_wordpress_permalinks`
   (réécrit .htaccess + règles rewrite natives OLS + reload). Pas de jail, pas de beautify pour ça.
   **Interdit** : `run_jail_command`, `list_files`, `read_file_content`, `write_file`, wp-cli via jail.
-- Actions sensibles : l'utilisateur doit cliquer **Approuver** dans la carte orange — pas « oui » dans le chat, pas « Continuer ».
+- Actions sensibles : l'utilisateur doit cliquer **Approuver** dans la fenêtre modale orange —
+  ou taper `approuver` / `oui`. **Interdit** de proposer des étapes manuelles wp-admin / thèmes
+  à la place. Pas « Continuer ».
 - Si un outil renvoie `pending_confirmation: true` ou `executed: false` : l'action **n'a PAS été appliquée**.
   Dis clairement d'**Approuver** ; **interdit** de dire « c'est fait », « modifié », « appliqué », « terminé ».
 - Ne dis jamais « c'est fait » sans tool **réellement exécuté** (`executed: true` ou résultat sans `pending_confirmation`).
@@ -291,7 +293,7 @@ def _rewrite_tool_for_wp_design(
     *,
     history_text: str = "",
 ) -> tuple[str, dict]:
-    """Réécrit jail/files → fix_permalinks ou beautify selon l'intent WP."""
+    """Réécrit jail/files/beautify(404) → fix_permalinks ou beautify selon l'intent WP."""
     blocked = {
         "run_jail_command",
         "list_files",
@@ -300,14 +302,11 @@ def _rewrite_tool_for_wp_design(
         "search_account_files",
         "sync_python_passenger_wsgi",
     }
-    if tool_name not in blocked:
-        return tool_name, args
-
     cid = str(args.get("command_id") or "").lower()
     jail_wpish = any(k in cid for k in ("wp", "rewrite", "permalink", "htaccess", "flush"))
     vague_go = any(
         k in (user_text or "").lower()
-        for k in ("fais le", "fais-le", "directement", "vas-y", "go ", "ok lance", "applique")
+        for k in ("fais le", "fais-le", "directement", "vas-y", "go ", "ok lance", "applique", "toujours rien", "corrige")
     )
     wants_fix = (
         _wants_wp_permalink_fix(user_text)
@@ -317,13 +316,21 @@ def _rewrite_tool_for_wp_design(
     wants_design = _wants_wp_design(user_text) or (
         vague_go and _wants_wp_design(history_text)
     )
+    host = str(args.get("domain_name") or "").strip() or _extract_domain_for_wp(
+        f"{user_text} {history_text}"
+    )
+
+    # beautify appelé pour un 404 → forcer fix_permalinks
+    if tool_name == "beautify_wordpress_site" and wants_fix:
+        return "fix_wordpress_permalinks", {"domain_name": host}
+
+    if tool_name not in blocked:
+        return tool_name, args
+
     blob = f"{user_text}\n{history_text}".lower()
     if not (wants_fix or wants_design or jail_wpish or "nature.7une" in blob or "wordpress" in blob):
         return tool_name, args
 
-    host = str(args.get("domain_name") or "").strip() or _extract_domain_for_wp(
-        f"{user_text} {history_text}"
-    )
     if wants_fix or jail_wpish:
         return "fix_wordpress_permalinks", {"domain_name": host}
     return "beautify_wordpress_site", {"domain_name": host, "style": "nature"}
@@ -724,10 +731,13 @@ def run_assistant_turn(
                         "name": tool.spec.name,
                         "ok": False,
                         "pending": True,
+                        "action_token": action.token,
                         "summary": {
                             "executed": False,
                             "pending_confirmation": True,
                             "status": "awaiting_user_confirmation",
+                            "action_token": action.token,
+                            "tool_name": tool.spec.name,
                         },
                     }
                 )
