@@ -26,11 +26,21 @@ def run_service(fn: Callable[[], Any]) -> dict[str, Any]:
             return ok()
         return ok(result=result if not isinstance(result, dict) else result)
     except VZoneAPIException as exc:
-        return err(str(exc.detail), getattr(exc, "default_code", None) or "error")
-    except IndexError as exc:
-        return err(f"Paramètre ou chemin invalide ({exc})", "invalid_params")
+        detail = exc.detail
+        if isinstance(detail, (list, tuple)) and detail:
+            detail = detail[0]
+        return err(str(detail), getattr(exc, "default_code", None) or "error")
+    except (IndexError, KeyError, TypeError, ValueError) as exc:
+        return err(
+            f"Paramètre ou donnée invalide ({type(exc).__name__}: {exc})",
+            "invalid_params",
+        )
     except Exception as exc:  # noqa: BLE001
-        return err(str(exc))
+        msg = str(exc).strip() or type(exc).__name__
+        if "string index out of range" in msg.lower():
+            return err("Paramètre ou chemin invalide (index).", "invalid_params")
+        return err(msg)
+
 
 
 def require_int(params: dict[str, Any], key: str) -> int | None:

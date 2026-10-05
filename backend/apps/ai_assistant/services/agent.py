@@ -106,6 +106,37 @@ def _apply_working_account_side_effects(
         conversation.save(update_fields=["context", "updated_at"])
 
 
+def _safe_tool_handler(tool: Any, owner: User, params: dict[str, Any]) -> dict[str, Any]:
+    """Jamais d'exception brute vers l'UI (ex. string index out of range)."""
+    try:
+        payload = tool.handler(owner, params or {})
+        if isinstance(payload, dict):
+            return payload
+        return {"ok": True, "result": payload}
+    except VZoneAPIException as exc:
+        detail = exc.detail
+        if isinstance(detail, (list, tuple)) and detail:
+            detail = detail[0]
+        return {
+            "ok": False,
+            "error": str(detail),
+            "code": getattr(exc, "default_code", None) or "error",
+        }
+    except (IndexError, KeyError, TypeError, ValueError) as exc:
+        logger.exception("tool %s invalid params", getattr(getattr(tool, "spec", None), "name", "?"))
+        return {
+            "ok": False,
+            "error": f"Paramètre ou donnée invalide ({type(exc).__name__})",
+            "code": "invalid_params",
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("tool %s failed", getattr(getattr(tool, "spec", None), "name", "?"))
+        msg = str(exc).strip() or type(exc).__name__
+        if "string index out of range" in msg.lower():
+            msg = "Paramètre ou chemin invalide (index)."
+        return {"ok": False, "error": msg, "code": "tool_error"}
+
+
 SYSTEM_PROMPT = """Tu es **V-zone AI**, assistant premium du panneau d'hébergement V-zone.
 
 ## Règle d'or
@@ -125,8 +156,9 @@ SYSTEM_PROMPT = """Tu es **V-zone AI**, assistant premium du panneau d'hébergem
 - Sous-domaine (`nature.exemple.com`) : passe `name` (+ optionnel `domain_type=subdomain`) ;
   le parent est auto-détecté — pas besoin de `parent_id` si le domaine parent existe.
 - SSL / WordPress : tu peux utiliser `domain_name` (pas seulement `domain_id`).
-- Pour améliorer UI/UX d'un site WP existant : **`beautify_wordpress_site`**
-  (domain_name=…, style=nature) — thème + CSS + pages + menu + articles. Ne te contente pas de conseils.
+- Pour améliorer UI/UX / ajouter des pages d'un site WP : **toujours** `beautify_wordpress_site`
+  (domain_name=nature.7une.info). Interdit : `run_jail_command`, `list_files`, conseils seuls.
+  Relancer beautify met à jour CSS + pages (Accueil, Biodiversité, Randonnées, Agenda, Galerie…).
 - Utilise `list_ai_capabilities` si on te demande ce que tu peux faire.
 - Mutations → confirmation UI. Jamais de shell libre.
 - Jamais de secrets (mots de passe, tokens) dans les réponses.
@@ -518,7 +550,7 @@ def run_assistant_turn(
                 )
             else:
                 try:
-                    payload = tool.handler(owner, cleaned_args)
+                    payload = _safe_tool_handler(tool, owner, cleaned_args)
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("tool %s failed", tool.spec.name)
                     payload = {"ok": False, "error": str(exc), "code": "handler_error"}
@@ -728,11 +760,15 @@ def confirm_pending_action(
             result = owner_err
         else:
             assert owner is not None
-            result = tool.handler(owner, cleaned_params)
+            result = _safe_tool_handler(tool, owner, cleaned_params)
             if isinstance(result, dict) and result.get("ok"):
                 _apply_working_account_side_effects(action.conversation, result)
     except Exception as exc:  # noqa: BLE001
-        result = {"ok": False, "error": str(exc)}
+        logger.exception("confirm_pending_action failed tool=%s", action.tool_name)
+        msg = str(exc).strip() or type(exc).__name__
+        if "string index out of range" in msg.lower() or isinstance(exc, IndexError):
+            msg = "Paramètre ou chemin invalide (index)."
+        result = {"ok": False, "error": msg, "code": "tool_error"}
 
     action.status = (
         PendingAction.Status.EXECUTED if result.get("ok") else PendingAction.Status.FAILED

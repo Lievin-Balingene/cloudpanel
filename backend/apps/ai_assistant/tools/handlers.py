@@ -926,5 +926,10 @@ def run_jail_command(user: User, params: dict[str, Any]) -> dict[str, Any]:
         )
     except VZoneAPIException as exc:
         return _err(str(exc.detail), getattr(exc, "default_code", "error") or "error")
+    except (IndexError, KeyError, TypeError, ValueError) as exc:
+        return _err(f"Paramètre invalide ({type(exc).__name__})", "invalid_params")
     except Exception as exc:  # noqa: BLE001
-        return _err(str(exc))
+        msg = str(exc).strip() or type(exc).__name__
+        if "string index out of range" in msg.lower():
+            return _err("Paramètre ou chemin invalide (index).", "invalid_params")
+        return _err(msg)

@@ -350,11 +350,14 @@ def _mock_install(docroot: Path, *, title: str, site_url: str) -> None:
 
 
 def _db_slug(domain_name: str) -> str:
-    base = re.sub(r"[^a-z0-9]+", "_", domain_name.lower()).strip("_")
-    base = re.sub(r"_+", "_", base)[:18] or "wp"
-    if not base[0].isalpha():
+    raw = (domain_name or "").lower()
+    base = re.sub(r"[^a-z0-9]+", "_", raw).strip("_")
+    base = re.sub(r"_+", "_", base)[:18]
+    if not base:
+        base = "wp"
+    if not base[0:1].isalpha():
         base = f"w{base}"
-    return base[:18]
+    return (base or "wp")[:18]
 
 
 def install_wordpress(
@@ -625,15 +628,43 @@ def _wp_out(proc: subprocess.CompletedProcess) -> str:
     return ((proc.stdout or "") + (proc.stderr or "")).strip()
 
 
-def _wp_eval(site: WordPressSite, php_code: str, *, timeout: int = 120) -> str:
+def _wp_eval(site: WordPressSite, php_code: str, *, timeout: int = 180) -> str:
+    """Exécute du PHP via wp eval-file (évite les limites argv / IndexError)."""
+    import tempfile
+
     docroot = Path(site.document_root)
-    proc = _run_wp(
-        ["eval", php_code, "--skip-plugins"],
-        path=docroot,
-        php_version=site.php_version or "",
-        timeout=timeout,
-    )
-    return _wp_out(proc)
+    if not docroot.is_dir():
+        raise VZoneAPIException(
+            detail="Document root WordPress invalide.",
+            code="wp_missing",
+            status_code=404,
+        )
+    code = (php_code or "").strip()
+    if not code:
+        return ""
+    tmp_path: Path | None = None
+    try:
+        fd, name = tempfile.mkstemp(prefix="vz-wp-eval-", suffix=".php", dir=str(docroot))
+        os.close(fd)
+        tmp_path = Path(name)
+        tmp_path.write_text("<?php\n" + code + "\n", encoding="utf-8")
+        try:
+            os.chmod(tmp_path, 0o640)
+        except OSError:
+            pass
+        proc = _run_wp(
+            ["eval-file", str(tmp_path)],
+            path=docroot,
+            php_version=site.php_version or "",
+            timeout=timeout,
+        )
+        return _wp_out(proc)
+    finally:
+        if tmp_path is not None:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 _NATURE_CSS = """
@@ -778,6 +809,41 @@ a:hover { color: var(--vz-leaf); }
 }
 .vz-cta h2 { color: #fff !important; margin-top: 0; }
 .vz-cta p { opacity: 0.92; max-width: 36em; margin: 0.75rem auto 1.5rem; }
+.vz-leaf {
+  display: inline-block;
+  width: 0.7rem; height: 1.1rem;
+  background: var(--vz-leaf);
+  border-radius: 0 100% 0 100%;
+  transform: rotate(-25deg);
+  margin-right: 0.45rem;
+  vertical-align: -0.1rem;
+  box-shadow: 0 0 0 3px rgba(76,175,112,0.15);
+}
+.vz-hero::after {
+  content: "";
+  position: absolute; inset: auto 0 0 0; height: 4px;
+  background: linear-gradient(90deg, transparent, var(--vz-leaf), transparent);
+}
+.vz-section--alt {
+  background: var(--vz-mist);
+  border-radius: 1.5rem;
+  padding: clamp(1.5rem, 4vw, 2.5rem) 1.25rem;
+  margin-bottom: 2.5rem;
+}
+.vz-timeline { list-style: none; padding: 0; margin: 0; }
+.vz-timeline li {
+  position: relative;
+  padding: 0 0 1.5rem 1.5rem;
+  border-left: 2px solid rgba(47,107,69,0.25);
+}
+.vz-timeline li::before {
+  content: "";
+  position: absolute; left: -0.4rem; top: 0.35rem;
+  width: 0.7rem; height: 0.7rem; border-radius: 50%;
+  background: var(--vz-leaf);
+  box-shadow: 0 0 0 4px rgba(76,175,112,0.2);
+}
+.vz-timeline strong { color: var(--vz-forest); display: block; margin-bottom: 0.25rem; }
 .site-footer, footer, .ast-footer-overlay {
   background: var(--vz-forest) !important;
   color: rgba(255,255,255,0.85) !important;
@@ -785,6 +851,13 @@ a:hover { color: var(--vz-leaf); }
 .site-footer a, footer a { color: #b8e0c4 !important; }
 .entry-content { font-size: 1.05rem; }
 .wp-block-post-title a, .entry-title a { text-decoration: none; }
+button, .wp-block-button__link, .ast-button {
+  border-radius: 999px !important;
+  transition: transform .2s ease, box-shadow .2s ease !important;
+}
+button:hover, .wp-block-button__link:hover, .ast-button:hover {
+  transform: translateY(-1px);
+}
 @media (max-width: 640px) {
   .vz-btn--ghost { display: block; margin: 0.75rem 0 0; text-align: center; }
 }
@@ -800,7 +873,8 @@ _HOME_HTML = """
     <p>Explorez forets, faune et paysages — un espace immersif pour ressentir, comprendre et proteger le vivant.</p>
     <p>
       <a class="vz-btn" href="#decouvrir">Decouvrir</a>
-      <a class="vz-btn vz-btn--ghost" href="/category/nature/">Lire les articles</a>
+      <a class="vz-btn vz-btn--ghost" href="/biodiversite/">Biodiversite</a>
+      <a class="vz-btn vz-btn--ghost" href="/randonnees/">Randonnees</a>
     </p>
   </div>
 </div>
@@ -873,12 +947,73 @@ _GALLERY_HTML = """
 _CONTACT_HTML = """
 <!-- wp:html -->
 <div class="vz-section" style="padding-top:2rem">
-  <h2>Contact</h2>
+  <h2><span class="vz-leaf"></span>Contact</h2>
   <p class="vz-lead">Une idee d'article, un partenariat local ou simplement un message ?</p>
   <div class="vz-card" style="max-width:520px">
     <p><strong>Email</strong><br>contact@nature.local</p>
     <p style="margin:0;color:#4a5d52">Remplacez cette adresse dans l'admin WordPress (page Contact).</p>
   </div>
+</div>
+<!-- /wp:html -->
+"""
+
+_BIODIV_HTML = """
+<!-- wp:html -->
+<div class="vz-section" style="padding-top:2rem">
+  <h2><span class="vz-leaf"></span>La Biodiversite</h2>
+  <p class="vz-lead">Proteger la faune et la flore sauvage, c'est proteger les equilibres qui nous nourrissent et nous inspirent.</p>
+  <div class="vz-section--alt">
+    <div class="vz-grid">
+      <article class="vz-card"><h3>Habitats</h3><p>Forets, zones humides, haies et prairies : chaque milieu abrite un reseau d'especes.</p></article>
+      <article class="vz-card"><h3>Gestes utiles</h3><p>Laisser un coin sauvage, planter local, eviter les pesticides, accueillir les pollinisateurs.</p></article>
+      <article class="vz-card"><h3>Observer</h3><p>Inventaires citoyens, photos respectueuses, transmission aux associations locales.</p></article>
+    </div>
+  </div>
+  <p><a class="vz-btn" href="/randonnees/">Voir les echappees</a></p>
+</div>
+<!-- /wp:html -->
+"""
+
+_RANDONNEES_HTML = """
+<!-- wp:html -->
+<div class="vz-section" style="padding-top:2rem">
+  <h2><span class="vz-leaf"></span>Randonnees &amp; Echappees Vertes</h2>
+  <p class="vz-lead">Des idees de balades pour respirer, ralentir et decouvrir les grands espaces sans les abimer.</p>
+  <div class="vz-grid">
+    <article class="vz-card">
+      <img src="https://images.unsplash.com/photo-1551632811-561732d1e306?auto=format&amp;fit=crop&amp;w=900&amp;q=80" alt="Sentier foret" style="width:100%;height:180px;object-fit:cover;border-radius:0.85rem;margin-bottom:1rem" />
+      <h3>Sous la canopee</h3>
+      <p>Boucles familiales en foret : sols mous, lumiere filtre, silence des oiseaux.</p>
+    </article>
+    <article class="vz-card">
+      <img src="https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&amp;fit=crop&amp;w=900&amp;q=80" alt="Crete" style="width:100%;height:180px;object-fit:cover;border-radius:0.85rem;margin-bottom:1rem" />
+      <h3>Cretes &amp; panoramas</h3>
+      <p>Itineraires pour s'evader, avec conseils de securite et respect des sentiers.</p>
+    </article>
+    <article class="vz-card">
+      <img src="https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&amp;fit=crop&amp;w=900&amp;q=80" alt="Lac" style="width:100%;height:180px;object-fit:cover;border-radius:0.85rem;margin-bottom:1rem" />
+      <h3>Lacs &amp; rivieres</h3>
+      <p>Balades au fil de l'eau : rester sur les chemins, ne rien laisser derriere soi.</p>
+    </article>
+  </div>
+</div>
+<!-- /wp:html -->
+"""
+
+_AGENDA_HTML = """
+<!-- wp:html -->
+<div class="vz-section" style="padding-top:2rem">
+  <h2><span class="vz-leaf"></span>Agenda Ecolo</h2>
+  <p class="vz-lead">Initiatives locales, ateliers nature et nettoyages de sentiers — a personnaliser avec vos vrais evenements.</p>
+  <div class="vz-section--alt">
+    <ul class="vz-timeline">
+      <li><strong>Printemps — Atelier haies locales</strong>Apprenez a planter des especes favorables aux oiseaux et insectes.</li>
+      <li><strong>Ete — Sortie observation</strong>Balade guidee a l'aube pour reconnaitre chants et traces.</li>
+      <li><strong>Automne — Nettoyage de sentiers</strong>Chantier citoyen pour garder les chemins propres et praticables.</li>
+      <li><strong>Hiver — Conference biodiversite</strong>Echanges avec des naturalistes et associations du territoire.</li>
+    </ul>
+  </div>
+  <p><a class="vz-btn" href="/contact/">Proposer un evenement</a></p>
 </div>
 <!-- /wp:html -->
 """
@@ -896,6 +1031,10 @@ _POSTS = (
         "Faune et flore : observer sans deranger",
         "Conseils de terrain pour photographier et decouvrir la nature en douceur.",
     ),
+    (
+        "Preparer une randonnee sans laisser de trace",
+        "Checklist legere : eau, carte, sacs pour les dechets, et respect des habitats fragiles.",
+    ),
 )
 
 
@@ -907,6 +1046,27 @@ def beautify_wordpress_site(
 ) -> dict:
     """Applique un design immersif (theme + pages + CSS + menu + articles)."""
     del style
+    try:
+        return _beautify_wordpress_site_inner(site, theme=theme)
+    except VZoneAPIException:
+        raise
+    except IndexError as exc:
+        logger.exception("beautify IndexError site=%s", getattr(site, "pk", None))
+        raise VZoneAPIException(
+            detail=f"Erreur interne WordPress (index): {exc}",
+            code="wp_beautify_index",
+            status_code=500,
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("beautify failed site=%s", getattr(site, "pk", None))
+        raise VZoneAPIException(
+            detail=f"Amelioration WordPress echouee: {exc}",
+            code="wp_beautify_failed",
+            status_code=502,
+        ) from exc
+
+
+def _beautify_wordpress_site_inner(site: WordPressSite, *, theme: str = "astra") -> dict:
     if site.status != WordPressSite.Status.ACTIVE:
         raise VZoneAPIException(
             detail=f"Site WordPress non actif (status={site.status}).",
@@ -949,19 +1109,28 @@ def beautify_wordpress_site(
         )
         steps.append(f"theme:{theme_slug}")
     except VZoneAPIException:
-        _run_wp(
-            ["theme", "activate", "twentytwentyfour"],
-            path=docroot,
-            php_version=php_ver,
-        )
-        theme_slug = "twentytwentyfour"
-        steps.append("theme:twentytwentyfour")
+        try:
+            _run_wp(
+                ["theme", "activate", "twentytwentyfour"],
+                path=docroot,
+                php_version=php_ver,
+            )
+            theme_slug = "twentytwentyfour"
+            steps.append("theme:twentytwentyfour")
+        except VZoneAPIException as exc:
+            steps.append(f"theme_skip:{exc}")
 
     title = (site.title or "Echappee Verte").strip() or "Echappee Verte"
     tagline = "Nature, biodiversite & paysages"
-    _run_wp(["option", "update", "blogname", title], path=docroot, php_version=php_ver)
-    _run_wp(["option", "update", "blogdescription", tagline], path=docroot, php_version=php_ver)
-    _run_wp(["option", "update", "timezone_string", "Europe/Paris"], path=docroot, php_version=php_ver)
+    for opt, val in (
+        ("blogname", title),
+        ("blogdescription", tagline),
+        ("timezone_string", "Europe/Paris"),
+    ):
+        try:
+            _run_wp(["option", "update", opt, val], path=docroot, php_version=php_ver)
+        except VZoneAPIException as exc:
+            steps.append(f"opt_{opt}:{exc}")
     steps.append("identity")
 
     css_b64 = base64.b64encode(_NATURE_CSS.encode("utf-8")).decode("ascii")
@@ -973,7 +1142,10 @@ def beautify_wordpress_site(
         "  else { echo 'css_ok:'.$r->ID; }\n"
         "} else { echo 'css_unavailable'; }\n"
     )
-    steps.append("css:" + (_wp_eval(site, css_php) or "done")[:80])
+    try:
+        steps.append("css:" + (_wp_eval(site, css_php) or "done")[:80])
+    except VZoneAPIException as exc:
+        steps.append(f"css_err:{exc}")
 
     def _upsert_page(slug: str, page_title: str, content: str) -> int:
         b64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
@@ -994,27 +1166,50 @@ def beautify_wordpress_site(
             "  echo (int)$id;\n"
             "}\n"
         )
-        out = _wp_eval(site, php).strip()
+        try:
+            out = (_wp_eval(site, php) or "").strip()
+        except VZoneAPIException:
+            return 0
         m = re.search(r"(\d+)", out or "")
         return int(m.group(1)) if m else 0
 
-    home_id = _upsert_page("accueil", "Accueil", _HOME_HTML)
-    about_id = _upsert_page("a-propos", "A propos", _ABOUT_HTML)
-    gallery_id = _upsert_page("galerie", "Galerie", _GALLERY_HTML)
-    contact_id = _upsert_page("contact", "Contact", _CONTACT_HTML)
-    steps.append(f"pages:{home_id},{about_id},{gallery_id},{contact_id}")
-
-    if home_id:
-        _run_wp(["option", "update", "show_on_front", "page"], path=docroot, php_version=php_ver)
-        _run_wp(["option", "update", "page_on_front", str(home_id)], path=docroot, php_version=php_ver)
-        steps.append("front_page")
-
-    _wp_eval(
-        site,
-        "$term = term_exists('nature', 'category');\n"
-        "if (!$term) { wp_insert_term('Nature', 'category', array('slug'=>'nature')); }\n"
-        "echo 'cat_ok';\n",
+    page_specs = (
+        ("accueil", "Accueil", _HOME_HTML),
+        ("a-propos", "A propos", _ABOUT_HTML),
+        ("galerie", "Galerie", _GALLERY_HTML),
+        ("biodiversite", "La Biodiversite", _BIODIV_HTML),
+        ("randonnees", "Randonnees", _RANDONNEES_HTML),
+        ("agenda", "Agenda Ecolo", _AGENDA_HTML),
+        ("contact", "Contact", _CONTACT_HTML),
     )
+    page_ids: dict[str, int] = {}
+    for slug, page_title, html in page_specs:
+        page_ids[slug] = _upsert_page(slug, page_title, html)
+    steps.append("pages:" + ",".join(f"{k}={v}" for k, v in page_ids.items()))
+
+    home_id = page_ids.get("accueil") or 0
+    if home_id:
+        try:
+            _run_wp(["option", "update", "show_on_front", "page"], path=docroot, php_version=php_ver)
+            _run_wp(
+                ["option", "update", "page_on_front", str(home_id)],
+                path=docroot,
+                php_version=php_ver,
+            )
+            steps.append("front_page")
+        except VZoneAPIException as exc:
+            steps.append(f"front_page_err:{exc}")
+
+    try:
+        _wp_eval(
+            site,
+            "$term = term_exists('nature', 'category');\n"
+            "if (!$term) { wp_insert_term('Nature', 'category', array('slug'=>'nature')); }\n"
+            "echo 'cat_ok';\n",
+        )
+    except VZoneAPIException:
+        pass
+
     posts_created = 0
     for ptitle, excerpt in _POSTS:
         body = (
@@ -1044,21 +1239,33 @@ def beautify_wordpress_site(
             "  } else { echo 0; }\n"
             "}\n"
         )
-        out = (_wp_eval(site, php) or "").strip()
+        try:
+            out = (_wp_eval(site, php) or "").strip()
+        except VZoneAPIException:
+            out = ""
         if out.isdigit() and int(out) > 0:
             posts_created += 1
     steps.append(f"posts:{posts_created}")
 
+    ordered = [
+        page_ids.get("accueil") or 0,
+        page_ids.get("biodiversite") or 0,
+        page_ids.get("randonnees") or 0,
+        page_ids.get("galerie") or 0,
+        page_ids.get("agenda") or 0,
+        page_ids.get("a-propos") or 0,
+        page_ids.get("contact") or 0,
+    ]
     menu_php = (
-        f"$menu_name = 'Principal';\n"
+        "$menu_name = 'Principal';\n"
         "$menu = wp_get_nav_menu_object($menu_name);\n"
         "if (!$menu) { $menu_id = wp_create_nav_menu($menu_name); }\n"
         "else {\n"
         "  $menu_id = (int)$menu->term_id;\n"
         "  $items = wp_get_nav_menu_items($menu_id);\n"
-        "  if ($items) { foreach ($items as $item) { wp_delete_post($item->ID, true); } }\n"
+        "  if (is_array($items)) { foreach ($items as $item) { wp_delete_post($item->ID, true); } }\n"
         "}\n"
-        f"$pages = array({int(home_id)}, {int(about_id)}, {int(gallery_id)}, {int(contact_id)});\n"
+        f"$pages = array({', '.join(str(int(x)) for x in ordered)});\n"
         "$pos = 1;\n"
         "foreach ($pages as $pid) {\n"
         "  if (!$pid) continue;\n"
@@ -1078,7 +1285,10 @@ def beautify_wordpress_site(
         "set_theme_mod('nav_menu_locations', $locations);\n"
         "echo 'menu:'.$menu_id;\n"
     )
-    steps.append((_wp_eval(site, menu_php) or "menu")[:40])
+    try:
+        steps.append((_wp_eval(site, menu_php) or "menu")[:40])
+    except VZoneAPIException as exc:
+        steps.append(f"menu_err:{exc}")
 
     try:
         _run_wp(
@@ -1104,16 +1314,11 @@ def beautify_wordpress_site(
         "site_url": site.site_url or _site_url(site.domain),
         "theme": theme_slug,
         "style": "nature",
-        "pages": {
-            "accueil": home_id,
-            "a_propos": about_id,
-            "galerie": gallery_id,
-            "contact": contact_id,
-        },
+        "pages": page_ids,
         "posts_created": posts_created,
         "steps": steps,
         "message": (
-            f"Design nature applique sur {site.domain.name} "
-            f"(theme {theme_slug}, pages, articles, menu, CSS)."
+            f"Design nature enrichi sur {site.domain.name} "
+            f"(theme {theme_slug}, {len(page_ids)} pages, menu, CSS, articles)."
         ),
     }

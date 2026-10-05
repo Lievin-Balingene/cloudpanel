@@ -2125,6 +2125,46 @@ def _intent_from_scores(
     wp_score = _score_keywords(
         text_n, {"wordpress": 10, "wordpresse": 10, "sites wp": 9, " wp": 4, "wp ": 4}
     )
+    beautify_score = _score_keywords(
+        text_n,
+        {
+            "beautify": 10,
+            "ameliore": 9,
+            "améliorer": 9,
+            "ameliorer": 9,
+            "design": 8,
+            "theme": 7,
+            "thème": 7,
+            "ux": 7,
+            "ui": 6,
+            "embellis": 10,
+            "embellir": 10,
+            "pages": 5,
+            "nature.7une": 8,
+        },
+    )
+    if beautify_score >= 8 or (
+        beautify_score >= 5 and (wp_score >= 4 or "nature.7une" in text_n)
+    ):
+        if "beautify_wordpress_site" in tool_names:
+            host = _extract_hostname(text) or "nature.7une.info"
+            add(
+                "beautify_wp",
+                max(wp_score, beautify_score) + 12,
+                "wordpress",
+                {
+                    "say": (
+                        f"Compris — j'améliore le design & les pages de **{host}** "
+                        "(thème, CSS, nouvelles pages, menu)…"
+                    ),
+                    "tools": [
+                        (
+                            "beautify_wordpress_site",
+                            {"domain_name": host, "style": "nature"},
+                        )
+                    ],
+                },
+            )
     if wp_score >= 4:
         if createish or _wants_wordpress_install(text):
             host = _extract_hostname(text)
