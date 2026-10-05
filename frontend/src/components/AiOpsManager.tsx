@@ -111,11 +111,24 @@ export function AiOpsManager({ title }: { title: string }) {
 
   const confirmMut = useMutation({
     mutationFn: (payload: { token: string; confirm: boolean }) =>
-      apiRequest("/ai/actions/confirm/", {
+      apiRequest<{
+        ok?: boolean;
+        cancelled?: boolean;
+        error?: string;
+        pending_actions?: PendingAction[];
+      }>("/ai/actions/confirm/", {
         method: "POST",
         body: JSON.stringify(payload),
+        retry: false,
       }),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      void qc.invalidateQueries({ queryKey: ["ai-pending-actions"] });
+      if (data && data.ok === false && data.error) {
+        window.alert(`Action échouée : ${data.error}`);
+      }
+    },
+    onError: (err: Error) => {
+      window.alert(err.message || "Confirmation impossible");
       void qc.invalidateQueries({ queryKey: ["ai-pending-actions"] });
     },
   });

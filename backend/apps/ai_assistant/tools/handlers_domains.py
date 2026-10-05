@@ -90,17 +90,43 @@ def get_ssl_status(user: User, params: dict[str, Any]) -> dict[str, Any]:
 def create_domain(user: User, params: dict[str, Any]) -> dict[str, Any]:
     from apps.domains.models import Domain
     from apps.domains.services import create_domain as svc_create
+    from apps.domains.services import domains_queryset_for
 
     name = require_str(params, "name", max_len=253)
     if not name:
         return err("name requis", "invalid_params")
-    dtype = require_str(params, "domain_type", default=Domain.DomainType.ADDON) or Domain.DomainType.ADDON
+    name = name.strip().lower().rstrip(".")
+    dtype = (require_str(params, "domain_type", default="") or "").strip().lower()
     parent = None
     parent_id = require_int(params, "parent_id")
     if parent_id:
         parent = _owned_domain(user, parent_id)
         if not parent:
             return err("parent_id introuvable", "not_found")
+
+    # Auto : nature.exemple.com → subdomain si le parent existe sur le compte
+    if not dtype:
+        dtype = Domain.DomainType.ADDON
+        parts = name.split(".")
+        if len(parts) >= 3 and parent is None:
+            for i in range(1, len(parts) - 1):
+                candidate = ".".join(parts[i:])
+                found = (
+                    domains_queryset_for(user)
+                    .filter(name__iexact=candidate)
+                    .exclude(domain_type=Domain.DomainType.ALIAS)
+                    .first()
+                )
+                if found:
+                    parent = found
+                    dtype = Domain.DomainType.SUBDOMAIN
+                    break
+
+    if dtype == Domain.DomainType.SUBDOMAIN and parent is None:
+        return err(
+            "Sous-domaine : parent_id requis (ou créez d'abord le domaine parent).",
+            "invalid_params",
+        )
 
     def _run():
         d = svc_create(

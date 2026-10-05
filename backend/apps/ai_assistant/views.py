@@ -275,11 +275,9 @@ class ConfirmActionView(APIView):
             confirm=bool(ser.validated_data["confirm"]),
             ip_address=_client_ip(request),
         )
-        ok = bool(result.get("ok") or result.get("cancelled"))
-        return Response(
-            {"success": ok, "data": result},
-            status=status.HTTP_200_OK if ok else status.HTTP_400_BAD_REQUEST,
-        )
+        # Toujours 200 pour les résultats métier : le front lit data.ok / error.
+        # (Un 400 sur action échouée faisait « rien ne se passe » côté UI.)
+        return Response({"success": True, "data": result})
 
 
 class PendingActionsListView(APIView):

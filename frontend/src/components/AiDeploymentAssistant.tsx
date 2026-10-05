@@ -590,22 +590,39 @@ export function AiDeploymentAssistant() {
       apiRequest<{
         ok?: boolean;
         cancelled?: boolean;
+        error?: string;
+        code?: string;
         result?: unknown;
+        status?: string;
         pending_actions?: PendingAction[];
       }>("/ai/actions/confirm/", {
         method: "POST",
         body: JSON.stringify(payload),
+        retry: false,
       }),
+    onMutate: (vars) => {
+      // Retrait immédiat de la carte pour un feedback visible
+      setPending((prev) => prev.filter((p) => p.token !== vars.token));
+    },
     onSuccess: (data, vars) => {
       const followUps = data.pending_actions || [];
-      setPending((prev) => [
-        ...prev.filter((p) => p.token !== vars.token),
-        ...followUps,
-      ]);
+      if (followUps.length) {
+        setPending((prev) => {
+          const tokens = new Set(prev.map((p) => p.token));
+          const merged = [...prev];
+          for (const f of followUps) {
+            if (f.token && !tokens.has(f.token)) merged.push(f);
+          }
+          return merged;
+        });
+      }
+      const cancelled = Boolean(data.cancelled) || !vars.confirm;
       const ok = Boolean(data.ok);
       let label: string;
-      if (!vars.confirm) {
-        label = "Action annulée.";
+      if (cancelled) {
+        label = data.error
+          ? `**Action refusée.** ${data.error}`
+          : "Action annulée.";
       } else if (ok) {
         label =
           "**Action exécutée avec succès.**" +
@@ -618,10 +635,42 @@ export function AiDeploymentAssistant() {
           label += `\n\n\`\`\`json\n${compact}\n\`\`\``;
         }
       } else {
-        label = "**Action échouée.** Vérifiez les logs ou reformulez.";
+        const errMsg = data.error || "Vérifiez les logs ou reformulez.";
+        label = `**Action échouée.** ${errMsg}`;
+        const result = data.result;
+        if (result && typeof result === "object") {
+          const compact = JSON.stringify(result, null, 2).slice(0, 900);
+          label += `\n\n\`\`\`json\n${compact}\n\`\`\``;
+        }
       }
       setLocalMessages((prev) => [...prev, { role: "assistant", content: label }]);
       if (vars.confirm && ok) setToolNames((prev) => [...prev, "confirmed_action"]);
+      void qc.invalidateQueries({ queryKey: ["ai-conversations"] });
+      void qc.invalidateQueries({ queryKey: ["ai-pending-actions"] });
+      if (conversationId) {
+        void qc.invalidateQueries({ queryKey: ["ai-conversation", conversationId] });
+      }
+    },
+    onError: (err: Error, vars) => {
+      setLocalMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: `**Confirmation impossible.** ${err.message || "Erreur réseau."}\n\nRéessayez ou reformulez la demande.`,
+        },
+      ]);
+      // Remettre l'action en file si on connaît encore le token (rafraîchir depuis l'API)
+      void qc.invalidateQueries({ queryKey: ["ai-pending-actions"] });
+      void apiRequest<{ pending_actions: PendingAction[] }>("/ai/actions/pending/")
+        .then((data) => {
+          const still = (data.pending_actions || []).find((p) => p.token === vars.token);
+          if (still) {
+            setPending((prev) =>
+              prev.some((p) => p.token === still.token) ? prev : [...prev, still],
+            );
+          }
+        })
+        .catch(() => undefined);
     },
   });
 
@@ -1147,16 +1196,36 @@ export function AiDeploymentAssistant() {
                             type="button"
                             className="inline-flex items-center gap-1 rounded-lg bg-cp-orange px-3 py-1.5 text-xs font-semibold text-white hover:bg-cp-orange-dark disabled:opacity-60"
                             disabled={confirmMut.isPending}
-                            onClick={() => confirmMut.mutate({ token: p.token, confirm: true })}
+                            onClick={() => {
+                              if (!p.token) {
+                                setLocalMessages((prev) => [
+                                  ...prev,
+                                  {
+                                    role: "assistant",
+                                    content:
+                                      "**Confirmation impossible.** Jeton d’action manquant — reformulez la demande.",
+                                  },
+                                ]);
+                                return;
+                              }
+                              confirmMut.mutate({ token: p.token, confirm: true });
+                            }}
                           >
-                            <Check className="h-3.5 w-3.5" />
+                            {confirmMut.isPending ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Check className="h-3.5 w-3.5" />
+                            )}
                             Approuver
                           </button>
                           <button
                             type="button"
                             className="vz-btn-ghost !px-3 !py-1.5 text-xs"
                             disabled={confirmMut.isPending}
-                            onClick={() => confirmMut.mutate({ token: p.token, confirm: false })}
+                            onClick={() => {
+                              if (!p.token) return;
+                              confirmMut.mutate({ token: p.token, confirm: false });
+                            }}
                           >
                             Refuser
                           </button>

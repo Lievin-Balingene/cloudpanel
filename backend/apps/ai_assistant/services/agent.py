@@ -731,6 +731,9 @@ def confirm_pending_action(
             "result": action.result,
             "status": action.status,
         }
+        if not result.get("ok"):
+            out["error"] = str(result.get("error") or "Échec de l'action")
+            out["code"] = str(result.get("code") or "failed")
         if follow_up_pending:
             from apps.ai_assistant.tools.helpers import (
                 action_command_preview,
@@ -753,7 +756,16 @@ def confirm_pending_action(
                 }
             ]
         return out
-    return {"ok": bool(result.get("ok")), "result": action.result, "status": action.status}
+
+    payload: dict[str, Any] = {
+        "ok": bool(result.get("ok")),
+        "result": action.result,
+        "status": action.status,
+    }
+    if not result.get("ok"):
+        payload["error"] = str(result.get("error") or "Échec de l'action")
+        payload["code"] = str(result.get("code") or "failed")
+    return payload
 
 
 def _maybe_queue_wp_install_after_domain(
