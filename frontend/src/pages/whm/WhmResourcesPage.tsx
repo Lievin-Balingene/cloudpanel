@@ -8,6 +8,7 @@ import {
   Cpu,
   Gauge,
   HardDrive,
+  Info,
   MemoryStick,
   Network,
   Play,
@@ -323,6 +324,9 @@ function ProgressRow({
   );
 }
 
+const VZONE_API_STOP_HINT =
+  "Impossible d’arrêter vzone-api depuis le panneau : cela coupe l’interface. Connectez-vous en SSH et suivez la documentation (docs/troubleshooting.md), ex. : sudo systemctl stop vzone-api";
+
 function ServiceActions({
   service,
   busy,
@@ -333,6 +337,7 @@ function ServiceActions({
   onAction: (name: string, action: ServiceAction) => void;
 }) {
   const can = service.manageable !== false;
+  const isPanelApi = service.name === "vzone-api";
   return (
     <div className="flex shrink-0 items-center gap-0.5">
       <IconAction
@@ -344,15 +349,31 @@ function ServiceActions({
       >
         <Play className="h-3.5 w-3.5" />
       </IconAction>
-      <IconAction
-        label={`Arrêter ${service.name}`}
-        size="sm"
-        tone="danger"
-        disabled={busy || !can}
-        onClick={() => onAction(service.name, "stop")}
-      >
-        <Square className="h-3.5 w-3.5" />
-      </IconAction>
+      {isPanelApi ? (
+        <IconAction
+          label={VZONE_API_STOP_HINT}
+          size="sm"
+          tone="warning"
+          disabled={false}
+          onClick={() =>
+            window.alert(
+              "Arrêt de vzone-api désactivé ici.\n\nCela coupe le panneau WHM.\n\nPassez par SSH et suivez la documentation :\n  docs/troubleshooting.md\n\nExemple :\n  sudo systemctl stop vzone-api\n  sudo systemctl start vzone-api",
+            )
+          }
+        >
+          <Info className="h-3.5 w-3.5" />
+        </IconAction>
+      ) : (
+        <IconAction
+          label={`Arrêter ${service.name}`}
+          size="sm"
+          tone="danger"
+          disabled={busy || !can}
+          onClick={() => onAction(service.name, "stop")}
+        >
+          <Square className="h-3.5 w-3.5" />
+        </IconAction>
+      )}
       <IconAction
         label={`Redémarrer ${service.name}`}
         size="sm"
@@ -416,11 +437,15 @@ export function WhmResourcesPage() {
   });
 
   function onServiceAction(name: string, action: ServiceAction) {
-    if (action === "stop" && (name === "sshd" || name === "vzone-api")) {
+    if (name === "vzone-api" && action === "stop") {
+      window.alert(
+        "Arrêt de vzone-api désactivé ici.\n\nCela coupe le panneau WHM.\n\nPassez par SSH et suivez la documentation :\n  docs/troubleshooting.md\n\nExemple :\n  sudo systemctl stop vzone-api\n  sudo systemctl start vzone-api",
+      );
+      return;
+    }
+    if (action === "stop" && name === "sshd") {
       const ok = window.confirm(
-        name === "sshd"
-          ? "Arrêter SSH peut vous couper l’accès distant. Continuer ?"
-          : "Arrêter vzone-api va couper le panneau jusqu’à un redémarrage manuel. Continuer ?",
+        "Arrêter SSH peut vous couper l’accès distant. Continuer ?",
       );
       if (!ok) return;
     }

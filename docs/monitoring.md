@@ -40,6 +40,9 @@ Accès : administrateur / revendeur (ACL).
 
 Actions : `start` | `stop` | `restart` | `reload`
 
+**Exception :** `stop` sur `vzone-api` est refusé (coupe le panneau). Utiliser SSH :
+`sudo systemctl stop vzone-api` — voir `docs/troubleshooting.md`.
+
 Helper root allowlisté : `/usr/local/sbin/vzone-svcctl` (installé via `ensure-panel-helpers.sh`).
 
 

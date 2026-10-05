@@ -321,6 +321,18 @@ def control_service(name: str, action: str) -> dict[str, Any]:
             status_code=400,
         )
 
+    # Couper vzone-api depuis le panneau rend l'UI inaccessible — SSH uniquement
+    if name == "vzone-api" and action == "stop":
+        raise VZoneAPIException(
+            detail=(
+                "Impossible d'arrêter vzone-api depuis le panneau (cela coupe l'interface). "
+                "Connectez-vous en SSH et suivez la documentation (docs/troubleshooting.md), "
+                "par ex. : sudo systemctl stop vzone-api"
+            ),
+            code="vzone_api_stop_forbidden",
+            status_code=400,
+        )
+
     units: list[str] = []
     for label, candidates, _names in _SERVICE_CANDIDATES:
         if label == name:
