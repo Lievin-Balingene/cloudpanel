@@ -47,12 +47,54 @@ def get_tool(name: str) -> RegisteredTool | None:
     return _REGISTRY.get(name)
 
 
+_ACCOUNT_TARGET_PROPS: dict[str, Any] = {
+    "username": {
+        "type": "string",
+        "description": "Compte client cible (WHM/revendeur). Ignoré pour un client.",
+    },
+    "account": {
+        "type": "string",
+        "description": "Alias de username.",
+    },
+}
+
+# Tools méta : pas de ciblage compte injecté dans le schéma
+_NO_ACCOUNT_INJECT = frozenset(
+    {
+        "list_ai_capabilities",
+        "list_client_accounts",
+        "set_working_account",
+        "clear_working_account",
+        "get_server_info",
+    }
+)
+
+
+def _with_account_props(spec: ToolSpec) -> ToolSpec:
+    """Ajoute username/account optionnels pour WHM → compte client."""
+    if spec.name in _NO_ACCOUNT_INJECT:
+        return spec
+    params = dict(spec.parameters or {})
+    props = dict(params.get("properties") or {})
+    if "username" in props and "account" in props:
+        return spec
+    props = {**_ACCOUNT_TARGET_PROPS, **props}
+    params["properties"] = props
+    # Conserve additionalProperties / required
+    return ToolSpec(
+        name=spec.name,
+        description=spec.description,
+        parameters=params,
+        dangerous=spec.dangerous,
+    )
+
+
 def list_tool_specs(*, include_dangerous: bool = True) -> list[ToolSpec]:
     specs = []
     for item in _REGISTRY.values():
         if item.dangerous and not include_dangerous:
             continue
-        specs.append(item.spec)
+        specs.append(_with_account_props(item.spec))
     return specs
 
 
@@ -63,6 +105,7 @@ def ensure_tools_loaded() -> None:
         handlers_account,
         handlers_apps_extra,
         handlers_backups,
+        handlers_client_extra,
         handlers_cron,
         handlers_databases,
         handlers_dns,

@@ -45,6 +45,66 @@ def require_str(params: dict[str, Any], key: str, *, default: str = "", max_len:
     return str(params.get(key) or default).strip()[:max_len]
 
 
+def resolve_owner(actor: User, params: dict[str, Any] | None = None) -> User:
+    """Résout le compte cible (client) pour un tool.
+
+    - Client : toujours lui-même (ignore username étranger).
+    - Admin : peut cibler n'importe quel compte via ``username`` / ``account``.
+    - Revendeur : uniquement ses clients (parent=revendeur) ou lui-même.
+    """
+    params = params or {}
+    raw = require_str(params, "username") or require_str(params, "account")
+    if not raw:
+        return actor
+
+    key = raw.lower()
+    if actor.role == User.Role.CLIENT:
+        own = {
+            (actor.username or "").lower(),
+            (getattr(actor, "system_username", None) or "").lower(),
+        }
+        if key not in own:
+            raise VZoneAPIException(
+                detail="Un client ne peut cibler que son propre compte.",
+                code="forbidden_account",
+                status_code=403,
+            )
+        return actor
+
+    target = (
+        User.objects.filter(username__iexact=raw).first()
+        or User.objects.filter(system_username__iexact=raw).first()
+    )
+    if target is None:
+        raise VZoneAPIException(
+            detail=f"Compte introuvable: {raw}",
+            code="account_not_found",
+            status_code=404,
+        )
+
+    if actor.role == User.Role.ADMINISTRATOR:
+        return target
+
+    if actor.role == User.Role.RESELLER:
+        if target.pk == actor.pk or target.parent_id == actor.pk:
+            return target
+        raise VZoneAPIException(
+            detail="Ce compte client n'appartient pas à votre revendeur.",
+            code="forbidden_account",
+            status_code=403,
+        )
+
+    return actor
+
+
+def strip_account_params(params: dict[str, Any] | None) -> dict[str, Any]:
+    """Retire username/account des params avant l'appel handler métier."""
+    data = dict(params or {})
+    data.pop("username", None)
+    data.pop("account", None)
+    return data
+
+
 PENDING_DESCRIPTIONS: dict[str, str] = {
     "restart_application": "Redémarrer l'application",
     "stop_application": "Arrêter l'application",
@@ -119,6 +179,16 @@ PENDING_DESCRIPTIONS: dict[str, str] = {
     "remove_docker_container": "Supprimer un conteneur Docker",
     "apply_k8s_manifest": "Appliquer un manifeste Kubernetes",
     "delete_k8s_manifest": "Supprimer des ressources Kubernetes",
+    "set_working_account": "Cibler un compte client",
+    "clear_working_account": "Revenir au compte courant",
+    "add_ssh_key": "Ajouter une clé SSH",
+    "delete_ssh_key": "Supprimer une clé SSH",
+    "block_client_ip": "Bloquer une IP (compte)",
+    "unblock_client_ip": "Débloquer une IP (compte)",
+    "enable_directory_privacy": "Protéger un dossier (.htpasswd)",
+    "disable_directory_privacy": "Retirer la protection dossier",
+    "delete_redirect": "Supprimer une redirection",
+    "delete_mail_forwarder": "Supprimer un forwarder email",
 }
 
 

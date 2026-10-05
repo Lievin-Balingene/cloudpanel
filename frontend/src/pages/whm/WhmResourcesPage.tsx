@@ -685,7 +685,13 @@ export function WhmResourcesPage() {
                   >
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-cp-text">{s.name}</p>
-                      <StatusDot status={s.active ? "ok" : "error"} label={s.active ? "UP" : "DOWN"} />
+                      {s.manageable === false ? (
+                        <p className="truncate text-[11px] text-amber-700 dark:text-amber-400">
+                          {s.note || "Non installé"}
+                        </p>
+                      ) : (
+                        <StatusDot status={s.active ? "ok" : "error"} label={s.active ? "UP" : "DOWN"} />
+                      )}
                     </div>
                     <ServiceActions
                       service={s}
@@ -1151,10 +1157,17 @@ export function WhmResourcesPage() {
                   <div className="min-w-0">
                     <p className="truncate font-medium text-cp-text">{s.name}</p>
                     <p className="mt-0.5 text-[11px] text-cp-muted">
-                      {s.unit ? `${s.unit}.service` : s.source || "process"}
+                      {s.unit
+                        ? `${s.unit}.service`
+                        : s.note || s.source || "non installé"}
                     </p>
                   </div>
-                  <StatusDot status={s.active ? "ok" : "error"} label={s.active ? "Actif" : "Arrêté"} />
+                  <StatusDot
+                    status={s.manageable === false ? "inactive" : s.active ? "ok" : "error"}
+                    label={
+                      s.manageable === false ? "Absent" : s.active ? "Actif" : "Arrêté"
+                    }
+                  />
                 </div>
                 <div className="mt-2.5 flex items-center justify-end border-t border-cp-border/50 pt-2 dark:border-ink-800">
                   <ServiceActions
