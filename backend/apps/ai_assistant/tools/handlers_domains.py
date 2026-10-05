@@ -67,9 +67,44 @@ def get_ssl_status(user: User, params: dict[str, Any]) -> dict[str, Any]:
     return ok(domain_id=domain.pk, name=domain.name, ssl_active=has_active_cert_files(domain.name))
 
 
+def _resolve_parent_domain(user: User, name: str, *, parent_id: int | None = None, parent_name: str = ""):
+    """Trouve le domaine parent pour un hostname (ex: nature.7une.info → 7une.info)."""
+    from apps.domains.models import Domain
+    from apps.domains.services import domains_queryset_for
+
+    if parent_id:
+        found = _owned_domain(user, parent_id)
+        if not found:
+            raise ValueError("parent_id introuvable")
+        return found
+    if parent_name:
+        found = _owned_domain(user, name=parent_name)
+        if not found:
+            raise ValueError(f"Domaine parent introuvable : {parent_name}")
+        return found
+
+    parts = name.split(".")
+    # nature.7une.info → essaie 7une.info, puis une.info (suffixes)
+    if len(parts) < 3:
+        return None
+    qs = domains_queryset_for(user).exclude(
+        domain_type__in={Domain.DomainType.ALIAS, Domain.DomainType.PARKED}
+    )
+    for i in range(1, len(parts) - 1):
+        candidate = ".".join(parts[i:])
+        found = qs.filter(name__iexact=candidate).first()
+        if found and name.endswith("." + found.name):
+            return found
+    return None
+
+
 @register_tool(
     name="create_domain",
-    description="Crée un domaine ou sous-domaine (confirmation requise).",
+    description=(
+        "Crée un domaine ou sous-domaine (confirmation requise). "
+        "Pour un sous-domaine (ex: nature.7une.info), parent_id/parent_name sont optionnels : "
+        "le parent est auto-détecté s'il existe déjà sur le compte."
+    ),
     parameters={
         "type": "object",
         "properties": {
@@ -79,6 +114,10 @@ def get_ssl_status(user: User, params: dict[str, Any]) -> dict[str, Any]:
                 "enum": ["primary", "addon", "subdomain", "parked", "alias"],
             },
             "parent_id": {"type": "integer"},
+            "parent_name": {
+                "type": "string",
+                "description": "Nom du domaine parent (ex: 7une.info). Alternative à parent_id.",
+            },
             "create_dns_zone": {"type": "boolean"},
             "document_root": {"type": "string"},
         },
@@ -90,41 +129,47 @@ def get_ssl_status(user: User, params: dict[str, Any]) -> dict[str, Any]:
 def create_domain(user: User, params: dict[str, Any]) -> dict[str, Any]:
     from apps.domains.models import Domain
     from apps.domains.services import create_domain as svc_create
-    from apps.domains.services import domains_queryset_for
 
     name = require_str(params, "name", max_len=253)
     if not name:
         return err("name requis", "invalid_params")
     name = name.strip().lower().rstrip(".")
     dtype = (require_str(params, "domain_type", default="") or "").strip().lower()
-    parent = None
-    parent_id = require_int(params, "parent_id")
-    if parent_id:
-        parent = _owned_domain(user, parent_id)
-        if not parent:
-            return err("parent_id introuvable", "not_found")
 
-    # Auto : nature.exemple.com → subdomain si le parent existe sur le compte
+    try:
+        parent = _resolve_parent_domain(
+            user,
+            name,
+            parent_id=require_int(params, "parent_id"),
+            parent_name=require_str(params, "parent_name", max_len=253),
+        )
+    except ValueError as exc:
+        return err(str(exc), "not_found")
+
+    # Auto-type : hostname sous un domaine du compte → subdomain, sinon addon
     if not dtype:
-        dtype = Domain.DomainType.ADDON
-        parts = name.split(".")
-        if len(parts) >= 3 and parent is None:
-            for i in range(1, len(parts) - 1):
-                candidate = ".".join(parts[i:])
-                found = (
-                    domains_queryset_for(user)
-                    .filter(name__iexact=candidate)
-                    .exclude(domain_type=Domain.DomainType.ALIAS)
-                    .first()
-                )
-                if found:
-                    parent = found
-                    dtype = Domain.DomainType.SUBDOMAIN
-                    break
+        dtype = Domain.DomainType.SUBDOMAIN if parent else Domain.DomainType.ADDON
+    elif dtype == Domain.DomainType.SUBDOMAIN and parent is None:
+        # L'IA a souvent mis domain_type=subdomain sans parent_id — retente
+        parent = _resolve_parent_domain(user, name)
+        if parent is None:
+            return err(
+                "Sous-domaine : aucun domaine parent trouvé sur le compte "
+                f"(ex: pour {name}, créez d'abord le domaine parent).",
+                "invalid_params",
+            )
+    elif (
+        dtype in {Domain.DomainType.ADDON, Domain.DomainType.PRIMARY}
+        and parent is not None
+        and name.endswith("." + parent.name)
+        and name != parent.name
+    ):
+        # nature.7une.info passé en addon alors que 7une.info existe → subdomain
+        dtype = Domain.DomainType.SUBDOMAIN
 
     if dtype == Domain.DomainType.SUBDOMAIN and parent is None:
         return err(
-            "Sous-domaine : parent_id requis (ou créez d'abord le domaine parent).",
+            "Sous-domaine : parent_id / parent_name requis (ou domaine parent absent).",
             "invalid_params",
         )
 
@@ -137,7 +182,13 @@ def create_domain(user: User, params: dict[str, Any]) -> dict[str, Any]:
             create_dns_zone=bool(params.get("create_dns_zone", True)),
             document_root=require_str(params, "document_root", max_len=500),
         )
-        return {"id": d.pk, "name": d.name, "type": d.domain_type}
+        return {
+            "id": d.pk,
+            "name": d.name,
+            "type": d.domain_type,
+            "parent_id": parent.pk if parent else None,
+            "parent_name": parent.name if parent else None,
+        }
 
     return run_service(_run)
 
@@ -211,14 +262,17 @@ def create_redirect(user: User, params: dict[str, Any]) -> dict[str, Any]:
 
 @register_tool(
     name="issue_ssl_certificate",
-    description="Émet un certificat Let's Encrypt pour un domaine (confirmation requise).",
+    description=(
+        "Émet un certificat Let's Encrypt pour un domaine (confirmation requise). "
+        "Accepte domain_id ou domain_name."
+    ),
     parameters={
         "type": "object",
         "properties": {
             "domain_id": {"type": "integer"},
+            "domain_name": {"type": "string"},
             "email": {"type": "string"},
         },
-        "required": ["domain_id"],
         "additionalProperties": False,
     },
     dangerous=True,
@@ -226,9 +280,13 @@ def create_redirect(user: User, params: dict[str, Any]) -> dict[str, Any]:
 def issue_ssl_certificate(user: User, params: dict[str, Any]) -> dict[str, Any]:
     from apps.domains.ssl_services import issue_letsencrypt
 
-    domain = _owned_domain(user, require_int(params, "domain_id"))
+    domain = _owned_domain(
+        user,
+        require_int(params, "domain_id"),
+        require_str(params, "domain_name", max_len=253),
+    )
     if not domain:
-        return err("Domaine introuvable", "not_found")
+        return err("Domaine introuvable (domain_id ou domain_name)", "not_found")
     email = require_str(params, "email", max_len=200) or None
 
     def _run():
