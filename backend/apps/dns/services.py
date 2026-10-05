@@ -39,11 +39,18 @@ def create_zone_with_defaults(
         domain = ".".join(parts[1:]) if len(parts) > 2 else host
         admin_email = f"hostmaster.{domain}."
     zone_name = normalize_zone_name(name)
+    try:
+        from apps.server_setup.tweak_settings import get_tweak
+
+        default_ttl = max(60, int(get_tweak("default_ttl", 14400) or 14400))
+    except Exception:  # noqa: BLE001
+        default_ttl = 14400
     zone = DnsZone.objects.create(
         name=zone_name,
         owner=owner,
         soa_primary_ns=primary_ns if primary_ns.endswith(".") else f"{primary_ns}.",
         soa_admin_email=admin_email if admin_email.endswith(".") else f"{admin_email}.",
+        ttl_default=default_ttl,
     )
     records = [
         DnsRecord(
@@ -51,20 +58,20 @@ def create_zone_with_defaults(
             record_type="NS",
             name="@",
             content=primary_ns if primary_ns.endswith(".") else f"{primary_ns}.",
-            ttl=86400,
+            ttl=default_ttl,
         ),
         DnsRecord(
             zone=zone,
             record_type="NS",
             name="@",
             content=secondary_ns if secondary_ns.endswith(".") else f"{secondary_ns}.",
-            ttl=86400,
+            ttl=default_ttl,
         ),
     ]
     for extra in extras:
         content = extra if extra.endswith(".") else f"{extra}."
         records.append(
-            DnsRecord(zone=zone, record_type="NS", name="@", content=content, ttl=86400)
+            DnsRecord(zone=zone, record_type="NS", name="@", content=content, ttl=default_ttl)
         )
     DnsRecord.objects.bulk_create(records)
     try:

@@ -145,8 +145,17 @@ class DnssecToggleView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request: Request, pk: int) -> Response:
+        from apps.core.exceptions import VZoneAPIException
+        from apps.server_setup.tweak_settings import get_tweak
+
         zone = get_object_or_404(zones_queryset_for(request.user), pk=pk)
         enable = bool(request.data.get("enabled", not zone.dnssec_enabled))
+        if enable and not bool(get_tweak("allow_dnssec", True)):
+            raise VZoneAPIException(
+                detail="DNSSEC désactivé dans Tweak Settings.",
+                code="dnssec_disabled",
+                status_code=403,
+            )
         zone.dnssec_enabled = enable
         zone.dnssec_algorithm = "RSASHA256" if enable else ""
         zone.save(update_fields=["dnssec_enabled", "dnssec_algorithm", "updated_at"])

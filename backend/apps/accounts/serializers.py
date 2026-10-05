@@ -310,6 +310,14 @@ class UserCreateSerializer(serializers.ModelSerializer):
             for key, value in quota_data.items():
                 setattr(user.quota, key, value)
             user.quota.save()
+        elif not package_id:
+            try:
+                from apps.accounts.services import _default_disk_quota_mb
+
+                user.quota.disk_mb = _default_disk_quota_mb()
+                user.quota.save(update_fields=["disk_mb", "updated_at"])
+            except Exception:  # noqa: BLE001
+                pass
 
         provision_account_home(user)
         user.refresh_from_db()

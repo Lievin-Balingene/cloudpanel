@@ -1382,6 +1382,13 @@ def _log_action(
     confirmed,
     ip_address,
 ) -> None:
+    try:
+        from apps.server_setup.tweak_settings import get_tweak
+
+        if not bool(get_tweak("log_ai_actions", True)):
+            return
+    except Exception:  # noqa: BLE001
+        pass
     AgentActionLog.objects.create(
         owner=user,
         conversation=conversation,

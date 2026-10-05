@@ -43,6 +43,7 @@ import { useAuthStore } from "@/stores/auth";
 import { useThemeStore } from "@/stores/theme";
 import { OperationProgressHost } from "@/components/OperationProgressHost";
 import { AiDeploymentAssistant } from "@/components/AiDeploymentAssistant";
+import { usePanelSessionEffects, usePanelI18n, usePanelTweaks } from "@/lib/panelTweaks";
 import type { DashboardOverview } from "@/types";
 
 type NavItem = { to: string; label: string; icon: typeof Home; end?: boolean };
@@ -401,14 +402,17 @@ export function ClientShell() {
   const toggle = useThemeStore((s) => s.toggle);
   const location = useLocation();
   const [navOpen, setNavOpen] = useState(false);
+  const { tweaks } = usePanelTweaks();
+  const t = usePanelI18n();
+  usePanelSessionEffects();
 
   useEffect(() => {
     setNavOpen(false);
   }, [location.pathname]);
 
   useEffect(() => {
-    document.title = "V-zone Panel";
-  }, []);
+    document.title = tweaks.panel_locale === "en" ? "V-zone Panel" : "V-zone Panel";
+  }, [tweaks.panel_locale]);
 
   useEffect(() => {
     if (!navOpen) return;
@@ -482,10 +486,10 @@ export function ClientShell() {
               type="button"
               className="inline-flex h-10 items-center gap-1.5 rounded-lg px-2 transition hover:bg-white/15 sm:px-2.5"
               onClick={() => void logout()}
-              aria-label="Se déconnecter"
+              aria-label={t("logout")}
             >
               <LogOut className="h-4 w-4" />
-              <span className="hidden sm:inline">Déconnexion</span>
+              <span className="hidden sm:inline">{t("logout")}</span>
             </button>
           </div>
         </div>
@@ -531,7 +535,7 @@ export function ClientShell() {
         <HostUsagePanel />
       </div>
       <OperationProgressHost />
-      <AiDeploymentAssistant />
+      {tweaks.show_ai_assistant ? <AiDeploymentAssistant /> : null}
     </div>
   );
 }

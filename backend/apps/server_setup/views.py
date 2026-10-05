@@ -34,7 +34,9 @@ from apps.server_setup.serializers import (
 )
 from apps.server_setup.services import get_setup_payload, update_setup
 from apps.server_setup.tweak_settings import (
+    apply_tweak_side_effects,
     merge_tweaks,
+    public_tweaks_payload,
     tweak_payload,
     validate_tweaks,
 )
@@ -89,17 +91,19 @@ class TweakSettingsView(APIView):
         merged.update(cleaned)
         setup.tweak_settings = merged
         setup.save(update_fields=["tweak_settings", "updated_at"])
-        # Appliquer SMTP Restrictions si la valeur a changé
-        if "smtp_restrictions" in cleaned and cleaned["smtp_restrictions"] != previous.get(
-            "smtp_restrictions"
-        ):
-            try:
-                from apps.security.smtp_restrictions import apply_from_tweak
+        applied = apply_tweak_side_effects(previous, cleaned)
+        payload = tweak_payload(setup.tweak_settings)
+        payload["applied_effects"] = applied
+        return Response({"success": True, "data": payload})
 
-                apply_from_tweak(bool(cleaned["smtp_restrictions"]))
-            except Exception:  # noqa: BLE001
-                pass
-        return Response({"success": True, "data": tweak_payload(setup.tweak_settings)})
+
+class TweakSettingsPublicView(APIView):
+    """Sous-ensemble UI des tweaks — lisible par tout utilisateur connecté."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request) -> Response:
+        return Response({"success": True, "data": {"values": public_tweaks_payload()}})
 
 
 class IpFunctionsView(APIView):

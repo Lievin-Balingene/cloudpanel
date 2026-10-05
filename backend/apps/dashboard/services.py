@@ -56,7 +56,15 @@ def capture_snapshot() -> ResourceSnapshot:
     )
 
 
-def prune_snapshots(retain_hours: int = 72) -> int:
+def prune_snapshots(retain_hours: int | None = None) -> int:
+    if retain_hours is None:
+        try:
+            from apps.server_setup.tweak_settings import get_tweak
+
+            days = max(1, int(get_tweak("retain_access_logs_days", 30) or 30))
+            retain_hours = days * 24
+        except Exception:  # noqa: BLE001
+            retain_hours = 72
     cutoff = timezone.now() - timedelta(hours=retain_hours)
     deleted, _ = ResourceSnapshot.objects.filter(collected_at__lt=cutoff).delete()
     return deleted

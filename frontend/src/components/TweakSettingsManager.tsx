@@ -24,6 +24,7 @@ interface TweakCategory {
 interface TweakPayload {
   categories: TweakCategory[];
   values: Record<string, boolean | number | string>;
+  applied_effects?: string[];
 }
 
 export function TweakSettingsManager({ title }: { title: string }) {
@@ -63,9 +64,13 @@ export function TweakSettingsManager({ title }: { title: string }) {
       }),
     onSuccess: (payload) => {
       setValues({ ...payload.values });
-      setOkMsg("Tweak Settings enregistrés.");
+      const effects = payload.applied_effects?.length
+        ? ` Effets : ${payload.applied_effects.join(", ")}.`
+        : "";
+      setOkMsg(`Tweak Settings enregistrés et appliqués.${effects}`);
       setError(null);
       void qc.invalidateQueries({ queryKey: ["tweak-settings"] });
+      void qc.invalidateQueries({ queryKey: ["tweak-settings-public"] });
     },
     onError: (e: Error) => setError(e.message),
   });

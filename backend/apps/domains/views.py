@@ -56,6 +56,15 @@ class DomainListCreateView(APIView):
         if data.get("parent_id"):
             parent = get_object_or_404(domains_queryset_for(request.user), pk=data["parent_id"])
 
+        create_dns = data.get("create_dns_zone")
+        if create_dns is None:
+            try:
+                from apps.server_setup.tweak_settings import get_tweak
+
+                create_dns = bool(get_tweak("auto_create_dns_zone", True))
+            except Exception:  # noqa: BLE001
+                create_dns = True
+
         domain = create_domain(
             name=data["name"],
             owner=owner,
@@ -63,7 +72,7 @@ class DomainListCreateView(APIView):
             parent=parent,
             ipv4_address=data.get("ipv4_address"),
             ipv6_address=data.get("ipv6_address"),
-            create_dns_zone=data.get("create_dns_zone", True),
+            create_dns_zone=bool(create_dns),
             document_root=data.get("document_root") or "",
             notes=data.get("notes") or "",
             web_engine=data.get("web_engine"),

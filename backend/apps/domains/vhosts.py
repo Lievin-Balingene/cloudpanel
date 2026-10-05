@@ -492,13 +492,31 @@ server {{
         return http
 
     fullchain, privkey = ssl_paths
+    try:
+        from apps.server_setup.tweak_settings import get_tweak
+
+        http2 = bool(get_tweak("enable_http2", True))
+        gzip_on = bool(get_tweak("gzip_compression", True))
+    except Exception:  # noqa: BLE001
+        http2 = True
+        gzip_on = True
+    listen_ssl = "listen 443 ssl http2;" if http2 else "listen 443 ssl;"
+    listen_ssl6 = "listen [::]:443 ssl http2;" if http2 else "listen [::]:443 ssl;"
+    gzip_block = (
+        """
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml;
+"""
+        if gzip_on
+        else "\n    gzip off;\n"
+    )
     https = f"""
 server {{
-    listen 443 ssl;
-    listen [::]:443 ssl;
+    {listen_ssl}
+    {listen_ssl6}
     server_name {server_names};
     client_max_body_size 128m;
-
+{gzip_block}
     ssl_certificate     {fullchain};
     ssl_certificate_key {privkey};
     ssl_session_timeout 1d;

@@ -116,7 +116,18 @@ class PhpSelectorDetailView(APIView):
         selector = get_object_or_404(selectors_qs(request.user), pk=pk)
         serializer = PhpSelectorUpdateSerializer(data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        selector = update_selector(selector, **serializer.validated_data)
+        data = serializer.validated_data
+        if "ini_settings" in data and request.user.role == User.Role.CLIENT:
+            from apps.core.exceptions import VZoneAPIException
+            from apps.server_setup.tweak_settings import get_tweak
+
+            if not bool(get_tweak("allow_ini_edit", True)):
+                raise VZoneAPIException(
+                    detail="Édition php.ini désactivée dans Tweak Settings.",
+                    code="ini_edit_disabled",
+                    status_code=403,
+                )
+        selector = update_selector(selector, **data)
         return Response({"success": True, "data": PhpSelectorSerializer(selector).data})
 
     def delete(self, request: Request, pk: int) -> Response:

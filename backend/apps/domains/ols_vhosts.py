@@ -152,11 +152,17 @@ END_WP_REWRITE
 }"""
 
     # docRoot absolu (sous vhRoot = home) — index.php en premier pour WordPress / PHP
+    try:
+        from apps.server_setup.tweak_settings import get_tweak
+
+        gzip_flag = 1 if bool(get_tweak("gzip_compression", True)) else 0
+    except Exception:  # noqa: BLE001
+        gzip_flag = 1
     return f"""# V-zone OLS vhconf — {domain.name}
 docRoot                   {docroot.rstrip('/')}/
 vhDomain                  {domain.name}
 vhAliases                 {aliases}
-enableGzip                1
+enableGzip                {gzip_flag}
 
 errorlog /var/lib/vzone/ols/logs/{_safe_vh_name(domain.name)}.error.log {{
   useServer               0

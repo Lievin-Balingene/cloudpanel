@@ -76,7 +76,7 @@ class MailDomainListCreateView(APIView):
             owner=owner,
             name=data["name"],
             domain_id=data.get("domain_id"),
-            max_quota_mb=data.get("max_quota_mb", 1024),
+            max_quota_mb=data.get("max_quota_mb"),
             enable_dns=data.get("enable_dns", True),
         )
         return Response(
@@ -98,10 +98,21 @@ class MailDomainDetailView(APIView):
         md = get_object_or_404(mail_domains_qs(request.user), pk=pk)
         serializer = MailDomainUpdateSerializer(data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        for field, value in serializer.validated_data.items():
+        data = serializer.validated_data
+        if "catch_all" in data and data.get("catch_all"):
+            from apps.core.exceptions import VZoneAPIException
+            from apps.server_setup.tweak_settings import get_tweak
+
+            if not bool(get_tweak("enable_catch_all", True)):
+                raise VZoneAPIException(
+                    detail="Catch-all désactivé dans Tweak Settings.",
+                    code="catch_all_disabled",
+                    status_code=403,
+                )
+        for field, value in data.items():
             setattr(md, field, value)
-        if serializer.validated_data:
-            md.save(update_fields=[*serializer.validated_data.keys(), "updated_at"])
+        if data:
+            md.save(update_fields=[*data.keys(), "updated_at"])
             write_mail_maps()
         return Response({"success": True, "data": MailDomainSerializer(md).data})
 

@@ -33,6 +33,7 @@ import {
 import { useMemo, useState } from "react";
 import { apiRequest } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
+import { usePanelI18n, usePanelTweaks } from "@/lib/panelTweaks";
 import { whmPortalUrl } from "@/lib/portal";
 import { useAuthStore } from "@/stores/auth";
 import type { DashboardOverview } from "@/types";
@@ -136,6 +137,9 @@ export function ClientHomePage() {
   const user = useAuthStore((s) => s.user);
   const isReseller = user?.role === "reseller";
   const [q, setQ] = useState("");
+  const { tweaks } = usePanelTweaks();
+  const t = usePanelI18n();
+  const compact = tweaks.compact_home_buttons;
   const { data } = useQuery({
     queryKey: ["dashboard-overview"],
     queryFn: () => apiRequest<DashboardOverview>("/dashboard/overview/"),
@@ -199,16 +203,21 @@ export function ClientHomePage() {
             Informations générales
           </p>
           <h1 className="mt-1 text-xl font-semibold tracking-tight sm:text-2xl">
-            Bonjour, {greetName}
+            {t("panelGreeting")}, {greetName}
           </h1>
           <p className="mt-1 max-w-xl text-sm text-white/80">
             {data?.account?.primary_domain
-              ? `Domaine principal : ${data.account.primary_domain}.`
-              : "Gérez vos sites, e-mails et fichiers."}
+              ? tweaks.panel_locale === "en"
+                ? `Primary domain: ${data.account.primary_domain}.`
+                : `Domaine principal : ${data.account.primary_domain}.`
+              : tweaks.panel_locale === "en"
+                ? "Manage your sites, email and files."
+                : "Gérez vos sites, e-mails et fichiers."}
             {data?.my_package ? (
               <>
                 {" "}
-                Forfait <strong className="text-white">{data.my_package}</strong>.
+                {tweaks.panel_locale === "en" ? "Plan" : "Forfait"}{" "}
+                <strong className="text-white">{data.my_package}</strong>.
               </>
             ) : null}
           </p>
@@ -216,10 +225,10 @@ export function ClientHomePage() {
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/50" />
             <input
               className="w-full rounded-xl border border-white/20 bg-white/10 py-2.5 pl-9 pr-3 text-sm text-white placeholder:text-white/50 outline-none backdrop-blur-sm transition focus:border-white/40 focus:bg-white/15"
-              placeholder="Rechercher un outil…"
+              placeholder={t("toolsSearch")}
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              aria-label="Rechercher un outil"
+              aria-label={t("toolsSearch")}
             />
           </label>
         </div>
@@ -267,17 +276,25 @@ export function ClientHomePage() {
           <div className="border-b border-cp-border bg-[#f0f4f8] px-3 py-2.5 sm:px-4 dark:border-ink-700 dark:bg-ink-900">
             <h2 className="text-sm font-semibold text-cp-text">{section.title}</h2>
           </div>
-          <div className="grid grid-cols-2 gap-2 p-3 sm:grid-cols-3 sm:p-4 lg:grid-cols-4">
+          <div className={`grid grid-cols-2 gap-2 p-3 sm:grid-cols-3 sm:p-4 lg:grid-cols-4 ${compact ? "" : "gap-3"}`}>
             {section.tools.map((tool) => (
               <Link
                 key={`${section.title}-${tool.label}`}
                 to={tool.to}
-                className="group flex items-center gap-2.5 rounded-lg border border-cp-border/70 bg-[#f7f9fc] px-2.5 py-2 transition hover:border-cp-orange/45 hover:bg-white hover:shadow-sm dark:border-ink-700 dark:bg-ink-900/70 dark:hover:bg-ink-900"
+                className={`group flex items-center gap-2.5 rounded-lg border border-cp-border/70 bg-[#f7f9fc] transition hover:border-cp-orange/45 hover:bg-white hover:shadow-sm dark:border-ink-700 dark:bg-ink-900/70 dark:hover:bg-ink-900 ${
+                  compact ? "px-2.5 py-2" : "px-3.5 py-3.5"
+                }`}
               >
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-cp-orange shadow-sm ring-1 ring-cp-border/60 transition group-hover:ring-cp-orange/30 dark:bg-ink-950 dark:ring-ink-700">
-                  <tool.icon className="h-4 w-4" />
+                <span
+                  className={`flex shrink-0 items-center justify-center rounded-lg bg-white text-cp-orange shadow-sm ring-1 ring-cp-border/60 transition group-hover:ring-cp-orange/30 dark:bg-ink-950 dark:ring-ink-700 ${
+                    compact ? "h-8 w-8" : "h-11 w-11"
+                  }`}
+                >
+                  <tool.icon className={compact ? "h-4 w-4" : "h-5 w-5"} />
                 </span>
-                <span className="min-w-0 truncate text-sm font-medium text-cp-text">
+                <span
+                  className={`min-w-0 truncate font-medium text-cp-text ${compact ? "text-sm" : "text-base"}`}
+                >
                   {tool.label}
                 </span>
               </Link>

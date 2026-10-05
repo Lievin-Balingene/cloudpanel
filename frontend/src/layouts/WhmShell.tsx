@@ -49,6 +49,7 @@ import { useAuthStore } from "@/stores/auth";
 import { useThemeStore } from "@/stores/theme";
 import { OperationProgressHost } from "@/components/OperationProgressHost";
 import { AiDeploymentAssistant } from "@/components/AiDeploymentAssistant";
+import { usePanelSessionEffects, usePanelI18n, usePanelTweaks } from "@/lib/panelTweaks";
 import { apiRequest } from "@/lib/api";
 import { canAccessWhmRoute } from "@/lib/resellerAcl";
 import { cpanelPortalUrl } from "@/lib/portal";
@@ -412,6 +413,9 @@ export function WhmShell() {
   const toggle = useThemeStore((s) => s.toggle);
   const navigate = useNavigate();
   const location = useLocation();
+  const { tweaks } = usePanelTweaks();
+  const t = usePanelI18n();
+  usePanelSessionEffects();
 
   const visibleSections = useMemo(() => {
     const role = user?.role;
@@ -419,10 +423,16 @@ export function WhmShell() {
     return navSections
       .map((section) => ({
         ...section,
-        items: section.items.filter((item) => canAccessWhmRoute(role, privs, item.to)),
+        items: section.items.filter((item) => {
+          if (!tweaks.show_ai_assistant && item.to.startsWith("/whm/ai-ops")) return false;
+          return canAccessWhmRoute(role, privs, item.to);
+        }),
       }))
-      .filter((section) => section.items.length > 0);
-  }, [user?.role, user?.reseller_privileges]);
+      .filter((section) => {
+        if (!tweaks.show_ai_assistant && section.id === "ai-ops") return false;
+        return section.items.length > 0;
+      });
+  }, [user?.role, user?.reseller_privileges, tweaks.show_ai_assistant]);
 
   const visibleTools = useMemo(
     () =>
@@ -796,7 +806,7 @@ export function WhmShell() {
                 onClick={() => void logout()}
               >
                 <LogOut className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Logout</span>
+                <span className="hidden sm:inline">{t("logout")}</span>
               </button>
             </div>
           </div>
@@ -807,7 +817,7 @@ export function WhmShell() {
         </main>
       </div>
       <OperationProgressHost />
-      <AiDeploymentAssistant />
+      {tweaks.show_ai_assistant ? <AiDeploymentAssistant /> : null}
     </div>
   );
 }

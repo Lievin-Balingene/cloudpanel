@@ -1058,6 +1058,14 @@ def upsert_schedule(
     minute = max(0, min(int(minute), 59))
     weekday = max(0, min(int(weekday), 6))
     dest = resolve_destination(owner, destination_id)
+    try:
+        from apps.server_setup.tweak_settings import get_tweak
+
+        retention = max(1, int(get_tweak("backup_retention_days", 14) or 14))
+        if keep_daily == 7:
+            keep_daily = retention
+    except Exception:  # noqa: BLE001
+        pass
 
     defaults = {
         "frequency": frequency,
@@ -1109,7 +1117,18 @@ def delete_schedule(schedule: BackupSchedule) -> None:
 def run_due_schedules(*, now: datetime | None = None) -> list[BackupArchive]:
     now = now or timezone.now()
     created: list[BackupArchive] = []
+    try:
+        from apps.server_setup.tweak_settings import get_tweak
+
+        daily_enabled = bool(get_tweak("daily_backup_enabled", True))
+    except Exception:  # noqa: BLE001
+        daily_enabled = True
     for schedule in BackupSchedule.objects.filter(is_active=True).select_related("owner", "destination"):
+        if (
+            not daily_enabled
+            and schedule.frequency == BackupSchedule.Frequency.DAILY
+        ):
+            continue
         if schedule.last_run_at and (now - schedule.last_run_at).total_seconds() < 550:
             continue
         due = False

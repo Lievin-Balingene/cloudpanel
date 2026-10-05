@@ -2,6 +2,8 @@ import { FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
+import { usePanelTweaks } from "@/lib/panelTweaks";
+import { useAuthStore } from "@/stores/auth";
 import { IconAction } from "@/components/ui/IconAction";
 import { Modal } from "@/components/ui/Modal";
 import { EmptyState, PageHeader, StatusDot } from "@/components/ui/PageChrome";
@@ -107,6 +109,10 @@ function IniFields({
 
 export function PhpManager({ title }: { title: string }) {
   const qc = useQueryClient();
+  const user = useAuthStore((s) => s.user);
+  const { tweaks } = usePanelTweaks();
+  const canEditIni =
+    user?.role === "administrator" || user?.role === "reseller" || tweaks.allow_ini_edit;
   const { data: overview } = useQuery({
     queryKey: ["php-overview"],
     queryFn: () => apiRequest<PhpOverview>("/php/overview/"),
@@ -387,15 +393,17 @@ export function PhpManager({ title }: { title: string }) {
                 </td>
                 <td className="px-3 py-2">
                   <div className="flex gap-1">
-                    <IconAction
-                      label={`Éditer php.ini ${sel.relative_path}`}
-                      onClick={() => {
-                        setEditSel(sel);
-                        setEditIni(iniFromSelector(sel));
-                      }}
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </IconAction>
+                    {canEditIni ? (
+                      <IconAction
+                        label={`Éditer php.ini ${sel.relative_path}`}
+                        onClick={() => {
+                          setEditSel(sel);
+                          setEditIni(iniFromSelector(sel));
+                        }}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </IconAction>
+                    ) : null}
                     <IconAction
                       label={`Supprimer le sélecteur ${sel.relative_path}`}
                       danger

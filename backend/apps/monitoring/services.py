@@ -312,3 +312,45 @@ def overview_for(_user: User | None = None) -> dict[str, Any]:
         "latest_snapshot": latest_snapshot_metrics(),
         "cooldown_default": int(getattr(settings, "VZONE_ALERT_COOLDOWN_MINUTES", 30)),
     }
+
+
+def sync_tweak_alert_rules(tweaks: dict[str, Any]) -> None:
+    """Crée / met à jour les règles système dérivées des Tweak Settings."""
+    disk_pct = float(tweaks.get("notify_disk_warn_pct") or 85)
+    disk_rule, _ = AlertRule.objects.get_or_create(
+        name="[Tweak] Disk warning",
+        defaults={
+            "metric": AlertRule.Metric.DISK_PERCENT,
+            "operator": AlertRule.Operator.GTE,
+            "threshold": disk_pct,
+            "severity": AlertRule.Severity.WARNING,
+            "cooldown_minutes": 60,
+            "notify_email": True,
+            "is_active": True,
+            "notes": "Géré automatiquement via Tweak Settings",
+        },
+    )
+    disk_rule.threshold = disk_pct
+    disk_rule.is_active = True
+    disk_rule.save(update_fields=["threshold", "is_active", "updated_at"])
+
+    service_on = bool(tweaks.get("notify_service_down", True))
+    for svc in ("nginx", "ols", "postfix", "dovecot", "redis"):
+        rule, _ = AlertRule.objects.get_or_create(
+            name=f"[Tweak] Service down: {svc}",
+            defaults={
+                "metric": AlertRule.Metric.SERVICE_DOWN,
+                "operator": AlertRule.Operator.GTE,
+                "threshold": 1.0,
+                "service_name": svc,
+                "severity": AlertRule.Severity.CRITICAL,
+                "cooldown_minutes": 15,
+                "notify_email": True,
+                "is_active": service_on,
+                "notes": "Géré automatiquement via Tweak Settings",
+            },
+        )
+        if rule.is_active != service_on or rule.service_name != svc:
+            rule.is_active = service_on
+            rule.service_name = svc
+            rule.save(update_fields=["is_active", "service_name", "updated_at"])

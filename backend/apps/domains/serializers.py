@@ -119,7 +119,7 @@ class DomainCreateSerializer(serializers.Serializer):
     ipv6_address = serializers.IPAddressField(
         protocol="IPv6", required=False, allow_null=True, allow_blank=True
     )
-    create_dns_zone = serializers.BooleanField(default=True)
+    create_dns_zone = serializers.BooleanField(required=False, allow_null=True, default=None)
     document_root = serializers.CharField(required=False, allow_blank=True, default="")
     notes = serializers.CharField(required=False, allow_blank=True, default="")
     web_engine = serializers.ChoiceField(

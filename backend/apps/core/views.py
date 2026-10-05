@@ -103,6 +103,15 @@ class WebTerminalAccessView(APIView):
             if assignment and assignment.package and assignment.package.allow_ssh:
                 allowed = True
                 reason = "Autorisé par le package."
+            else:
+                try:
+                    from apps.server_setup.tweak_settings import get_tweak
+
+                    if bool(get_tweak("allow_shell_by_default", False)):
+                        allowed = True
+                        reason = "Autorisé par Tweak Settings (shell jailed par défaut)."
+                except Exception:  # noqa: BLE001
+                    pass
         jail = (
             getattr(user, "system_username", None) or getattr(user, "username", "") or ""
         ).strip().lower()

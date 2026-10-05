@@ -1,8 +1,9 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Languages, Mail, Moon, ShieldCheck, UserRound } from "lucide-react";
 import { apiRequest } from "@/lib/api";
+import { usePanelTweaks } from "@/lib/panelTweaks";
 import { PageHeader, StatusDot } from "@/components/ui/PageChrome";
 import { useAuthStore } from "@/stores/auth";
 
@@ -13,12 +14,17 @@ interface SecurityMe {
 
 export function PreferencesManager({ title }: { title: string }) {
   const user = useAuthStore((state) => state.user);
+  const { tweaks } = usePanelTweaks();
   const [language, setLanguage] = useState(() => localStorage.getItem("vzone-lang") || "fr");
   const [saved, setSaved] = useState(false);
   const { data: security } = useQuery({
     queryKey: ["security-me"],
     queryFn: () => apiRequest<SecurityMe>("/security/me/"),
   });
+
+  useEffect(() => {
+    setLanguage(tweaks.panel_locale);
+  }, [tweaks.panel_locale]);
 
   function saveLanguage(e: FormEvent) {
     e.preventDefault();
@@ -37,6 +43,14 @@ export function PreferencesManager({ title }: { title: string }) {
           { label: "Langue", value: language.toUpperCase() },
         ]}
       />
+      {tweaks.enable_2fa_prompt && !security?.two_factor_enabled && user?.role === "administrator" ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+          Tweak Settings recommande d&apos;activer la 2FA pour les administrateurs.{" "}
+          <Link to="/panel/security" className="font-semibold underline">
+            Configurer la 2FA
+          </Link>
+        </div>
+      ) : null}
       <div className="grid gap-4 lg:grid-cols-2">
         <section className="vz-panel space-y-4 p-4 sm:p-5">
           <div className="flex items-center gap-2">
@@ -71,7 +85,8 @@ export function PreferencesManager({ title }: { title: string }) {
             </select>
           </label>
           <p className="text-xs text-cp-muted">
-            Cette préférence est enregistrée dans ce navigateur. L’interface française reste la langue actuelle du panneau.
+            La langue du panneau est aussi pilotée par Tweak Settings (UI → Langue). Ce réglage navigateur
+            reste un complément local.
           </p>
           <div className="flex items-center gap-3">
             <button className="vz-btn-primary">Enregistrer</button>

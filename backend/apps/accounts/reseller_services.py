@@ -81,12 +81,9 @@ def _package_max_accounts(reseller: User) -> int | None:
 def _global_tweak_max_accounts() -> int:
     """Plafond global Tweak Settings (0 = pas de plafond global)."""
     try:
-        from apps.server_setup.models import ServerSetup
-        from apps.server_setup.tweak_settings import merge_tweaks
+        from apps.server_setup.tweak_settings import get_tweak
 
-        setup = ServerSetup.get_solo()
-        values = merge_tweaks(setup.tweak_settings)
-        return int(values.get("max_accounts_per_reseller") or 0)
+        return int(get_tweak("max_accounts_per_reseller", 0) or 0)
     except Exception:  # noqa: BLE001
         return 0
 

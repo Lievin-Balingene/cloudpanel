@@ -634,10 +634,11 @@ def create_mail_domain(
     owner: User,
     name: str,
     domain_id: int | None = None,
-    max_quota_mb: int = 1024,
+    max_quota_mb: int | None = None,
     enable_dns: bool = True,
 ) -> MailDomain:
     from apps.domains.models import Domain
+    from apps.server_setup.tweak_settings import get_tweak
 
     hostname = name.strip().lower().rstrip(".")
     if MailDomain.objects.filter(name=hostname).exists():
@@ -647,18 +648,25 @@ def create_mail_domain(
         domain_obj = Domain.objects.filter(pk=domain_id, owner=owner).first()
         if domain_obj is None and owner.role == User.Role.ADMINISTRATOR:
             domain_obj = Domain.objects.filter(pk=domain_id).first()
+    if max_quota_mb is None:
+        max_quota_mb = max(10, int(get_tweak("max_mailbox_mb", 1024) or 1024))
+    want_spf = bool(get_tweak("require_spf_on_create", True))
+    want_dkim = bool(get_tweak("require_dkim_on_create", True))
     md = MailDomain.objects.create(
         owner=owner,
         name=hostname,
         domain=domain_obj,
         max_quota_mb=max_quota_mb,
-        spf_record=default_spf(hostname),
+        spf_record=default_spf(hostname) if want_spf else "",
     )
-    # DKIM dès la création — indispensable pour éviter le spam
-    enable_dkim(md)
+    if want_dkim:
+        enable_dkim(md)
+    elif want_spf and enable_dns:
+        try:
+            sync_mail_dns(md)
+        except Exception:  # noqa: BLE001
+            pass
     if not enable_dns:
-        # enable_dkim a déjà sync DNS ; OK même si le client n'a pas demandé
-        # (records nécessaires à la délivrabilité)
         pass
     return md
 

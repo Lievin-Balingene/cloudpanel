@@ -23,6 +23,7 @@ import {
 import { apiRequest } from "@/lib/api";
 import type { DashboardOverview } from "@/types";
 import { formatBytes } from "@/lib/format";
+import { usePanelI18n, usePanelTweaks } from "@/lib/panelTweaks";
 import { useState } from "react";
 
 type HubLink = { to: string; label: string };
@@ -227,6 +228,9 @@ export function WhmHomePage() {
     refetchInterval: 10000,
   });
   const [copied, setCopied] = useState(false);
+  const { tweaks } = usePanelTweaks();
+  const t = usePanelI18n();
+  const compact = tweaks.compact_home_buttons;
 
   const m = data?.metrics;
   const stats = data?.statistics;
@@ -244,6 +248,10 @@ export function WhmHomePage() {
     }
   }
 
+  const quickFiltered = tweaks.show_ai_assistant
+    ? quick
+    : quick.filter((q) => q.to !== "/whm/ai-ops");
+
   return (
     <div className="animate-fade-up">
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
@@ -253,24 +261,32 @@ export function WhmHomePage() {
               V-zone WHM
             </p>
             <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-800 dark:text-ink-50">
-              Accueil V-zone Admin
+              {tweaks.panel_locale === "en" ? "V-zone Admin Home" : "Accueil V-zone Admin"}
             </h1>
-            <p className="mt-1 max-w-2xl text-sm text-slate-500">
-              Comptes, packages, DNS, services et sécurité — panneau d'administration V-zone.
-            </p>
+            <p className="mt-1 max-w-2xl text-sm text-slate-500">{t("homeSubtitle")}</p>
           </div>
 
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            {quick.map((tool) => (
+            {quickFiltered.map((tool) => (
               <Link
                 key={tool.to + tool.label}
                 to={tool.to}
-                className="group flex items-center gap-2.5 rounded-lg border border-slate-200/90 bg-white px-3 py-2.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition hover:-translate-y-0.5 hover:border-cp-orange/40 hover:shadow-md dark:border-ink-700 dark:bg-ink-950"
+                className={`group flex items-center gap-2.5 rounded-lg border border-slate-200/90 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition hover:-translate-y-0.5 hover:border-cp-orange/40 hover:shadow-md dark:border-ink-700 dark:bg-ink-950 ${
+                  compact ? "px-3 py-2.5" : "px-4 py-4"
+                }`}
               >
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-orange-50 text-cp-orange dark:bg-orange-950/40">
-                  <tool.icon className="h-4 w-4" />
+                <span
+                  className={`flex shrink-0 items-center justify-center rounded-lg bg-orange-50 text-cp-orange dark:bg-orange-950/40 ${
+                    compact ? "h-8 w-8" : "h-11 w-11"
+                  }`}
+                >
+                  <tool.icon className={compact ? "h-4 w-4" : "h-5 w-5"} />
                 </span>
-                <span className="min-w-0 truncate text-sm font-semibold text-slate-800 group-hover:text-cp-link dark:text-ink-50">
+                <span
+                  className={`min-w-0 truncate font-semibold text-slate-800 group-hover:text-cp-link dark:text-ink-50 ${
+                    compact ? "text-sm" : "text-base"
+                  }`}
+                >
                   {tool.label}
                 </span>
               </Link>

@@ -17,12 +17,18 @@ from apps.server_setup.views import (
     RepairStartView,
     RepairsOverviewView,
     ServerSetupView,
+    TweakSettingsPublicView,
     TweakSettingsView,
 )
 
 urlpatterns = [
     path("", ServerSetupView.as_view(), name="server-setup"),
     path("tweak-settings/", TweakSettingsView.as_view(), name="tweak-settings"),
+    path(
+        "tweak-settings/public/",
+        TweakSettingsPublicView.as_view(),
+        name="tweak-settings-public",
+    ),
     path("ip-functions/", IpFunctionsView.as_view(), name="ip-functions"),
     path("ip-functions/extra/", ExtraIpView.as_view(), name="ip-functions-extra"),
     path("ip-functions/change-site/", ChangeSiteIpView.as_view(), name="ip-functions-change-site"),

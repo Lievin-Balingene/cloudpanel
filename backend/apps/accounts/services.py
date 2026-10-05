@@ -59,6 +59,24 @@ def validate_system_username(username: str) -> str:
     return name
 
 
+def _auto_create_dns_zone() -> bool:
+    try:
+        from apps.server_setup.tweak_settings import get_tweak
+
+        return bool(get_tweak("auto_create_dns_zone", True))
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _default_disk_quota_mb() -> int:
+    try:
+        from apps.server_setup.tweak_settings import get_tweak
+
+        return max(100, int(get_tweak("default_quota_mb", 10240) or 10240))
+    except Exception:  # noqa: BLE001
+        return 10240
+
+
 def provision_account_home(user: User) -> Path:
     """
     Crée le home du compte comme cPanel : VZONE_HOME_ROOT/<username>/
@@ -194,7 +212,7 @@ def provision_primary_domain_for_account(
         name=name,
         owner=user,
         domain_type=Domain.DomainType.PRIMARY,
-        create_dns_zone=True,
+        create_dns_zone=_auto_create_dns_zone(),
         create_welcome_index=create_welcome_index,
     )
     if create_welcome_index:

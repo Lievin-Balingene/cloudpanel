@@ -38,6 +38,31 @@ DEFAULT_INI = {
     "date.timezone": "UTC",
 }
 
+
+def _default_ini() -> dict:
+    ini = dict(DEFAULT_INI)
+    try:
+        from apps.server_setup.tweak_settings import get_tweak
+
+        ini["display_errors"] = "On" if bool(get_tweak("display_errors_default", False)) else "Off"
+        if not bool(get_tweak("php_opcache", True)):
+            pass  # extensions list handled separately
+    except Exception:  # noqa: BLE001
+        pass
+    return ini
+
+
+def _default_extensions() -> list:
+    exts = list(DEFAULT_EXTENSIONS)
+    try:
+        from apps.server_setup.tweak_settings import get_tweak
+
+        if not bool(get_tweak("php_opcache", True)) and "opcache" in exts:
+            exts.remove("opcache")
+    except Exception:  # noqa: BLE001
+        pass
+    return exts
+
 DEFAULT_EXTENSIONS = ["mysqli", "pdo_mysql", "gd", "mbstring", "xml", "curl", "zip", "opcache"]
 
 DEFAULT_VERSIONS = (
@@ -77,19 +102,41 @@ def config_root() -> Path:
 def ensure_default_versions() -> list[PhpVersion]:
     """Crée le catalogue de versions si vide."""
     if PhpVersion.objects.exists():
+        # Align default marker with Tweak Settings when possible
+        try:
+            from apps.server_setup.tweak_settings import get_tweak
+
+            wanted = str(get_tweak("default_php_version", "") or "")
+            if wanted and not PhpVersion.objects.filter(version=wanted, is_default=True).exists():
+                match = PhpVersion.objects.filter(version=wanted, is_available=True).first()
+                if match:
+                    PhpVersion.objects.filter(is_default=True).update(is_default=False)
+                    match.is_default = True
+                    match.save(update_fields=["is_default"])
+        except Exception:  # noqa: BLE001
+            pass
         return list(PhpVersion.objects.all())
     created: list[PhpVersion] = []
-    for idx, (ver, binary, sock) in enumerate(DEFAULT_VERSIONS):
+    try:
+        from apps.server_setup.tweak_settings import get_tweak
+
+        preferred = str(get_tweak("default_php_version", "8.2") or "8.2")
+    except Exception:  # noqa: BLE001
+        preferred = "8.2"
+    for ver, binary, sock in DEFAULT_VERSIONS:
         exists = Path(binary).exists() if provision_mode() != "mock" else False
         obj = PhpVersion.objects.create(
             version=ver,
             binary_path=binary if exists else "",
             fpm_socket=sock if exists else "",
             is_available=True,
-            is_default=(idx == 2),  # 8.3 par défaut
+            is_default=(ver == preferred),
             notes="provisionné automatiquement" if not exists else "détecté",
         )
         created.append(obj)
+    if not any(c.is_default for c in created) and created:
+        created[-1].is_default = True
+        created[-1].save(update_fields=["is_default"])
     return created
 
 
@@ -263,8 +310,8 @@ def create_selector(
         relative_path=rel,
         domain_name=domain_name.strip().lower(),
         handler=handler,
-        ini_settings=ini_settings if ini_settings is not None else dict(DEFAULT_INI),
-        extensions=extensions if extensions is not None else list(DEFAULT_EXTENSIONS),
+        ini_settings=ini_settings if ini_settings is not None else _default_ini(),
+        extensions=extensions if extensions is not None else _default_extensions(),
         notes=notes,
     )
     write_user_ini(selector, app_root)
