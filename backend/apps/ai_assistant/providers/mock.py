@@ -2455,19 +2455,35 @@ def _detect_intent(
             "blog": 6,
             "404": 8,
             "a-propos": 8,
+            "a propos": 8,
+            "apropo": 8,
             "accueil": 5,
             "nature.7une": 8,
+            "wordpress": 4,
+            "wordpresse": 4,
         },
     )
-    wpish = beautify_score >= 5 or any(
-        k in text_n for k in ("wordpress", "wordpresse", " wp", "wp ", "nature.7une")
+    # Toute demande design/pages/WP → beautify (jamais jail)
+    wpish = beautify_score >= 4 or any(
+        k in text_n
+        for k in (
+            "wordpress",
+            "wordpresse",
+            " wp",
+            "wp ",
+            "nature.7une",
+            "a-propos",
+            "a propos",
+            "apropo",
+            "404",
+        )
     )
-    if wpish and beautify_score >= 4 and "beautify_wordpress_site" in tool_names:
+    if wpish and beautify_score >= 3 and "beautify_wordpress_site" in tool_names:
         host = _extract_hostname(last_user_l) or "nature.7une.info"
         return {
             "say": (
                 f"Compris — j'améliore le design, les pages et le blog de **{host}** "
-                "(thème nature, menu, permaliens)…"
+                "(thème nature, menu, permaliens). Clique **Approuver** ensuite."
             ),
             "tools": [
                 ("beautify_wordpress_site", {"domain_name": host, "style": "nature"}),

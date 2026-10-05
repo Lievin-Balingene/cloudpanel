@@ -21,7 +21,7 @@ from apps.ai_assistant.models import (
     Message,
     PendingAction,
 )
-from apps.ai_assistant.providers import ChatMessage, get_provider
+from apps.ai_assistant.providers import ChatMessage, ToolCallRequest, get_provider
 from apps.ai_assistant.services.provider_resolve import get_provider_for_user, provider_source_for_user
 from apps.ai_assistant.services.redaction import redact_obj, redact_text, strip_prompt_injection
 from apps.ai_assistant.tools.helpers import (
@@ -172,9 +172,9 @@ SYSTEM_PROMPT = """Tu es **V-zone AI**, assistant premium du panneau d'hébergem
 - Sous-domaine (`nature.exemple.com`) : passe `name` (+ optionnel `domain_type=subdomain`) ;
   le parent est auto-détecté — pas besoin de `parent_id` si le domaine parent existe.
 - SSL / WordPress : tu peux utiliser `domain_name` (pas seulement `domain_id`).
-- WordPress design / pages / 404 / blog : **uniquement** `beautify_wordpress_site` (domain_name=…).
-  **Interdit** : `run_jail_command`, `list_files`, `read_file_content`, `sync_python_passenger_wsgi`.
-- Actions sensibles : l'utilisateur doit cliquer **Approuver** dans le panneau — ne simule pas une confirmation.
+- WordPress design / pages / 404 / blog / a-propos : **uniquement** `beautify_wordpress_site` (domain_name=…).
+  **Interdit** : `run_jail_command`, `list_files`, `read_file_content`, `write_file`, `sync_python_passenger_wsgi`, wp-cli via jail.
+- Actions sensibles : l'utilisateur doit cliquer **Approuver** dans la carte orange — pas « oui » dans le chat, pas « Continuer ».
 - Si un outil renvoie `pending_confirmation: true` ou `executed: false` : l'action **n'a PAS été appliquée**.
   Dis clairement d'**Approuver** ; **interdit** de dire « c'est fait », « modifié », « appliqué », « terminé ».
 - Ne dis jamais « c'est fait » sans tool **réellement exécuté** (`executed: true` ou résultat sans `pending_confirmation`).
@@ -194,6 +194,89 @@ SYSTEM_PROMPT = """Tu es **V-zone AI**, assistant premium du panneau d'hébergem
 ## Contexte page
 - Indice faible seulement si le message est vague (« aide-moi », « je suis sur cette page »).
 """
+
+
+_WP_DESIGN_HINTS = (
+    "beautify",
+    "ameliore",
+    "améliorer",
+    "ameliorer",
+    "embellis",
+    "embellir",
+    "design",
+    "theme",
+    "thème",
+    "blog",
+    "404",
+    "a-propos",
+    "a propos",
+    "apropo",
+    "page d'accueil",
+    "page d accueil",
+    "accueil",
+    "biodiversite",
+    "biodiversité",
+    "randonne",
+    "galerie",
+    "agenda",
+    "nature.7une",
+    "wordpress",
+    "wordpresse",
+    "permaliens",
+    "permalink",
+)
+
+
+def _wants_wp_design(text: str) -> bool:
+    t = (text or "").lower()
+    if not t:
+        return False
+    if not any(h in t for h in _WP_DESIGN_HINTS):
+        return False
+    # « liste mes sites wordpress » ≠ design
+    if any(x in t for x in ("liste", "lister", "montre", "combien", "status", "statut")) and not any(
+        x in t
+        for x in (
+            "ameliore",
+            "améliorer",
+            "ameliorer",
+            "embellis",
+            "design",
+            "404",
+            "a-propos",
+            "a propos",
+            "blog",
+            "page",
+            "theme",
+            "thème",
+        )
+    ):
+        return False
+    return True
+
+
+def _extract_domain_for_wp(text: str) -> str:
+    from apps.ai_assistant.providers.mock import _extract_hostname
+
+    return (_extract_hostname(text) or "nature.7une.info").strip().lower()
+
+
+def _rewrite_tool_for_wp_design(tool_name: str, args: dict, user_text: str) -> tuple[str, dict]:
+    """Force beautify_wordpress_site si l'intent est design WP (bloque jail/files)."""
+    blocked = {
+        "run_jail_command",
+        "list_files",
+        "read_file_content",
+        "write_file",
+        "search_account_files",
+        "sync_python_passenger_wsgi",
+    }
+    if tool_name not in blocked:
+        return tool_name, args
+    if not _wants_wp_design(user_text):
+        return tool_name, args
+    host = str(args.get("domain_name") or "").strip() or _extract_domain_for_wp(user_text)
+    return "beautify_wordpress_site", {"domain_name": host, "style": "nature"}
 
 
 def run_assistant_turn(
@@ -430,6 +513,25 @@ def run_assistant_turn(
 
             args = tc.arguments if isinstance(tc.arguments, dict) else {}
             args = _sanitize_tool_args(args)
+            # WP design : réécrit jail/files → beautify_wordpress_site
+            rewritten_name, args = _rewrite_tool_for_wp_design(tc.name, args, safe_user)
+            if rewritten_name != tc.name:
+                tool = get_tool(rewritten_name)
+                if tool is None:
+                    payload = {
+                        "ok": False,
+                        "error": f"Tool non autorisée: {rewritten_name}",
+                        "code": "unknown_tool",
+                    }
+                    _append_tool_result(messages, conversation, tc, payload)
+                    tool_trace.append({"name": rewritten_name, "ok": False, "error": "unknown_tool"})
+                    continue
+                tc = ToolCallRequest(
+                    id=tc.id,
+                    name=rewritten_name,
+                    arguments=args,
+                    thought_signature=getattr(tc, "thought_signature", "") or "",
+                )
             # Ciblage compte client (WHM) : username explicite ou working_account
             owner, cleaned_args, owner_err = _resolve_tool_owner(
                 user, conversation, args, tool_name=tool.spec.name
@@ -699,7 +801,12 @@ def run_assistant_turn(
         elif "approuver" not in low:
             final_content = (final_content or "").rstrip() + confirm_note
 
-    suggestions = _suggest_followups(safe_user, final_content, ui)
+    # Pas de « Continuer » pendant qu'une carte Approuver attend — évite la confusion.
+    suggestions = (
+        []
+        if pending_actions
+        else _suggest_followups(safe_user, final_content, ui)
+    )
     assistant_msg = Message.objects.create(
         conversation=conversation,
         role=Message.Role.ASSISTANT,

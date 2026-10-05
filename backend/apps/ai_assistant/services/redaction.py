@@ -11,8 +11,10 @@ SECRET_KEY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Pas de « token » ici : les jetons d'approbation UI (action_token / token)
+# doivent rester lisibles pour Approuver. Les secrets *token* passent par SECRET_KEY_RE.
 SECRET_VALUE_RE = re.compile(
-    r"(?i)(password|passwd|secret|token|api[_-]?key|authorization|bearer)\s*[:=]\s*['\"]?[^\s'\"]+",
+    r"(?i)(password|passwd|secret|api[_-]?key|authorization|bearer)\s*[:=]\s*['\"]?[^\s'\"]+",
 )
 
 REDACTED = "***REDACTED***"

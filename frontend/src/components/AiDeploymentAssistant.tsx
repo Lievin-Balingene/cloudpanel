@@ -575,8 +575,10 @@ export function AiDeploymentAssistant() {
       });
     },
     onSuccess: (data) => {
-      setPending((prev) => mergePendingActions(prev, data.pending_actions || []));
-      setSuggestions(data.suggestions || []);
+      const nextPending = data.pending_actions || [];
+      setPending((prev) => mergePendingActions(prev, nextPending));
+      // Pas de « Continuer » tant qu'il faut Approuver
+      setSuggestions(nextPending.length ? [] : data.suggestions || []);
       const names = (data.tool_trace || []).map((t) => String(t?.name || "")).filter(Boolean);
       if (names.length) setToolNames((prev) => [...prev, ...names]);
       const full = data.message.content || "";
@@ -1280,7 +1282,7 @@ export function AiDeploymentAssistant() {
                       <ThinkingCard pageLabel={pageCtx.label} />
                     )}
 
-                    {suggestions.length > 0 && !isBusy && (
+                    {suggestions.length > 0 && !isBusy && pending.length === 0 && (
                       <div className="vz-ai-suggestions">
                         <p className="vz-ai-suggestions-label">Continuer</p>
                         <div className="flex flex-wrap gap-1.5">
