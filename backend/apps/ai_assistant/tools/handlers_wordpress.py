@@ -22,6 +22,7 @@ def list_wordpress_sites(user: User, params: dict[str, Any]) -> dict[str, Any]:
             "id": s.pk,
             "title": s.title,
             "domain_id": s.domain_id,
+            "domain_name": s.domain.name if s.domain_id else "",
             "site_url": s.site_url,
             "status": s.status,
             "admin_url": s.admin_url,
@@ -86,6 +87,57 @@ def install_wordpress(user: User, params: dict[str, Any]) -> dict[str, Any]:
             "password_set": True,
             "note": "Mot de passe admin non affiché (sécurité). Utilisez celui fourni ou réinitialisez via WP.",
         }
+
+    return run_service(_run)
+
+
+@register_tool(
+    name="beautify_wordpress_site",
+    description=(
+        "Améliore le design & UX d'un site WordPress existant (confirmation requise) : "
+        "installe/active un thème léger (Astra par défaut), CSS nature immersif, "
+        "page d'accueil hero, pages À propos/Galerie/Contact, menu, articles exemples. "
+        "Cible via site_id ou domain_name (ex: nature.7une.info)."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "site_id": {"type": "integer"},
+            "domain_name": {"type": "string"},
+            "style": {
+                "type": "string",
+                "enum": ["nature"],
+                "description": "Preset visuel (nature = vert forêt / hero immersif)",
+            },
+            "theme": {
+                "type": "string",
+                "description": "Slug thème wordpress.org (défaut: astra)",
+            },
+        },
+        "additionalProperties": False,
+    },
+    dangerous=True,
+)
+def beautify_wordpress_site(user: User, params: dict[str, Any]) -> dict[str, Any]:
+    from apps.wordpress.services import beautify_wordpress_site as svc
+    from apps.wordpress.services import resolve_site
+
+    site = resolve_site(
+        user,
+        site_id=require_int(params, "site_id"),
+        domain_name=require_str(params, "domain_name", max_len=253),
+    )
+    if not site:
+        return err(
+            "Site WordPress introuvable (passez site_id ou domain_name, "
+            "ex: nature.7une.info).",
+            "not_found",
+        )
+    style = require_str(params, "style", default="nature") or "nature"
+    theme = require_str(params, "theme", default="astra", max_len=40) or "astra"
+
+    def _run():
+        return svc(site, style=style, theme=theme)
 
     return run_service(_run)
 
