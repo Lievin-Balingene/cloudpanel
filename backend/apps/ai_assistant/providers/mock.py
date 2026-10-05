@@ -2400,6 +2400,18 @@ def _intent_from_scores(
     if not candidates:
         return None
 
+    if any(c[0] == "beautify_wp" for c in candidates):
+        candidates = [
+            c
+            for c in candidates
+            if c[0]
+            not in {
+                "list_files",
+                "search_files",
+                "list_wp",
+            }
+        ] or candidates
+
     candidates.sort(key=lambda x: x[1], reverse=True)
     _best_id, best_score, _sec, payload = candidates[0]
     if best_score < 4:
@@ -2425,9 +2437,46 @@ def _detect_intent(
     text_n = _norm_text(last_user_l)
     page_help = _page_help_only(text_n)
 
+    beautify_score = _score_keywords(
+        text_n,
+        {
+            "beautify": 10,
+            "ameliore": 9,
+            "améliorer": 9,
+            "ameliorer": 9,
+            "design": 8,
+            "theme": 7,
+            "thème": 7,
+            "ux": 7,
+            "ui": 6,
+            "embellis": 10,
+            "embellir": 10,
+            "pages": 5,
+            "blog": 6,
+            "404": 8,
+            "a-propos": 8,
+            "accueil": 5,
+            "nature.7une": 8,
+        },
+    )
+    wpish = beautify_score >= 5 or any(
+        k in text_n for k in ("wordpress", "wordpresse", " wp", "wp ", "nature.7une")
+    )
+    if wpish and beautify_score >= 4 and "beautify_wordpress_site" in tool_names:
+        host = _extract_hostname(last_user_l) or "nature.7une.info"
+        return {
+            "say": (
+                f"Compris — j'améliore le design, les pages et le blog de **{host}** "
+                "(thème nature, menu, permaliens)…"
+            ),
+            "tools": [
+                ("beautify_wordpress_site", {"domain_name": host, "style": "nature"}),
+            ],
+        }
+
     # Commande jail whitelistée AVANT lifecycle (« lance ls » ≠ start app)
     jail_id = _resolve_jail_command_id(last_user_l)
-    if jail_id and "run_jail_command" in tool_names:
+    if jail_id and "run_jail_command" in tool_names and not wpish:
         args: dict[str, Any] = {"command_id": jail_id}
         if _jail_needs_app(jail_id):
             app_id = _extract_app_id(last_user_l) or _infer_app_id_from_history(
@@ -2934,8 +2983,8 @@ def _synthesize_tools(messages: list[ChatMessage]) -> str:
 
         if data.get("pending_confirmation"):
             parts.append(
-                f"Action **`{name}`** en attente de confirmation dans le panneau "
-                f"(bouton **Exécuter**)."
+                f"Action **`{name}`** en attente — clique **Approuver** dans la carte "
+                f"orange ci-dessous (ou dans AI Operations)."
             )
             continue
 
@@ -2968,6 +3017,26 @@ def _synthesize_tools(messages: list[ChatMessage]) -> str:
             parts.append(_format_databases(data))
         elif name == "list_wordpress_sites":
             parts.append(_format_wordpress_sites(data))
+        elif name == "beautify_wordpress_site":
+            payload = _payload(data)
+            if data.get("ok"):
+                pages = payload.get("pages") if isinstance(payload.get("pages"), dict) else {}
+                urls = payload.get("page_urls") if isinstance(payload.get("page_urls"), dict) else {}
+                lines = [
+                    f"**Design nature appliqué** sur {payload.get('domain') or 'le site'}.",
+                    "",
+                    f"- Pages : {len(pages)}",
+                    f"- Articles : {payload.get('posts_created', 0)}",
+                ]
+                for slug in ("accueil", "a-propos", "blog", "contact"):
+                    url = urls.get(slug)
+                    if url:
+                        lines.append(f"- [{slug}]({url})")
+                parts.append("\n".join(lines))
+            else:
+                parts.append(
+                    f"**Échec beautify** : {data.get('error') or payload.get('error') or 'erreur'}"
+                )
         elif name == "list_ftp_accounts":
             parts.append(_format_simple_list(data, "FTP", "accounts", "username"))
         elif name == "list_backups":

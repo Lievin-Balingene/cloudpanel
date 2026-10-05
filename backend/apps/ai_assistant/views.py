@@ -303,6 +303,7 @@ class PendingActionsListView(APIView):
         ).order_by("-created_at")[:50]
         items = [
             {
+                "action_token": a.token,
                 "token": a.token,
                 "tool_name": a.tool_name,
                 "description": a.description,

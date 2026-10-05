@@ -628,11 +628,21 @@ def _wp_out(proc: subprocess.CompletedProcess) -> str:
     return ((proc.stdout or "") + (proc.stderr or "")).strip()
 
 
-def _wp_eval(site: WordPressSite, php_code: str, *, timeout: int = 180) -> str:
-    """Exécute du PHP via wp eval-file (évite les limites argv / IndexError)."""
-    import tempfile
+def _vz_pages_dir(docroot: Path) -> Path:
+    d = docroot / ".vz-pages"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
-    docroot = Path(site.document_root)
+
+def _write_vz_page_html(docroot: Path, slug: str, html: str) -> Path:
+    path = _vz_pages_dir(docroot) / f"{slug}.html"
+    path.write_text(html, encoding="utf-8")
+    return path
+
+
+def _wp_eval(site: WordPressSite, php_code: str, *, timeout: int = 180) -> str:
+    """Exécute du PHP via wp eval-file (chemin relatif au docroot)."""
+    docroot = Path(site.document_root).resolve()
     if not docroot.is_dir():
         raise VZoneAPIException(
             detail="Document root WordPress invalide.",
@@ -642,29 +652,128 @@ def _wp_eval(site: WordPressSite, php_code: str, *, timeout: int = 180) -> str:
     code = (php_code or "").strip()
     if not code:
         return ""
-    tmp_path: Path | None = None
+    run_path = _vz_pages_dir(docroot) / "_eval.php"
+    run_path.write_text("<?php\n" + code + "\n", encoding="utf-8")
     try:
-        fd, name = tempfile.mkstemp(prefix="vz-wp-eval-", suffix=".php", dir=str(docroot))
-        os.close(fd)
-        tmp_path = Path(name)
-        tmp_path.write_text("<?php\n" + code + "\n", encoding="utf-8")
-        try:
-            os.chmod(tmp_path, 0o640)
-        except OSError:
-            pass
+        os.chmod(run_path, 0o640)
+    except OSError:
+        pass
+    rel = run_path.relative_to(docroot).as_posix()
+    proc = _run_wp(
+        ["eval-file", rel],
+        path=docroot,
+        php_version=site.php_version or "",
+        timeout=timeout,
+    )
+    return _wp_out(proc)
+
+
+def _wp_page_id_by_slug(docroot: Path, slug: str, *, php_ver: str = "") -> int:
+    try:
         proc = _run_wp(
-            ["eval-file", str(tmp_path)],
+            [
+                "post",
+                "list",
+                "--post_type=page",
+                f"--name={slug}",
+                "--field=ID",
+                "--format=ids",
+            ],
             path=docroot,
-            php_version=site.php_version or "",
-            timeout=timeout,
+            php_version=php_ver,
         )
-        return _wp_out(proc)
-    finally:
-        if tmp_path is not None:
-            try:
-                tmp_path.unlink(missing_ok=True)
-            except OSError:
-                pass
+        out = (proc.stdout or "").strip()
+        return int(out) if out.isdigit() else 0
+    except VZoneAPIException:
+        return 0
+
+
+def _upsert_page_from_file(site: WordPressSite, slug: str, title: str, html: str) -> int:
+    """Crée/met à jour une page WP depuis un fichier HTML dans .vz-pages/."""
+    docroot = Path(site.document_root).resolve()
+    _write_vz_page_html(docroot, slug, html)
+    php = (
+        f"$slug = {slug!r};\n"
+        f"$title = {title!r};\n"
+        f"$html = file_get_contents({repr(str(docroot / '.vz-pages' / f'{slug}.html'))});\n"
+        "if ($html === false) { echo '0'; return; }\n"
+        "$page = get_page_by_path($slug, OBJECT, 'page');\n"
+        "if (!$page) { $page = get_page_by_path($slug); }\n"
+        "if ($page) {\n"
+        "  wp_update_post(array(\n"
+        "    'ID' => $page->ID, 'post_title' => $title, 'post_name' => $slug,\n"
+        "    'post_content' => $html, 'post_status' => 'publish',\n"
+        "  ));\n"
+        "  echo (int)$page->ID;\n"
+        "} else {\n"
+        "  $id = wp_insert_post(array(\n"
+        "    'post_title' => $title, 'post_name' => $slug, 'post_content' => $html,\n"
+        "    'post_status' => 'publish', 'post_type' => 'page', 'post_author' => 1,\n"
+        "  ));\n"
+        "  echo (int)$id;\n"
+        "}\n"
+    )
+    out = (_wp_eval(site, php) or "").strip()
+    m = re.search(r"(\d+)", out or "")
+    pid = int(m.group(1)) if m else 0
+    if not pid:
+        pid = _wp_page_id_by_slug(docroot, slug, php_ver=site.php_version or "")
+    return pid
+
+
+def _upsert_post(site: WordPressSite, slug: str, title: str, excerpt: str, body: str) -> int:
+    docroot = Path(site.document_root).resolve()
+    php = (
+        f"$slug = {slug!r};\n"
+        f"$title = {title!r};\n"
+        f"$excerpt = {excerpt!r};\n"
+        f"$content = {body!r};\n"
+        "global $wpdb;\n"
+        "$id = (int)$wpdb->get_var($wpdb->prepare(\n"
+        "  \"SELECT ID FROM {$wpdb->posts} WHERE post_name=%s AND post_type='post' "
+        "AND post_status='publish' LIMIT 1\", $slug));\n"
+        "if (!$id) {\n"
+        "  $id = (int)$wpdb->get_var($wpdb->prepare(\n"
+        "    \"SELECT ID FROM {$wpdb->posts} WHERE post_title=%s AND post_type='post' "
+        "AND post_status='publish' LIMIT 1\", $title));\n"
+        "}\n"
+        "if ($id) {\n"
+        "  wp_update_post(array('ID'=>$id,'post_content'=>$content,'post_excerpt'=>$excerpt,"
+        "'post_name'=>$slug,'post_status'=>'publish'));\n"
+        "  echo $id;\n"
+        "} else {\n"
+        "  $nid = wp_insert_post(array(\n"
+        "    'post_title'=>$title,'post_name'=>$slug,'post_content'=>$content,\n"
+        "    'post_excerpt'=>$excerpt,'post_status'=>'publish','post_type'=>'post','post_author'=>1,\n"
+        "  ));\n"
+        "  if ($nid && !is_wp_error($nid)) {\n"
+        "    $cat = get_cat_ID('Nature');\n"
+        "    if ($cat) { wp_set_post_categories($nid, array($cat)); }\n"
+        "    echo (int)$nid;\n"
+        "  } else { echo 0; }\n"
+        "}\n"
+    )
+    try:
+        out = (_wp_eval(site, php) or "").strip()
+    except VZoneAPIException:
+        return 0
+    m = re.search(r"(\d+)", out or "")
+    return int(m.group(1)) if m else 0
+
+
+def _flush_wp_rewrites(site: WordPressSite) -> None:
+    docroot = Path(site.document_root)
+    php_ver = site.php_version or ""
+    for args in (
+        ["option", "update", "permalink_structure", "/%postname%/"],
+        ["rewrite", "structure", "/%postname%/", "--hard"],
+        ["rewrite", "flush", "--hard"],
+        ["cache", "flush"],
+    ):
+        try:
+            _run_wp(args, path=docroot, php_version=php_ver)
+        except VZoneAPIException:
+            pass
 
 
 _NATURE_CSS = """
@@ -858,6 +967,38 @@ button, .wp-block-button__link, .ast-button {
 button:hover, .wp-block-button__link:hover, .ast-button:hover {
   transform: translateY(-1px);
 }
+.vz-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1rem;
+  max-width: 1100px;
+  margin: -1.5rem auto 2.5rem;
+  padding: 0 1.25rem;
+}
+.vz-stat {
+  background: #fff;
+  border-radius: 1rem;
+  padding: 1.25rem;
+  text-align: center;
+  border: 1px solid rgba(31,77,46,0.08);
+  box-shadow: 0 8px 24px rgba(26,46,34,0.05);
+}
+.vz-stat strong { display: block; font-size: 1.75rem; color: var(--vz-moss); }
+.vz-stat span { font-size: 0.85rem; color: #4a5d52; }
+.vz-blog-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.25rem; }
+.vz-blog-card {
+  background: #fff;
+  border-radius: 1.25rem;
+  overflow: hidden;
+  border: 1px solid rgba(31,77,46,0.08);
+  box-shadow: 0 10px 32px rgba(26,46,34,0.06);
+  transition: transform .2s ease;
+}
+.vz-blog-card:hover { transform: translateY(-3px); }
+.vz-blog-card img { width: 100%; height: 160px; object-fit: cover; display: block; }
+.vz-blog-card div { padding: 1.15rem; }
+.vz-blog-card h3 { margin: 0 0 0.35rem; font-size: 1.05rem; }
+.vz-blog-card p { margin: 0; font-size: 0.9rem; color: #4a5d52; }
 @media (max-width: 640px) {
   .vz-btn--ghost { display: block; margin: 0.75rem 0 0; text-align: center; }
 }
@@ -873,36 +1014,65 @@ _HOME_HTML = """
     <p>Explorez forets, faune et paysages — un espace immersif pour ressentir, comprendre et proteger le vivant.</p>
     <p>
       <a class="vz-btn" href="#decouvrir">Decouvrir</a>
+      <a class="vz-btn vz-btn--ghost" href="/blog/">Le blog</a>
       <a class="vz-btn vz-btn--ghost" href="/biodiversite/">Biodiversite</a>
-      <a class="vz-btn vz-btn--ghost" href="/randonnees/">Randonnees</a>
     </p>
   </div>
 </div>
+<div class="vz-stats">
+  <div class="vz-stat"><strong>120+</strong><span>Especes observees</span></div>
+  <div class="vz-stat"><strong>48</strong><span>Sentiers recenses</span></div>
+  <div class="vz-stat"><strong>12</strong><span>Actions locales</span></div>
+</div>
 <div class="vz-section" id="decouvrir">
-  <h2>Notre mission</h2>
-  <p class="vz-lead">Sensibiliser a la beaute du monde naturel et transmettre des gestes concrets pour la biodiversite.</p>
+  <h2><span class="vz-leaf"></span>Notre mission</h2>
+  <p class="vz-lead">Sensibiliser a la beaute du monde naturel et transmettre des gestes concrets pour la biodiversite — pres de chez vous et au bout du monde.</p>
   <div class="vz-grid">
     <article class="vz-card">
       <div class="vz-card__icon">F</div>
       <h3>Forets &amp; paysages</h3>
-      <p>Reportages immersifs sur les grands espaces, sentiers et canopees.</p>
+      <p>Reportages immersifs sur les grands espaces, sentiers et canopees qui respirent encore.</p>
     </article>
     <article class="vz-card">
       <div class="vz-card__icon">B</div>
       <h3>Faune &amp; flore</h3>
-      <p>Portraits d'especes, cycles des saisons et interactions du vivant.</p>
+      <p>Portraits d'especes, cycles des saisons et interactions invisibles du vivant.</p>
     </article>
     <article class="vz-card">
       <div class="vz-card__icon">A</div>
       <h3>Agir localement</h3>
-      <p>Idees simples pour jardins, balcons et collectivites.</p>
+      <p>Idees simples pour jardins, balcons et collectivites — chaque geste compte.</p>
     </article>
   </div>
+</div>
+<div class="vz-section">
+  <h2><span class="vz-leaf"></span>Derniers articles</h2>
+  <p class="vz-lead">Le blog nature : recits, conseils et inspirations pour explorer sans abimer.</p>
+  <div class="vz-blog-grid">
+    <a class="vz-blog-card" href="/forets-a-explorer/" style="text-decoration:none;color:inherit">
+      <img src="https://images.unsplash.com/photo-1441974231531-c6227db76b6e?auto=format&amp;fit=crop&amp;w=600&amp;q=80" alt="Foret" />
+      <div><h3>Les plus belles forets</h3><p>Sentiers sous canopee et forets anciennes.</p></div>
+    </a>
+    <a class="vz-blog-card" href="/biodiversite-locale/" style="text-decoration:none;color:inherit">
+      <img src="https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?auto=format&amp;fit=crop&amp;w=600&amp;q=80" alt="Vallee" />
+      <div><h3>Proteger pres de chez soi</h3><p>Haies, mares et plantes locales.</p></div>
+    </a>
+    <a class="vz-blog-card" href="/observer-nature/" style="text-decoration:none;color:inherit">
+      <img src="https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&amp;fit=crop&amp;w=600&amp;q=80" alt="Montagne" />
+      <div><h3>Observer sans deranger</h3><p>Photographier la faune en douceur.</p></div>
+    </a>
+    <a class="vz-blog-card" href="/randonnee-leave-no-trace/" style="text-decoration:none;color:inherit">
+      <img src="https://images.unsplash.com/photo-1551632811-561732d1e306?auto=format&amp;fit=crop&amp;w=600&amp;q=80" alt="Randonnee" />
+      <div><h3>Randonner proprement</h3><p>Checklist leave-no-trace.</p></div>
+    </a>
+  </div>
+  <p style="margin-top:1.5rem"><a class="vz-btn" href="/blog/">Voir tout le blog</a></p>
 </div>
 <div class="vz-cta">
   <h2>Rejoignez l'echappee</h2>
   <p>Des recits, des images et des pistes concretes pour reconnecter les regards a la nature.</p>
   <a class="vz-btn" href="/a-propos/">En savoir plus</a>
+  <a class="vz-btn vz-btn--ghost" href="/agenda/">Agenda ecolo</a>
 </div>
 <!-- /wp:html -->
 """
@@ -1018,22 +1188,92 @@ _AGENDA_HTML = """
 <!-- /wp:html -->
 """
 
+_BLOG_HTML = """
+<!-- wp:html -->
+<div class="vz-section" style="padding-top:2rem">
+  <h2><span class="vz-leaf"></span>Blog Nature</h2>
+  <p class="vz-lead">Articles, guides et recits pour explorer le vivant avec curiosite et respect.</p>
+  <div class="vz-blog-grid">
+    <a class="vz-blog-card" href="/forets-a-explorer/" style="text-decoration:none;color:inherit">
+      <img src="https://images.unsplash.com/photo-1441974231531-c6227db76b6e?auto=format&amp;fit=crop&amp;w=600&amp;q=80" alt="" />
+      <div><h3>Les plus belles forets a explorer</h3><p>Canopees, sentiers et silence.</p></div>
+    </a>
+    <a class="vz-blog-card" href="/biodiversite-locale/" style="text-decoration:none;color:inherit">
+      <img src="https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?auto=format&amp;fit=crop&amp;w=600&amp;q=80" alt="" />
+      <div><h3>Proteger la biodiversite locale</h3><p>Gestes concrets au quotidien.</p></div>
+    </a>
+    <a class="vz-blog-card" href="/observer-nature/" style="text-decoration:none;color:inherit">
+      <img src="https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&amp;fit=crop&amp;w=600&amp;q=80" alt="" />
+      <div><h3>Observer sans deranger</h3><p>Ethique et technique photo.</p></div>
+    </a>
+    <a class="vz-blog-card" href="/randonnee-leave-no-trace/" style="text-decoration:none;color:inherit">
+      <img src="https://images.unsplash.com/photo-1551632811-561732d1e306?auto=format&amp;fit=crop&amp;w=600&amp;q=80" alt="" />
+      <div><h3>Randonner leave-no-trace</h3><p>Preparer sa sortie nature.</p></div>
+    </a>
+  </div>
+</div>
+<!-- /wp:html -->
+"""
+
+_FAQ_HTML = """
+<!-- wp:html -->
+<div class="vz-section" style="padding-top:2rem">
+  <h2><span class="vz-leaf"></span>FAQ</h2>
+  <div class="vz-section--alt">
+    <div class="vz-grid">
+      <article class="vz-card"><h3>Comment participer ?</h3><p>Consultez l'agenda ecolo ou contactez-nous pour proposer une action locale.</p></article>
+      <article class="vz-card"><h3>Puis-je reutiliser les photos ?</h3><p>Merci de citer la source et de ne pas modifier les credits.</p></article>
+      <article class="vz-card"><h3>Comment agir chez moi ?</h3><p>Page Biodiversite et articles du blog — gestes simples, impact reel.</p></article>
+    </div>
+  </div>
+</div>
+<!-- /wp:html -->
+"""
+
+_RESSOURCES_HTML = """
+<!-- wp:html -->
+<div class="vz-section" style="padding-top:2rem">
+  <h2><span class="vz-leaf"></span>Ressources</h2>
+  <p class="vz-lead">Liens et pistes pour aller plus loin — associations, guides terrain, outils citoyens.</p>
+  <div class="vz-grid">
+    <article class="vz-card"><h3>Guides naturalistes</h3><p>Reconnaitre oiseaux, traces et plantes en balade.</p></article>
+    <article class="vz-card"><h3>Associations</h3><p>Rejoindre des collectifs locaux de protection du vivant.</p></article>
+    <article class="vz-card"><h3>Inventaires participatifs</h3><p>Contribuer a la science citoyenne depuis son jardin.</p></article>
+  </div>
+</div>
+<!-- /wp:html -->
+"""
+
 _POSTS = (
     (
         "Les plus belles forets a explorer",
+        "forets-a-explorer",
         "Des sentiers sous canopee aux forets anciennes : pistes pour une echappee respectueuse du vivant.",
     ),
     (
         "Proteger la biodiversite pres de chez soi",
+        "biodiversite-locale",
         "Haies, mares, plantes locales : gestes simples qui font une vraie difference pour les especes.",
     ),
     (
         "Faune et flore : observer sans deranger",
+        "observer-nature",
         "Conseils de terrain pour photographier et decouvrir la nature en douceur.",
     ),
     (
         "Preparer une randonnee sans laisser de trace",
+        "randonnee-leave-no-trace",
         "Checklist legere : eau, carte, sacs pour les dechets, et respect des habitats fragiles.",
+    ),
+    (
+        "Jardins favorables aux pollinisateurs",
+        "jardins-pollinisateurs",
+        "Fleurs locales, abris et eau : accueillir abeilles et papillons sur son balcon.",
+    ),
+    (
+        "Comprendre les ecosystemes forestiers",
+        "ecosystemes-forestiers",
+        "Du sol a la canopee : un reseau fragile a proteger.",
     ),
 )
 
@@ -1147,47 +1387,38 @@ def _beautify_wordpress_site_inner(site: WordPressSite, *, theme: str = "astra")
     except VZoneAPIException as exc:
         steps.append(f"css_err:{exc}")
 
-    def _upsert_page(slug: str, page_title: str, content: str) -> int:
-        b64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
-        php = (
-            f"$slug = {slug!r};\n"
-            f"$title = {page_title!r};\n"
-            f"$content = base64_decode('{b64}');\n"
-            "$existing = get_page_by_path($slug);\n"
-            "if ($existing) {\n"
-            "  wp_update_post(array('ID'=>$existing->ID,'post_title'=>$title,"
-            "'post_content'=>$content,'post_status'=>'publish'));\n"
-            "  echo (int)$existing->ID;\n"
-            "} else {\n"
-            "  $id = wp_insert_post(array(\n"
-            "    'post_title'=>$title,'post_name'=>$slug,'post_content'=>$content,\n"
-            "    'post_status'=>'publish','post_type'=>'page','post_author'=>1\n"
-            "  ));\n"
-            "  echo (int)$id;\n"
-            "}\n"
-        )
-        try:
-            out = (_wp_eval(site, php) or "").strip()
-        except VZoneAPIException:
-            return 0
-        m = re.search(r"(\d+)", out or "")
-        return int(m.group(1)) if m else 0
-
     page_specs = (
         ("accueil", "Accueil", _HOME_HTML),
+        ("blog", "Blog", _BLOG_HTML),
         ("a-propos", "A propos", _ABOUT_HTML),
-        ("galerie", "Galerie", _GALLERY_HTML),
         ("biodiversite", "La Biodiversite", _BIODIV_HTML),
         ("randonnees", "Randonnees", _RANDONNEES_HTML),
+        ("galerie", "Galerie", _GALLERY_HTML),
         ("agenda", "Agenda Ecolo", _AGENDA_HTML),
+        ("ressources", "Ressources", _RESSOURCES_HTML),
+        ("faq", "FAQ", _FAQ_HTML),
         ("contact", "Contact", _CONTACT_HTML),
     )
     page_ids: dict[str, int] = {}
     for slug, page_title, html in page_specs:
-        page_ids[slug] = _upsert_page(slug, page_title, html)
+        try:
+            page_ids[slug] = _upsert_page_from_file(site, slug, page_title, html)
+        except VZoneAPIException as exc:
+            page_ids[slug] = 0
+            steps.append(f"page_err_{slug}:{exc}")
     steps.append("pages:" + ",".join(f"{k}={v}" for k, v in page_ids.items()))
 
+    required_slugs = ("accueil", "a-propos", "blog", "contact")
+    missing = [s for s in required_slugs if not page_ids.get(s)]
+    if missing:
+        raise VZoneAPIException(
+            detail=f"Pages WordPress non creees : {', '.join(missing)}. Verifiez wp-cli et permissions.",
+            code="wp_pages_failed",
+            status_code=502,
+        )
+
     home_id = page_ids.get("accueil") or 0
+    blog_id = page_ids.get("blog") or 0
     if home_id:
         try:
             _run_wp(["option", "update", "show_on_front", "page"], path=docroot, php_version=php_ver)
@@ -1196,6 +1427,12 @@ def _beautify_wordpress_site_inner(site: WordPressSite, *, theme: str = "astra")
                 path=docroot,
                 php_version=php_ver,
             )
+            if blog_id:
+                _run_wp(
+                    ["option", "update", "page_for_posts", str(blog_id)],
+                    path=docroot,
+                    php_version=php_ver,
+                )
             steps.append("front_page")
         except VZoneAPIException as exc:
             steps.append(f"front_page_err:{exc}")
@@ -1211,49 +1448,27 @@ def _beautify_wordpress_site_inner(site: WordPressSite, *, theme: str = "astra")
         pass
 
     posts_created = 0
-    for ptitle, excerpt in _POSTS:
+    for ptitle, pslug, excerpt in _POSTS:
         body = (
             f"<p>{excerpt}</p>"
             "<p>La nature nous rappelle que chaque detail participe a un equilibre fragile. "
             "Prenez le temps d observer et de transmettre.</p>"
         )
-        b64 = base64.b64encode(body.encode("utf-8")).decode("ascii")
-        php = (
-            f"$title = {ptitle!r};\n"
-            f"$excerpt = {excerpt!r};\n"
-            f"$content = base64_decode('{b64}');\n"
-            "global $wpdb;\n"
-            "$id = (int)$wpdb->get_var($wpdb->prepare(\n"
-            "  \"SELECT ID FROM {$wpdb->posts} WHERE post_title=%s AND post_type='post' "
-            "AND post_status='publish' LIMIT 1\", $title));\n"
-            "if ($id) { echo $id; }\n"
-            "else {\n"
-            "  $nid = wp_insert_post(array(\n"
-            "    'post_title'=>$title,'post_content'=>$content,'post_excerpt'=>$excerpt,\n"
-            "    'post_status'=>'publish','post_type'=>'post','post_author'=>1\n"
-            "  ));\n"
-            "  if ($nid && !is_wp_error($nid)) {\n"
-            "    $cat = get_cat_ID('Nature');\n"
-            "    if ($cat) { wp_set_post_categories($nid, array($cat)); }\n"
-            "    echo (int)$nid;\n"
-            "  } else { echo 0; }\n"
-            "}\n"
-        )
-        try:
-            out = (_wp_eval(site, php) or "").strip()
-        except VZoneAPIException:
-            out = ""
-        if out.isdigit() and int(out) > 0:
+        pid = _upsert_post(site, pslug, ptitle, excerpt, body)
+        if pid > 0:
             posts_created += 1
     steps.append(f"posts:{posts_created}")
 
     ordered = [
         page_ids.get("accueil") or 0,
+        page_ids.get("blog") or 0,
         page_ids.get("biodiversite") or 0,
         page_ids.get("randonnees") or 0,
         page_ids.get("galerie") or 0,
         page_ids.get("agenda") or 0,
         page_ids.get("a-propos") or 0,
+        page_ids.get("ressources") or 0,
+        page_ids.get("faq") or 0,
         page_ids.get("contact") or 0,
     ]
     menu_php = (
@@ -1290,23 +1505,25 @@ def _beautify_wordpress_site_inner(site: WordPressSite, *, theme: str = "astra")
     except VZoneAPIException as exc:
         steps.append(f"menu_err:{exc}")
 
-    try:
-        _run_wp(
-            ["rewrite", "structure", "/%postname%/", "--hard"],
-            path=docroot,
-            php_version=php_ver,
-        )
-    except VZoneAPIException:
-        pass
+    _flush_wp_rewrites(site)
+    steps.append("rewrite_flush")
+
     try:
         username = (site.owner.username or site.owner.system_username or "").strip()
         if username:
             _fix_ownership(docroot, username)
+            _fix_ownership(docroot / ".vz-pages", username)
     except Exception:  # noqa: BLE001
         logger.debug("chown after beautify skip", exc_info=True)
 
     site.title = title
     site.save(update_fields=["title", "updated_at"])
+
+    page_urls = {
+        slug: f"{site.site_url or _site_url(site.domain)}/{slug}/"
+        for slug, pid in page_ids.items()
+        if pid
+    }
 
     return {
         "site_id": site.pk,
@@ -1315,10 +1532,11 @@ def _beautify_wordpress_site_inner(site: WordPressSite, *, theme: str = "astra")
         "theme": theme_slug,
         "style": "nature",
         "pages": page_ids,
+        "page_urls": page_urls,
         "posts_created": posts_created,
         "steps": steps,
         "message": (
-            f"Design nature enrichi sur {site.domain.name} "
-            f"(theme {theme_slug}, {len(page_ids)} pages, menu, CSS, articles)."
+            f"Design nature applique sur {site.domain.name} "
+            f"({len(page_ids)} pages, blog, {posts_created} articles, permaliens regeneres)."
         ),
     }

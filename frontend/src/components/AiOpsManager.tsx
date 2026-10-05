@@ -14,19 +14,8 @@ import {
   Zap,
 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
+import { pendingActionToken, type PendingAction } from "@/lib/aiPending";
 import { EmptyState, PageHeader } from "@/components/ui/PageChrome";
-
-interface PendingAction {
-  token: string;
-  tool_name: string;
-  description: string;
-  params?: Record<string, unknown>;
-  expires_at?: string;
-  created_at?: string;
-  risk?: string;
-  command_preview?: string;
-  conversation_id?: number | null;
-}
 
 const OPS = [
   {
@@ -106,7 +95,7 @@ export function AiOpsManager({ title }: { title: string }) {
     queryKey: ["ai-pending-actions"],
     queryFn: () =>
       apiRequest<{ pending_actions: PendingAction[]; count: number }>("/ai/actions/pending/"),
-    refetchInterval: 8000,
+    refetchInterval: 5000,
   });
 
   const confirmMut = useMutation({
@@ -203,9 +192,10 @@ export function AiOpsManager({ title }: { title: string }) {
         ) : (
           <ul className="divide-y divide-cp-border/60">
             {pending.map((p) => {
+              const token = pendingActionToken(p);
               const risk = (p.risk || "medium").toLowerCase();
               return (
-                <li key={p.token} className="px-4 py-3.5">
+                <li key={token || p.tool_name} className="px-4 py-3.5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
@@ -232,8 +222,8 @@ export function AiOpsManager({ title }: { title: string }) {
                       <button
                         type="button"
                         className="inline-flex items-center gap-1 rounded-lg bg-cp-orange px-3 py-1.5 text-xs font-semibold text-white hover:bg-cp-orange-dark disabled:opacity-60"
-                        disabled={confirmMut.isPending}
-                        onClick={() => confirmMut.mutate({ token: p.token, confirm: true })}
+                        disabled={confirmMut.isPending || !token}
+                        onClick={() => confirmMut.mutate({ token, confirm: true })}
                       >
                         <Check className="h-3.5 w-3.5" />
                         Approuver
@@ -241,8 +231,8 @@ export function AiOpsManager({ title }: { title: string }) {
                       <button
                         type="button"
                         className="vz-btn-ghost inline-flex items-center gap-1 !px-3 !py-1.5 text-xs"
-                        disabled={confirmMut.isPending}
-                        onClick={() => confirmMut.mutate({ token: p.token, confirm: false })}
+                        disabled={confirmMut.isPending || !token}
+                        onClick={() => confirmMut.mutate({ token, confirm: false })}
                       >
                         <X className="h-3.5 w-3.5" />
                         Refuser

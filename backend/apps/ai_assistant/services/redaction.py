@@ -17,6 +17,22 @@ SECRET_VALUE_RE = re.compile(
 
 REDACTED = "***REDACTED***"
 
+# Clés jamais masquées (jetons d'approbation UI, métadonnées non secrètes)
+REDACT_SAFE_KEYS = frozenset(
+    {
+        "action_token",
+        "token",  # jeton approbation UI (éphémère, requis par le front)
+        "expires_at",
+        "tool_name",
+        "description",
+        "risk",
+        "command_preview",
+        "pending_confirmation",
+        "executed",
+        "status",
+    }
+)
+
 
 def redact_text(text: str, *, max_len: int = 12000) -> str:
     if not text:
@@ -35,7 +51,9 @@ def redact_obj(value: Any, *, depth: int = 0) -> Any:
     if isinstance(value, dict):
         out = {}
         for k, v in value.items():
-            if SECRET_KEY_RE.search(str(k)):
+            if str(k) in REDACT_SAFE_KEYS:
+                out[k] = v
+            elif SECRET_KEY_RE.search(str(k)):
                 out[k] = REDACTED
             else:
                 out[k] = redact_obj(v, depth=depth + 1)

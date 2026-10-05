@@ -137,6 +137,22 @@ def _safe_tool_handler(tool: Any, owner: User, params: dict[str, Any]) -> dict[s
         return {"ok": False, "error": msg, "code": "tool_error"}
 
 
+def _pending_action_payload(action: PendingAction) -> dict[str, Any]:
+    """Payload UI confirmation — `action_token` (pas `token`, évite redaction logs)."""
+    from apps.ai_assistant.tools.helpers import action_command_preview, action_risk
+
+    return {
+        "action_token": action.token,
+        "token": action.token,  # rétrocompat
+        "tool_name": action.tool_name,
+        "description": action.description,
+        "params": redact_obj(action.params),
+        "expires_at": action.expires_at.isoformat(),
+        "risk": action_risk(action.tool_name, action.params),
+        "command_preview": action_command_preview(action.tool_name, action.params),
+    }
+
+
 SYSTEM_PROMPT = """Tu es **V-zone AI**, assistant premium du panneau d'hébergement V-zone.
 
 ## Règle d'or
@@ -156,9 +172,13 @@ SYSTEM_PROMPT = """Tu es **V-zone AI**, assistant premium du panneau d'hébergem
 - Sous-domaine (`nature.exemple.com`) : passe `name` (+ optionnel `domain_type=subdomain`) ;
   le parent est auto-détecté — pas besoin de `parent_id` si le domaine parent existe.
 - SSL / WordPress : tu peux utiliser `domain_name` (pas seulement `domain_id`).
-- Pour améliorer UI/UX / ajouter des pages d'un site WP : **toujours** `beautify_wordpress_site`
-  (domain_name=nature.7une.info). Interdit : `run_jail_command`, `list_files`, conseils seuls.
-  Relancer beautify met à jour CSS + pages (Accueil, Biodiversité, Randonnées, Agenda, Galerie…).
+- WordPress design / pages / 404 / blog : **uniquement** `beautify_wordpress_site` (domain_name=…).
+  **Interdit** : `run_jail_command`, `list_files`, `read_file_content`, `sync_python_passenger_wsgi`.
+- Actions sensibles : l'utilisateur doit cliquer **Approuver** dans le panneau — ne simule pas une confirmation.
+- Si un outil renvoie `pending_confirmation: true` ou `executed: false` : l'action **n'a PAS été appliquée**.
+  Dis clairement d'**Approuver** ; **interdit** de dire « c'est fait », « modifié », « appliqué », « terminé ».
+- Ne dis jamais « c'est fait » sans tool **réellement exécuté** (`executed: true` ou résultat sans `pending_confirmation`).
+- Ne recopiez pas de gros blocs JSON bruts dans la réponse utilisateur.
 - Utilise `list_ai_capabilities` si on te demande ce que tu peux faire.
 - Mutations → confirmation UI. Jamais de shell libre.
 - Jamais de secrets (mots de passe, tokens) dans les réponses.
@@ -511,30 +531,20 @@ def run_assistant_turn(
                         ctx2["pipeline_runtime"] = str(args.get("runtime") or "python")
                     conversation.context = ctx2
                     conversation.save(update_fields=["context", "updated_at"])
-                from apps.ai_assistant.tools.helpers import (
-                    action_command_preview,
-                    action_risk,
-                )
-
-                pending_actions.append(
-                    {
-                        "token": action.token,
-                        "tool_name": action.tool_name,
-                        "description": action.description,
-                        "params": redact_obj(action.params),
-                        "expires_at": action.expires_at.isoformat(),
-                        "risk": action_risk(action.tool_name, action.params),
-                        "command_preview": action_command_preview(
-                            action.tool_name, action.params
-                        ),
-                    }
-                )
+                pending_actions.append(_pending_action_payload(action))
+                # IMPORTANT : ne pas renvoyer ok=True « comme si c'était fait ».
+                # Le modèle annonçait alors un succès alors que rien n'est appliqué.
                 payload = {
                     "ok": True,
+                    "executed": False,
                     "pending_confirmation": True,
-                    "token": action.token,
+                    "status": "awaiting_user_confirmation",
+                    "action_token": action.token,
+                    "tool_name": tool.spec.name,
                     "message": (
-                        f"Action `{tool.spec.name}` en attente de confirmation utilisateur."
+                        f"ACTION NON EXÉCUTÉE. `{tool.spec.name}` est en attente "
+                        "d'approbation utilisateur. Ne dis PAS que c'est fait / appliqué / modifié. "
+                        "Demande de cliquer **Approuver** (ou **Refuser**) dans le panneau."
                     ),
                 }
                 _log_action(
@@ -542,11 +552,23 @@ def run_assistant_turn(
                     conversation,
                     tool.spec.name,
                     args,
-                    "pending confirmation",
+                    "pending confirmation (not executed)",
                     success=True,
                     requires_confirmation=True,
                     confirmed=False,
                     ip_address=ip_address,
+                )
+                tool_trace.append(
+                    {
+                        "name": tool.spec.name,
+                        "ok": False,
+                        "pending": True,
+                        "summary": {
+                            "executed": False,
+                            "pending_confirmation": True,
+                            "status": "awaiting_user_confirmation",
+                        },
+                    }
                 )
             else:
                 try:
@@ -580,13 +602,20 @@ def run_assistant_turn(
     if not final_content:
         # Gemini / providers : parfois vide après des tours d'outils → 1 essai texte seul
         try:
+            wrap_hint = (
+                "À partir des résultats d'outils ci-dessus, réponds maintenant en français "
+                "de façon claire et actionnable. N'appelle plus aucun outil."
+            )
+            if pending_actions:
+                wrap_hint += (
+                    " ATTENTION : des actions sont en `pending_confirmation` / `executed: false` — "
+                    "elles ne sont PAS encore appliquées. Demande de cliquer Approuver. "
+                    "Ne dis pas que c'est fait."
+                )
             messages.append(
                 ChatMessage(
                     role="user",
-                    content=(
-                        "À partir des résultats d'outils ci-dessus, réponds maintenant en français "
-                        "de façon claire et actionnable. N'appelle plus aucun outil."
-                    ),
+                    content=wrap_hint,
                 )
             )
             wrap = provider.chat(messages, tools=None, temperature=temperature)
@@ -598,8 +627,12 @@ def run_assistant_turn(
             logger.warning("AI wrap-up text-only failed: %s", exc)
 
     if not final_content and tool_trace:
-        lines = ["Voici ce que j'ai trouvé / exécuté :", ""]
+        lines = ["Voici ce que j'ai trouvé / préparé :", ""]
         for t in tool_trace[-8:]:
+            if t.get("pending"):
+                mark = "⏳"
+                lines.append(f"- {mark} `{t.get('name')}` — **en attente d'approbation** (pas encore appliqué)")
+                continue
             mark = "✓" if t.get("ok") else "✗"
             lines.append(f"- {mark} `{t.get('name')}`")
             summary = t.get("summary")
@@ -613,11 +646,18 @@ def run_assistant_turn(
                     )
                 elif summary.get("path"):
                     lines.append(f"  → {summary.get('path')}")
-        lines.append("")
-        lines.append(
-            "Si le site affiche encore « Hello from V-zone », utilisez l'outil "
-            "`sync_python_passenger_wsgi` (force=true, restart=true) puis rechargez le domaine."
-        )
+        if any(t.get("pending") for t in tool_trace[-8:]):
+            lines.append("")
+            lines.append(
+                "Clique **Approuver** ci-dessous pour appliquer, ou **Refuser** pour annuler. "
+                "Rien n'a encore été modifié sur le serveur."
+            )
+        else:
+            lines.append("")
+            lines.append(
+                "Si le site affiche encore « Hello from V-zone », utilisez l'outil "
+                "`sync_python_passenger_wsgi` (force=true, restart=true) puis rechargez le domaine."
+            )
         final_content = "\n".join(lines)
 
     if not final_content:
@@ -625,6 +665,39 @@ def run_assistant_turn(
             "Je n'ai pas pu générer de réponse. Vérifiez la configuration IA "
             "(Ollama / provider) ou reformulez votre demande."
         )
+
+    # Garde-fou : s'il reste des actions à confirmer, ne jamais laisser un faux « c'est fait »
+    if pending_actions:
+        names = ", ".join(
+            f"`{p.get('tool_name')}`" for p in pending_actions if p.get("tool_name")
+        )
+        confirm_note = (
+            f"\n\n⚠️ **Action(s) en attente** : {names}.\n"
+            "Rien n'a encore été modifié sur le serveur. "
+            "Clique **Approuver** pour appliquer, ou **Refuser** pour annuler."
+        )
+        low = (final_content or "").lower()
+        false_done = any(
+            p in low
+            for p in (
+                "c'est fait",
+                "c’est fait",
+                "exécutée avec succès",
+                "exécuté avec succès",
+                "a été modifié",
+                "a été appliqué",
+                "modifications appliquées",
+                "terminé avec succès",
+                "successfully",
+            )
+        )
+        if false_done:
+            final_content = (
+                "J'ai **préparé** l'action, mais elle **n'est pas encore appliquée**."
+                + confirm_note
+            )
+        elif "approuver" not in low:
+            final_content = (final_content or "").rstrip() + confirm_note
 
     suggestions = _suggest_followups(safe_user, final_content, ui)
     assistant_msg = Message.objects.create(
@@ -714,6 +787,35 @@ def _suggest_followups(user_text: str, assistant_text: str, ui: dict[str, Any]) 
             seen.add(s)
             uniq.append(s)
     return uniq[:4]
+
+
+def _humanize_confirm_result(
+    *,
+    tool_name: str,
+    ok: bool,
+    result: dict[str, Any],
+    extra_note: str = "",
+) -> str:
+    """Message utilisateur après confirmation — sans dump JSON brut."""
+    if ok:
+        lines = [f"✅ Action **`{tool_name}`** appliquée avec succès."]
+        data = result.get("data") if isinstance(result.get("data"), dict) else None
+        if isinstance(data, dict):
+            for key in ("name", "domain", "path", "status", "message", "url"):
+                val = data.get(key)
+                if val:
+                    lines.append(f"- **{key}** : {val}")
+        elif result.get("message"):
+            lines.append(str(result["message"]))
+    else:
+        err = result.get("error") or result.get("detail") or "Échec de l'action"
+        lines = [
+            f"❌ Action **`{tool_name}`** échouée.",
+            f"**Erreur** : {err}",
+        ]
+    if extra_note:
+        lines.append(extra_note.strip())
+    return "\n".join(lines)
 
 
 def confirm_pending_action(
@@ -875,18 +977,11 @@ def confirm_pending_action(
         Message.objects.create(
             conversation=action.conversation,
             role=Message.Role.ASSISTANT,
-            content=(
-                f"Action `{action.tool_name}` "
-                + ("exécutée avec succès." if result.get("ok") else "échouée.")
-                + (
-                    f"\n\n**Erreur** : {result.get('error')}"
-                    if not result.get("ok") and result.get("error")
-                    else ""
-                )
-                + extra_note
-                + "\n```json\n"
-                + json.dumps(action.result, ensure_ascii=False, indent=2)[:2000]
-                + "\n```"
+            content=_humanize_confirm_result(
+                tool_name=action.tool_name,
+                ok=bool(result.get("ok")),
+                result=result,
+                extra_note=extra_note,
             ),
             metadata={"pending_token": token, "result": action.result},
         )
@@ -904,21 +999,7 @@ def confirm_pending_action(
                 action_risk,
             )
 
-            out["pending_actions"] = [
-                {
-                    "token": follow_up_pending.token,
-                    "tool_name": follow_up_pending.tool_name,
-                    "description": follow_up_pending.description,
-                    "params": redact_obj(follow_up_pending.params),
-                    "expires_at": follow_up_pending.expires_at.isoformat(),
-                    "risk": action_risk(
-                        follow_up_pending.tool_name, follow_up_pending.params
-                    ),
-                    "command_preview": action_command_preview(
-                        follow_up_pending.tool_name, follow_up_pending.params
-                    ),
-                }
-            ]
+            out["pending_actions"] = [_pending_action_payload(follow_up_pending)]
         return out
 
     payload: dict[str, Any] = {
