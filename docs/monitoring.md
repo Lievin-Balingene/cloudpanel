@@ -1,44 +1,45 @@
-# Monitoring & Alertes — V-zone Panel
+# Monitoring serveur — V-zone Panel
 
 ## Rôle
 
-Complète le module **dashboard** (snapshots + graphes) avec des **politiques de seuils**,
-des **événements d'alerte** et des **notifications e-mail**.
+Surveillance **live complète** du serveur (WHM) + politiques d'alertes.
 
-## Fonctions
-
-- Règles : CPU %, RAM %, Disque %, Load 1m, service down
-- Opérateurs, sévérité, cooldown
-- Événements : open / acknowledged / resolved
-- Évaluation manuelle ou via Celery (`monitoring.evaluate_alert_rules`)
-- Hook après `dashboard.capture_resource_snapshot`
-- Auto-résolution quand la condition redevient saine
+- **Dashboard live** : `/whm/resources` — CPU, RAM, disques, réseau, processus, services, historique
+- **Alertes** : `/whm/monitoring` — seuils, événements, e-mails
 
 ## API
 
-| Méthode | Chemin |
-|---------|--------|
-| GET | `/api/v1/monitoring/overview/` |
-| GET/POST | `/api/v1/monitoring/rules/` |
-| GET/PATCH/DELETE | `/api/v1/monitoring/rules/{id}/` |
-| GET | `/api/v1/monitoring/events/` |
-| POST | `/api/v1/monitoring/events/{id}/acknowledge/` |
-| POST | `/api/v1/monitoring/events/{id}/resolve/` |
-| POST | `/api/v1/monitoring/evaluate/` |
+| Méthode | Chemin | Description |
+|---------|--------|-------------|
+| GET | `/api/v1/dashboard/server/` | Snapshot live complet |
+| GET | `/api/v1/dashboard/history/?hours=` | Historique (1–168 h) |
+| POST | `/api/v1/dashboard/capture/` | Capture manuelle |
+| GET | `/api/v1/monitoring/overview/` | Synthèse alertes |
+| GET/POST | `/api/v1/monitoring/rules/` | Règles de seuils |
+| GET | `/api/v1/monitoring/events/` | Événements |
+| POST | `/api/v1/monitoring/evaluate/` | Évaluation manuelle |
 
-Accès : administrateur / revendeur.
+Accès : administrateur / revendeur (ACL).
 
-## Configuration
+## Contenu du snapshot `/dashboard/server/`
 
-- `VZONE_ALERT_COOLDOWN_MINUTES` (défaut règle si non spécifié côté UI = 30)
-- `VZONE_ALERT_DEFAULT_RECIPIENTS` (fallback e-mail)
+- Identité (hostname, OS, uptime, cœurs)
+- CPU % global + par cœur, fréquence, load 1/5/15
+- RAM détaillée + swap
+- Tous les volumes montés + I/O disque
+- Interfaces réseau, débits estimés, connexions
+- Top processus (CPU / RAM)
+- Services (systemd + fallback processus)
+- Températures / ventilateurs si exposés
+- Sessions utilisateurs
+- Compteurs d'alertes ouvertes
 
-## UI
+## Configuration alertes
 
-- WHM : `/whm/monitoring`
-- Graphes historiques : `/whm/resources` (inchangé)
+- `VZONE_ALERT_COOLDOWN_MINUTES`
+- `VZONE_ALERT_DEFAULT_RECIPIENTS`
 
 ## Tâches Celery
 
+- `dashboard.capture_resource_snapshot`
 - `monitoring.evaluate_alert_rules`
-- `dashboard.capture_resource_snapshot` (appelle aussi l'évaluation)

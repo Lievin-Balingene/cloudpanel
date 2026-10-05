@@ -35,7 +35,7 @@ const hubs: HubSection[] = [
     links: [
       { to: "/whm/accounts", label: "List Accounts" },
       { to: "/whm/domains", label: "Domains" },
-      { to: "/whm/resources", label: "Bandwidth / Resources" },
+      { to: "/whm/resources", label: "Monitoring serveur" },
     ],
   },
   {
@@ -132,8 +132,8 @@ const hubs: HubSection[] = [
     title: "Server Status",
     icon: Activity,
     links: [
-      { to: "/whm/monitoring", label: "Service Status" },
-      { to: "/whm/resources", label: "System Health" },
+      { to: "/whm/resources", label: "Monitoring serveur" },
+      { to: "/whm/monitoring", label: "Alertes" },
       { to: "/whm/terminal", label: "Terminal" },
     ],
   },
@@ -147,7 +147,8 @@ const quick = [
   { to: "/whm/ip-functions", label: "IP Functions", icon: Server },
   { to: "/whm/ai-ops", label: "AI Ops", icon: Activity },
   { to: "/whm/tweak-settings", label: "Tweaks", icon: KeyRound },
-  { to: "/whm/monitoring", label: "Services", icon: Bell },
+  { to: "/whm/resources", label: "Monitoring", icon: Activity },
+  { to: "/whm/monitoring", label: "Alertes", icon: Bell },
   { to: "/whm/security", label: "Security", icon: KeyRound },
   { to: "/whm/transfer", label: "Transfers", icon: ArrowRightLeft },
   { to: "/whm/backups", label: "Backups", icon: HardDrive },

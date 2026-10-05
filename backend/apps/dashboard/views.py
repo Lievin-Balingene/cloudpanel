@@ -6,7 +6,13 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.permissions import IsAdministrator
-from apps.dashboard.services import capture_snapshot, history, overview_for, visitors_for
+from apps.dashboard.services import (
+    capture_snapshot,
+    full_server_status,
+    history,
+    overview_for,
+    visitors_for,
+)
 
 
 class DashboardOverviewView(APIView):
@@ -36,6 +42,15 @@ class MetricsVisitorsView(APIView):
         return Response(
             {"success": True, "data": visitors_for(request.user, hours=hours)}
         )
+
+
+class DashboardServerStatusView(APIView):
+    """Monitoring serveur live complet (WHM)."""
+
+    permission_classes = [IsAuthenticated, IsAdministrator]
+
+    def get(self, request: Request) -> Response:
+        return Response({"success": True, "data": full_server_status()})
 
 
 class DashboardCaptureView(APIView):

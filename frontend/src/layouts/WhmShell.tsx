@@ -155,7 +155,7 @@ const navSections: NavSection[] = [
     items: [
       { to: "/whm/accounts", end: true, label: "List Accounts", icon: Users, keywords: ["comptes", "list"] },
       { to: "/whm/domains", label: "List Domains", icon: AppWindow, keywords: ["domaine", "parked", "subdomain"] },
-      { to: "/whm/resources", label: "View Bandwidth / Resources", icon: Activity, keywords: ["cpu", "ram", "bandwidth"] },
+      { to: "/whm/resources", label: "Monitoring serveur", icon: Activity, keywords: ["cpu", "ram", "bandwidth", "monitoring", "load"] },
     ],
   },
   {
@@ -228,8 +228,8 @@ const navSections: NavSection[] = [
     id: "system-health",
     title: "System Health",
     items: [
-      { to: "/whm/resources", label: "System Information", icon: Activity, keywords: ["cpu", "ram", "disk"] },
-      { to: "/whm/monitoring", label: "Process / Service Health", icon: Bell, keywords: ["alerte", "monitoring"] },
+      { to: "/whm/resources", label: "Monitoring serveur", icon: Activity, keywords: ["cpu", "ram", "disk", "monitoring"] },
+      { to: "/whm/monitoring", label: "Alertes & seuils", icon: Bell, keywords: ["alerte", "monitoring"] },
       { to: "/whm/terminal", label: "Process Manager (Terminal)", icon: Terminal, keywords: ["ssh", "shell"] },
     ],
   },
@@ -237,8 +237,8 @@ const navSections: NavSection[] = [
     id: "server-status",
     title: "Server Status",
     items: [
-      { to: "/whm/monitoring", label: "Service Status", icon: Bell, keywords: ["services"] },
-      { to: "/whm/resources", label: "Server Monitoring", icon: Activity, keywords: ["load"] },
+      { to: "/whm/resources", label: "Monitoring serveur", icon: Activity, keywords: ["load", "cpu", "ram", "disk", "réseau"] },
+      { to: "/whm/monitoring", label: "Alertes services", icon: Bell, keywords: ["services", "alerte"] },
     ],
   },
   {

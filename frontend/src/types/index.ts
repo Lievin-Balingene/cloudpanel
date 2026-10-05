@@ -189,8 +189,15 @@ export interface HistoryPoint {
   ram_percent: number;
   disk_percent: number;
   load_1: number | null;
+  load_5?: number | null;
+  load_15?: number | null;
+  ram_used?: number;
+  ram_total?: number;
+  disk_used?: number;
+  disk_total?: number;
   net_bytes_sent: number;
   net_bytes_recv: number;
+  process_count?: number;
 }
 
 export interface SslInfo {

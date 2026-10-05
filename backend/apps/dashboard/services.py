@@ -5,8 +5,10 @@ import logging
 import os
 import re
 import shutil
+import socket
 import stat as statmod
 import subprocess
+import time as time_module
 from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -69,8 +71,15 @@ def history(hours: int = 24, limit: int = 288) -> list[dict[str, Any]]:
             "ram_percent": s.ram_percent,
             "disk_percent": s.disk_percent,
             "load_1": s.load_1,
+            "load_5": s.load_5,
+            "load_15": s.load_15,
+            "ram_used": s.ram_used,
+            "ram_total": s.ram_total,
+            "disk_used": s.disk_used,
+            "disk_total": s.disk_total,
             "net_bytes_sent": s.net_bytes_sent,
             "net_bytes_recv": s.net_bytes_recv,
+            "process_count": s.process_count,
         }
         for s in qs
     ]
@@ -154,20 +163,413 @@ def visitors_for(user: User, hours: int = 24) -> dict[str, Any]:
     return result
 
 
+_SERVICE_CANDIDATES: list[tuple[str, list[str], list[str]]] = [
+    # label, systemd units, process name fragments
+    ("nginx", ["nginx"], ["nginx"]),
+    ("postgresql", ["postgresql", "postgresql@*", "pgsql"], ["postgres", "postgresql"]),
+    ("mysql", ["mariadb", "mysql", "mysqld"], ["mysqld", "mariadbd"]),
+    ("redis", ["redis", "redis-server"], ["redis-server", "redis"]),
+    ("postfix", ["postfix"], ["master", "postfix"]),
+    ("dovecot", ["dovecot"], ["dovecot"]),
+    ("opendkim", ["opendkim"], ["opendkim"]),
+    ("fail2ban", ["fail2ban"], ["fail2ban-server", "fail2ban"]),
+    ("sshd", ["sshd", "ssh"], ["sshd", "ssh"]),
+    ("docker", ["docker", "docker.service"], ["dockerd"]),
+    ("named", ["named", "bind9"], ["named", "bind"]),
+    ("pure-ftpd", ["pure-ftpd", "vsftpd", "proftpd"], ["pure-ftpd", "vsftpd", "proftpd"]),
+    ("vzone-api", ["vzone-api", "vzone"], ["daphne", "gunicorn", "uvicorn"]),
+    ("vzone-celery", ["vzone-celery", "celery"], ["celery"]),
+    ("vzone-worker", ["vzone-celerybeat", "vzone-beat"], ["celery"]),
+]
+
+
+def _systemd_is_active(unit: str) -> bool | None:
+    """True/False si systemctl répond, None si indisponible."""
+    if "*" in unit:
+        return None
+    try:
+        proc = subprocess.run(
+            ["systemctl", "is-active", unit],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    out = (proc.stdout or "").strip().lower()
+    if out == "active":
+        return True
+    if out in {"inactive", "failed", "deactivating", "activating", "dead"}:
+        return False
+    # unit inconnue
+    if proc.returncode != 0 and "could not be found" in (proc.stderr or "").lower():
+        return None
+    return False if proc.returncode != 0 else True
+
+
 def service_statuses() -> list[dict[str, Any]]:
-    """Vérifie l'état de services critiques (best-effort, multi-OS)."""
-    candidates = [
-        ("postgresql", ["postgres", "postgresql"]),
-        ("redis", ["redis-server", "redis"]),
-        ("nginx", ["nginx"]),
-        ("vzone-api", ["daphne", "vzone"]),
-    ]
-    running = {p.info["name"].lower() for p in psutil.process_iter(["name"]) if p.info.get("name")}
-    results = []
-    for label, names in candidates:
-        ok = any(any(n in proc for n in names) for proc in running)
-        results.append({"name": label, "active": ok})
+    """Vérifie l'état de services critiques (systemd puis fallback processus)."""
+    running = {
+        (p.info.get("name") or "").lower()
+        for p in psutil.process_iter(["name"])
+        if p.info.get("name")
+    }
+    cmdline_blob = " ".join(running)
+    try:
+        for p in psutil.process_iter(["cmdline"]):
+            cmd = p.info.get("cmdline") or []
+            if cmd:
+                cmdline_blob += " " + " ".join(c.lower() for c in cmd if c)
+    except (psutil.Error, OSError):
+        pass
+
+    results: list[dict[str, Any]] = []
+    for label, units, names in _SERVICE_CANDIDATES:
+        active: bool | None = None
+        source = "process"
+        for unit in units:
+            st = _systemd_is_active(unit)
+            if st is not None:
+                active = st
+                source = "systemd"
+                break
+        if active is None:
+            active = any(n in proc for proc in running for n in names) or any(
+                n in cmdline_blob for n in names
+            )
+            # postfix master is generic — require "postfix" in cmdline
+            if label == "postfix" and active:
+                active = "postfix" in cmdline_blob
+            source = "process"
+        results.append({"name": label, "active": bool(active), "source": source})
     return results
+
+
+def _bytes_rate(prev: int, curr: int, seconds: float) -> float:
+    if seconds <= 0 or curr < prev:
+        return 0.0
+    return (curr - prev) / seconds
+
+
+def _process_rows(
+    limit: int = 20,
+    primed: list[psutil.Process] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    procs = primed
+    if procs is None:
+        procs = []
+        for proc in psutil.process_iter(["pid"]):
+            try:
+                proc.cpu_percent(interval=None)
+                procs.append(proc)
+            except (psutil.Error, OSError):
+                continue
+        time_module.sleep(0.12)
+    rows: list[dict[str, Any]] = []
+    attrs = ["pid", "name", "username", "memory_percent", "status", "create_time"]
+    for proc in procs:
+        try:
+            info = proc.as_dict(attrs=attrs)
+            rows.append(
+                {
+                    "pid": info.get("pid"),
+                    "name": info.get("name") or "?",
+                    "user": info.get("username") or "—",
+                    "cpu_percent": float(proc.cpu_percent(interval=None) or 0),
+                    "memory_percent": float(info.get("memory_percent") or 0),
+                    "status": info.get("status") or "—",
+                    "create_time": info.get("create_time") or 0,
+                }
+            )
+        except (psutil.Error, OSError):
+            continue
+    by_cpu = sorted(rows, key=lambda r: r["cpu_percent"], reverse=True)[:limit]
+    by_mem = sorted(rows, key=lambda r: r["memory_percent"], reverse=True)[:limit]
+    return by_cpu, by_mem
+
+
+def full_server_status() -> dict[str, Any]:
+    """Snapshot live ultra-complet pour le monitoring WHM."""
+    # Première lecture CPU pour amorcer les compteurs (delta) + amorçage processus
+    psutil.cpu_percent(interval=None)
+    per_cpu_prime = psutil.cpu_percent(interval=None, percpu=True)
+    primed_procs: list[psutil.Process] = []
+    for proc in psutil.process_iter(["pid"]):
+        try:
+            proc.cpu_percent(interval=None)
+            primed_procs.append(proc)
+        except (psutil.Error, OSError):
+            continue
+    time_module.sleep(0.15)
+    cpu_percent = float(psutil.cpu_percent(interval=None))
+    per_cpu = psutil.cpu_percent(interval=None, percpu=True) or per_cpu_prime
+
+    mem = psutil.virtual_memory()
+    swap = psutil.swap_memory()
+    load: list[float] | None = None
+    try:
+        load = [float(x) for x in psutil.getloadavg()]
+    except (AttributeError, OSError):
+        load = None
+
+    boot = float(psutil.boot_time())
+    now_ts = timezone.now().timestamp()
+    uptime_seconds = max(0, int(now_ts - boot))
+
+    freq = None
+    try:
+        f = psutil.cpu_freq()
+        if f:
+            freq = {
+                "current": round(float(f.current or 0), 1),
+                "min": round(float(f.min or 0), 1) if f.min else None,
+                "max": round(float(f.max or 0), 1) if f.max else None,
+            }
+    except (AttributeError, OSError, NotImplementedError):
+        freq = None
+
+    disks: list[dict[str, Any]] = []
+    seen_mounts: set[str] = set()
+    for part in psutil.disk_partitions(all=False):
+        mount = part.mountpoint
+        if not mount or mount in seen_mounts:
+            continue
+        # Ignore pseudo-FS courants
+        if part.fstype.lower() in {"tmpfs", "devtmpfs", "squashfs", "overlay", "proc", "sysfs", "cgroup", "cgroup2"}:
+            continue
+        if mount.startswith(("/snap", "/run", "/sys", "/proc", "/dev")):
+            continue
+        try:
+            usage = psutil.disk_usage(mount)
+        except (PermissionError, OSError):
+            continue
+        seen_mounts.add(mount)
+        disks.append(
+            {
+                "device": part.device,
+                "mountpoint": mount,
+                "fstype": part.fstype,
+                "total": usage.total,
+                "used": usage.used,
+                "free": usage.free,
+                "percent": float(usage.percent),
+            }
+        )
+    disks.sort(key=lambda d: (0 if d["mountpoint"] == "/" else 1, d["mountpoint"]))
+
+    disk_io = None
+    try:
+        io = psutil.disk_io_counters()
+        if io:
+            disk_io = {
+                "read_bytes": int(io.read_bytes),
+                "write_bytes": int(io.write_bytes),
+                "read_count": int(io.read_count),
+                "write_count": int(io.write_count),
+                "read_time_ms": int(getattr(io, "read_time", 0) or 0),
+                "write_time_ms": int(getattr(io, "write_time", 0) or 0),
+            }
+    except (AttributeError, OSError):
+        disk_io = None
+
+    net_total = psutil.net_io_counters()
+    interfaces: list[dict[str, Any]] = []
+    try:
+        per_nic = psutil.net_io_counters(pernic=True) or {}
+        addrs = psutil.net_if_addrs()
+        stats_map = {}
+        try:
+            stats_map = psutil.net_if_stats()
+        except (AttributeError, OSError):
+            stats_map = {}
+        for name, counters in sorted(per_nic.items()):
+            if name.startswith(("lo", "docker", "br-", "veth", "virbr", "tun", "tap")):
+                # garder loopback, ignorer bridges docker bruyants sauf s'ils ont du trafic
+                if name != "lo" and counters.bytes_sent + counters.bytes_recv < 1024:
+                    continue
+            ip_v4 = ""
+            for addr in addrs.get(name, []):
+                if addr.family == socket.AF_INET:
+                    ip_v4 = addr.address
+                    break
+            st = stats_map.get(name)
+            interfaces.append(
+                {
+                    "name": name,
+                    "ip": ip_v4,
+                    "is_up": bool(getattr(st, "isup", True)),
+                    "speed_mbps": int(getattr(st, "speed", 0) or 0),
+                    "bytes_sent": int(counters.bytes_sent),
+                    "bytes_recv": int(counters.bytes_recv),
+                    "packets_sent": int(counters.packets_sent),
+                    "packets_recv": int(counters.packets_recv),
+                    "errin": int(counters.errin),
+                    "errout": int(counters.errout),
+                    "dropin": int(counters.dropin),
+                    "dropout": int(counters.dropout),
+                }
+            )
+    except (AttributeError, OSError):
+        interfaces = []
+
+    conn_summary = {"total": 0, "established": 0, "listen": 0, "time_wait": 0, "close_wait": 0, "other": 0}
+    try:
+        for c in psutil.net_connections(kind="inet"):
+            conn_summary["total"] += 1
+            status = (c.status or "").upper()
+            if status == "ESTABLISHED":
+                conn_summary["established"] += 1
+            elif status == "LISTEN":
+                conn_summary["listen"] += 1
+            elif status == "TIME_WAIT":
+                conn_summary["time_wait"] += 1
+            elif status == "CLOSE_WAIT":
+                conn_summary["close_wait"] += 1
+            else:
+                conn_summary["other"] += 1
+    except (psutil.Error, OSError, PermissionError):
+        pass
+
+    # Débit réseau estimé via 2 derniers snapshots
+    net_rates = {"sent_bps": 0.0, "recv_bps": 0.0}
+    recent = list(ResourceSnapshot.objects.order_by("-collected_at")[:2])
+    if len(recent) == 2:
+        newer, older = recent[0], recent[1]
+        dt = (newer.collected_at - older.collected_at).total_seconds()
+        net_rates = {
+            "sent_bps": _bytes_rate(older.net_bytes_sent, newer.net_bytes_sent, dt),
+            "recv_bps": _bytes_rate(older.net_bytes_recv, newer.net_bytes_recv, dt),
+        }
+
+    temperatures: list[dict[str, Any]] = []
+    try:
+        temps = psutil.sensors_temperatures() or {}
+        for chip, entries in temps.items():
+            for entry in entries:
+                temperatures.append(
+                    {
+                        "chip": chip,
+                        "label": entry.label or chip,
+                        "current": float(entry.current),
+                        "high": float(entry.high) if entry.high else None,
+                        "critical": float(entry.critical) if entry.critical else None,
+                    }
+                )
+    except (AttributeError, OSError):
+        temperatures = []
+
+    fans: list[dict[str, Any]] = []
+    try:
+        fan_map = psutil.sensors_fans() or {}
+        for chip, entries in fan_map.items():
+            for entry in entries:
+                fans.append(
+                    {
+                        "chip": chip,
+                        "label": entry.label or chip,
+                        "rpm": float(entry.current),
+                    }
+                )
+    except (AttributeError, OSError):
+        fans = []
+
+    logged_users: list[dict[str, Any]] = []
+    try:
+        for u in psutil.users():
+            logged_users.append(
+                {
+                    "name": u.name,
+                    "terminal": u.terminal or "—",
+                    "host": u.host or "local",
+                    "started": float(u.started) if u.started else None,
+                }
+            )
+    except (AttributeError, OSError):
+        logged_users = []
+
+    top_cpu, top_mem = _process_rows(18, primed=primed_procs)
+    services = service_statuses()
+    down = [s["name"] for s in services if not s["active"]]
+
+    alerts = {"open": 0, "critical": 0, "warning": 0}
+    try:
+        from apps.monitoring.models import AlertEvent
+
+        open_qs = AlertEvent.objects.filter(status=AlertEvent.Status.OPEN).select_related("rule")
+        alerts["open"] = open_qs.count()
+        for ev in open_qs[:50]:
+            sev = getattr(ev.rule, "severity", "") or ""
+            if sev == "critical":
+                alerts["critical"] += 1
+            elif sev == "warning":
+                alerts["warning"] += 1
+    except Exception:  # noqa: BLE001
+        pass
+
+    identity = _whm_statistics()
+    health = "healthy"
+    root_disk = next((d for d in disks if d["mountpoint"] == "/"), None)
+    disk_pct = float(root_disk["percent"]) if root_disk else float(mem.percent)
+    if down or alerts["critical"] > 0 or cpu_percent >= 95 or mem.percent >= 95 or disk_pct >= 95:
+        health = "critical"
+    elif alerts["open"] > 0 or cpu_percent >= 80 or mem.percent >= 80 or disk_pct >= 85 or (load and load[0] > (psutil.cpu_count() or 1) * 1.5):
+        health = "degraded"
+
+    return {
+        "health": health,
+        "collected_at": timezone.now().isoformat(),
+        "identity": {
+            **identity,
+            "uptime_seconds": uptime_seconds,
+            "boot_time": boot,
+            "process_count": len(psutil.pids()),
+            "cpu_count_logical": psutil.cpu_count(logical=True) or 0,
+            "cpu_count_physical": psutil.cpu_count(logical=False) or 0,
+        },
+        "cpu": {
+            "percent": cpu_percent,
+            "per_cpu": [float(x) for x in (per_cpu or [])],
+            "freq": freq,
+            "load": {
+                "1": load[0] if load else None,
+                "5": load[1] if load and len(load) > 1 else None,
+                "15": load[2] if load and len(load) > 2 else None,
+            },
+        },
+        "memory": {
+            "total": mem.total,
+            "available": mem.available,
+            "used": mem.used,
+            "free": mem.free,
+            "percent": float(mem.percent),
+            "cached": int(getattr(mem, "cached", 0) or 0),
+            "buffers": int(getattr(mem, "buffers", 0) or 0),
+            "shared": int(getattr(mem, "shared", 0) or 0),
+        },
+        "swap": {
+            "total": swap.total,
+            "used": swap.used,
+            "free": swap.free,
+            "percent": float(swap.percent),
+        },
+        "disks": disks,
+        "disk_io": disk_io,
+        "network": {
+            "bytes_sent": int(getattr(net_total, "bytes_sent", 0) or 0),
+            "bytes_recv": int(getattr(net_total, "bytes_recv", 0) or 0),
+            "rates": net_rates,
+            "interfaces": interfaces,
+            "connections": conn_summary,
+        },
+        "processes": {"top_cpu": top_cpu, "top_memory": top_mem},
+        "services": services,
+        "services_down": down,
+        "temperatures": temperatures,
+        "fans": fans,
+        "users": logged_users,
+        "alerts": alerts,
+    }
 
 
 def directory_size_bytes(path: Path) -> int:
