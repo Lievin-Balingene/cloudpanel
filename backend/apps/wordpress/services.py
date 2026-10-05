@@ -1072,6 +1072,8 @@ button:hover, .wp-block-button__link:hover, .ast-button:hover {
   max-width: 1100px;
   margin: -1.5rem auto 2.5rem;
   padding: 0 1.25rem;
+  position: relative;
+  z-index: 2;
 }
 .vz-stat {
   background: #fff;
@@ -1097,8 +1099,149 @@ button:hover, .wp-block-button__link:hover, .ast-button:hover {
 .vz-blog-card div { padding: 1.15rem; }
 .vz-blog-card h3 { margin: 0 0 0.35rem; font-size: 1.05rem; }
 .vz-blog-card p { margin: 0; font-size: 0.9rem; color: #4a5d52; }
+.vz-hero {
+  position: relative;
+  min-height: clamp(520px, 88vh, 820px);
+  display: flex;
+  align-items: flex-end;
+  padding: clamp(2.5rem, 7vw, 5.5rem);
+  border-radius: 0;
+  overflow: hidden;
+  background:
+    linear-gradient(105deg, rgba(12,32,20,0.82) 0%, rgba(12,32,20,0.35) 55%, rgba(12,32,20,0.55) 100%),
+    url("https://images.unsplash.com/photo-1441974231531-c6227db76b6e?auto=format&fit=crop&w=2000&q=80")
+    center/cover no-repeat;
+  color: #fff;
+  margin: 0 0 0;
+}
+.vz-hero__inner { max-width: 680px; animation: vzFadeUp .9s ease both; }
+@keyframes vzFadeUp {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.vz-hero__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  opacity: 0.92;
+  margin-bottom: 1rem;
+  padding: 0.35rem 0.85rem;
+  border: 1px solid rgba(255,255,255,0.35);
+  border-radius: 999px;
+  backdrop-filter: blur(6px);
+  background: rgba(255,255,255,0.08);
+}
+.vz-hero h1 {
+  color: #fff !important;
+  font-size: clamp(2.6rem, 6.5vw, 4.2rem);
+  line-height: 1.05;
+  margin: 0 0 1.1rem;
+  text-shadow: 0 4px 32px rgba(0,0,0,0.35);
+}
+.vz-hero p {
+  font-size: clamp(1.08rem, 2.1vw, 1.3rem);
+  opacity: 0.95;
+  max-width: 34em;
+  margin: 0 0 1.75rem;
+  line-height: 1.55;
+}
+.vz-hero__actions { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
+.vz-hero__scroll {
+  position: absolute;
+  left: 50%;
+  bottom: 1.25rem;
+  transform: translateX(-50%);
+  font-size: 0.7rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  opacity: 0.75;
+  animation: vzBounce 2s ease infinite;
+}
+@keyframes vzBounce {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50% { transform: translateX(-50%) translateY(6px); }
+}
+.vz-path {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  counter-reset: vzstep;
+}
+.vz-path article {
+  position: relative;
+  background: #fff;
+  border-radius: 1.15rem;
+  padding: 1.35rem 1.25rem 1.25rem;
+  border: 1px solid rgba(31,77,46,0.08);
+  box-shadow: 0 8px 28px rgba(26,46,34,0.05);
+}
+.vz-path article::before {
+  counter-increment: vzstep;
+  content: counter(vzstep);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem; height: 1.75rem;
+  border-radius: 999px;
+  background: var(--vz-mist);
+  color: var(--vz-forest);
+  font-weight: 700;
+  font-size: 0.85rem;
+  margin-bottom: 0.75rem;
+}
+.vz-quote {
+  max-width: 1100px;
+  margin: 0 auto 3rem;
+  padding: clamp(2rem, 5vw, 3rem);
+  border-radius: 1.5rem;
+  background:
+    linear-gradient(135deg, rgba(31,77,46,0.92), rgba(47,107,69,0.88)),
+    url("https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?auto=format&fit=crop&w=1600&q=70")
+    center/cover;
+  color: #fff;
+  text-align: center;
+}
+.vz-quote p {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(1.25rem, 3vw, 1.75rem);
+  line-height: 1.45;
+  margin: 0 0 0.75rem;
+  max-width: 22em;
+  margin-left: auto;
+  margin-right: auto;
+}
+.vz-quote cite { opacity: 0.8; font-style: normal; font-size: 0.9rem; }
+.vz-nav-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.75rem;
+  max-width: 1100px;
+  margin: 0 auto 2.5rem;
+  padding: 0 1.25rem;
+}
+.vz-nav-strip a {
+  display: block;
+  text-align: center;
+  text-decoration: none !important;
+  color: var(--vz-forest) !important;
+  background: #fff;
+  border: 1px solid rgba(31,77,46,0.1);
+  border-radius: 999px;
+  padding: 0.7rem 1rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+  transition: background .2s ease, transform .2s ease;
+}
+.vz-nav-strip a:hover {
+  background: var(--vz-mist);
+  transform: translateY(-2px);
+}
 @media (max-width: 640px) {
-  .vz-btn--ghost { display: block; margin: 0.75rem 0 0; text-align: center; }
+  .vz-btn--ghost { display: inline-block; margin: 0; text-align: center; }
+  .vz-hero { min-height: 78vh; align-items: center; }
 }
 """
 
@@ -1107,41 +1250,79 @@ _HOME_HTML = """
 <!-- wp:html -->
 <div class="vz-hero">
   <div class="vz-hero__inner">
-    <span class="vz-hero__eyebrow">Nature &amp; biodiversite</span>
+    <span class="vz-hero__eyebrow"><span class="vz-leaf"></span> Nature &amp; biodiversite</span>
     <h1>Echappee Verte</h1>
-    <p>Explorez forets, faune et paysages — un espace immersif pour ressentir, comprendre et proteger le vivant.</p>
-    <p>
-      <a class="vz-btn" href="#decouvrir">Decouvrir</a>
-      <a class="vz-btn vz-btn--ghost" href="/blog/">Le blog</a>
-      <a class="vz-btn vz-btn--ghost" href="/biodiversite/">Biodiversite</a>
-    </p>
+    <p>Un refuge immersif pour explorer forets, faune et paysages — ressentir, comprendre et proteger le vivant, pas a pas.</p>
+    <div class="vz-hero__actions">
+      <a class="vz-btn" href="#decouvrir">Commencer l'exploration</a>
+      <a class="vz-btn vz-btn--ghost" href="/blog/">Lire le blog</a>
+      <a class="vz-btn vz-btn--ghost" href="/randonnees/">Randonnees</a>
+    </div>
   </div>
+  <span class="vz-hero__scroll">Defiler</span>
 </div>
 <div class="vz-stats">
   <div class="vz-stat"><strong>120+</strong><span>Especes observees</span></div>
   <div class="vz-stat"><strong>48</strong><span>Sentiers recenses</span></div>
   <div class="vz-stat"><strong>12</strong><span>Actions locales</span></div>
+  <div class="vz-stat"><strong>4</strong><span>Saisons a suivre</span></div>
 </div>
+<nav class="vz-nav-strip" aria-label="Sections">
+  <a href="/biodiversite/">Biodiversite</a>
+  <a href="/randonnees/">Randonnees</a>
+  <a href="/galerie/">Galerie</a>
+  <a href="/agenda/">Agenda</a>
+  <a href="/ressources/">Ressources</a>
+  <a href="/a-propos/">A propos</a>
+</nav>
 <div class="vz-section" id="decouvrir">
   <h2><span class="vz-leaf"></span>Notre mission</h2>
-  <p class="vz-lead">Sensibiliser a la beaute du monde naturel et transmettre des gestes concrets pour la biodiversite — pres de chez vous et au bout du monde.</p>
+  <p class="vz-lead">Sensibiliser a la beaute du monde naturel et transmettre des gestes concrets pour la biodiversite — pres de chez vous comme au bout du monde.</p>
   <div class="vz-grid">
     <article class="vz-card">
       <div class="vz-card__icon">F</div>
       <h3>Forets &amp; paysages</h3>
       <p>Reportages immersifs sur les grands espaces, sentiers et canopees qui respirent encore.</p>
+      <p><a href="/randonnees/">Explorer les sentiers →</a></p>
     </article>
     <article class="vz-card">
       <div class="vz-card__icon">B</div>
       <h3>Faune &amp; flore</h3>
       <p>Portraits d'especes, cycles des saisons et interactions invisibles du vivant.</p>
+      <p><a href="/biodiversite/">Decouvrir la biodiversite →</a></p>
     </article>
     <article class="vz-card">
       <div class="vz-card__icon">A</div>
       <h3>Agir localement</h3>
       <p>Idees simples pour jardins, balcons et collectivites — chaque geste compte.</p>
+      <p><a href="/agenda/">Voir l'agenda →</a></p>
     </article>
   </div>
+</div>
+<div class="vz-section vz-section--alt">
+  <h2><span class="vz-leaf"></span>Par ou commencer ?</h2>
+  <p class="vz-lead">Trois portes d'entree selon votre envie du moment — lecture, marche ou action.</p>
+  <div class="vz-path">
+    <article>
+      <h3>Lire</h3>
+      <p>Articles courts pour comprendre un ecosysteme en quelques minutes.</p>
+      <p><a href="/blog/">Ouvrir le blog</a></p>
+    </article>
+    <article>
+      <h3>Marcher</h3>
+      <p>Idees de balades respectueuses, avec repères leave-no-trace.</p>
+      <p><a href="/randonnees/">Voir les randonnees</a></p>
+    </article>
+    <article>
+      <h3>Agir</h3>
+      <p>Ateliers, nettoyages et initiatives a rejoindre pres de chez vous.</p>
+      <p><a href="/agenda/">Consulter l'agenda</a></p>
+    </article>
+  </div>
+</div>
+<div class="vz-quote">
+  <p>« La nature ne se contemple pas en silence seulement — elle se protege aussi par des gestes simples. »</p>
+  <cite>— Echappee Verte</cite>
 </div>
 <div class="vz-section">
   <h2><span class="vz-leaf"></span>Derniers articles</h2>
@@ -1170,7 +1351,7 @@ _HOME_HTML = """
   <h2>Rejoignez l'echappee</h2>
   <p>Des recits, des images et des pistes concretes pour reconnecter les regards a la nature.</p>
   <a class="vz-btn" href="/a-propos/">En savoir plus</a>
-  <a class="vz-btn vz-btn--ghost" href="/agenda/">Agenda ecolo</a>
+  <a class="vz-btn vz-btn--ghost" href="/contact/">Nous ecrire</a>
 </div>
 <!-- /wp:html -->
 """

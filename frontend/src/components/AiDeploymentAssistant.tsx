@@ -577,8 +577,18 @@ export function AiDeploymentAssistant() {
     onSuccess: (data) => {
       const nextPending = data.pending_actions || [];
       setPending((prev) => mergePendingActions(prev, nextPending));
-      // Pas de « Continuer » tant qu'il faut Approuver
+      // Jamais de « Continuer » si une approbation est requise
       setSuggestions(nextPending.length ? [] : data.suggestions || []);
+      void qc.invalidateQueries({ queryKey: ["ai-pending-actions"] });
+      void apiRequest<{ pending_actions: PendingAction[] }>("/ai/actions/pending/")
+        .then((res) => {
+          const fromApi = res.pending_actions || [];
+          if (fromApi.length) {
+            setPending((prev) => mergePendingActions(prev, fromApi));
+            setSuggestions([]);
+          }
+        })
+        .catch(() => undefined);
       const names = (data.tool_trace || []).map((t) => String(t?.name || "")).filter(Boolean);
       if (names.length) setToolNames((prev) => [...prev, ...names]);
       const full = data.message.content || "";
@@ -1123,62 +1133,6 @@ export function AiDeploymentAssistant() {
                   )}
 
                   <div className="vz-ai-thread flex-1 space-y-3 overflow-y-auto px-2.5 py-2.5 text-sm sm:px-3">
-                    {pending.length > 0 && (
-                      <div className="sticky top-0 z-10 -mx-0.5 space-y-2 border-b border-amber-300/50 bg-[#fffbeb]/95 pb-2.5 pt-0.5 backdrop-blur-sm dark:border-amber-700/40 dark:bg-amber-950/90">
-                        <p className="px-0.5 text-[11px] font-semibold text-amber-900 dark:text-amber-100">
-                          {pending.length} action{pending.length > 1 ? "s" : ""} en attente — Approuver ou Refuser
-                        </p>
-                        {pending.map((p) => {
-                          const token = pendingActionToken(p);
-                          const risk = (p.risk || "medium").toLowerCase();
-                          const riskCls =
-                            risk === "critical"
-                              ? "text-rose-700 dark:text-rose-200"
-                              : risk === "high"
-                                ? "text-amber-700 dark:text-amber-200"
-                                : "text-sky-700 dark:text-sky-200";
-                          return (
-                            <div key={token || p.tool_name} className="vz-ai-confirm ring-2 ring-cp-orange/40">
-                              <p className={`text-[10px] font-bold uppercase tracking-wider ${riskCls}`}>
-                                Confirmation · {risk}
-                              </p>
-                              <p className="mt-1 text-[13px] font-medium leading-snug text-cp-text dark:text-white">
-                                {p.description || p.tool_name}
-                              </p>
-                              {(p.command_preview || p.tool_name) && (
-                                <pre className="vz-ai-confirm-cmd mt-2 overflow-x-auto">
-                                  {p.command_preview || p.tool_name}
-                                </pre>
-                              )}
-                              <div className="mt-2.5 flex flex-wrap gap-2">
-                                <button
-                                  type="button"
-                                  className="inline-flex items-center gap-1 rounded-lg bg-cp-orange px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-cp-orange-dark disabled:opacity-60"
-                                  disabled={confirmMut.isPending || !token}
-                                  onClick={() => confirmPending(p, true)}
-                                >
-                                  {confirmMut.isPending ? (
-                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                  ) : (
-                                    <Check className="h-3.5 w-3.5" />
-                                  )}
-                                  Approuver
-                                </button>
-                                <button
-                                  type="button"
-                                  className="vz-btn-ghost !px-3 !py-1.5 text-xs"
-                                  disabled={confirmMut.isPending || !token}
-                                  onClick={() => confirmPending(p, false)}
-                                >
-                                  Refuser
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-
                     {!conversationId && localMessages.length === 0 ? (
                       <BootSkeleton />
                     ) : null}
@@ -1302,6 +1256,56 @@ export function AiDeploymentAssistant() {
                     )}
                     <div ref={bottomRef} />
                   </div>
+
+                  {pending.length > 0 && (
+                    <div className="shrink-0 space-y-2 border-t-2 border-cp-orange/50 bg-gradient-to-b from-amber-50 to-orange-50 px-3 py-3 dark:from-amber-950/80 dark:to-orange-950/50">
+                      <p className="text-[11px] font-bold uppercase tracking-wide text-amber-900 dark:text-amber-100">
+                        Action requise — cliquez Approuver
+                      </p>
+                      {pending.map((p) => {
+                        const token = pendingActionToken(p);
+                        const risk = (p.risk || "medium").toLowerCase();
+                        return (
+                          <div key={token || p.tool_name} className="vz-ai-confirm ring-2 ring-cp-orange/50">
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-200">
+                              Confirmation · {risk}
+                            </p>
+                            <p className="mt-1 text-[13px] font-medium leading-snug text-cp-text dark:text-white">
+                              {p.description || p.tool_name}
+                            </p>
+                            {(p.command_preview || p.tool_name) && (
+                              <pre className="vz-ai-confirm-cmd mt-2 overflow-x-auto">
+                                {p.command_preview || p.tool_name}
+                              </pre>
+                            )}
+                            <div className="mt-2.5 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-cp-orange px-4 py-2.5 text-sm font-bold text-white shadow-md hover:bg-cp-orange-dark disabled:opacity-60 sm:flex-none"
+                                disabled={confirmMut.isPending || !token}
+                                onClick={() => confirmPending(p, true)}
+                              >
+                                {confirmMut.isPending ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Check className="h-4 w-4" />
+                                )}
+                                Approuver
+                              </button>
+                              <button
+                                type="button"
+                                className="vz-btn-ghost !px-4 !py-2.5 text-sm"
+                                disabled={confirmMut.isPending || !token}
+                                onClick={() => confirmPending(p, false)}
+                              >
+                                Refuser
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
 
                   <div className="vz-ai-composer border-t border-cp-border/80 p-2.5">
                     <form
