@@ -329,9 +329,10 @@ def sync_python_passenger_wsgi(user: User, params: dict[str, Any]) -> dict[str, 
 @register_tool(
     name="add_django_page",
     description=(
-        "Ajoute une page Django dynamique (vue + template + URL) sur une app Python/Django "
-        "existante, ex. slug=lievin → https://domaine/lievin/. "
-        "Cible via app_id ou app_name (ex: vzone). Redémarre l'app pour appliquer tout de suite."
+        "Ajoute une page Django dynamique (vue + template + URL) ET le bouton dans le menu "
+        "de navigation du site (base.html / navbar), ex. slug=lievin → /lievin/ + lien menu. "
+        "Cible via app_id ou app_name (ex: vzone). Redémarre l'app. "
+        "À utiliser aussi quand l'utilisateur dit « vas-y », « ajoute au menu », « bouton dans le menu »."
     ),
     parameters={
         "type": "object",
@@ -342,10 +343,14 @@ def sync_python_passenger_wsgi(user: User, params: dict[str, Any]) -> dict[str, 
                 "type": "string",
                 "description": "Slug URL (ex: lievin → /lievin/)",
             },
-            "title": {"type": "string", "description": "Titre affiché (défaut: slug)"},
+            "title": {"type": "string", "description": "Titre / libellé menu (défaut: slug)"},
             "restart": {
                 "type": "boolean",
                 "description": "Redémarrer l'app après écriture (défaut true)",
+            },
+            "add_to_nav": {
+                "type": "boolean",
+                "description": "Insérer le lien dans base.html / navbar (défaut true)",
             },
         },
         "required": ["slug"],
@@ -387,6 +392,7 @@ def add_django_page(user: User, params: dict[str, Any]) -> dict[str, Any]:
             slug=slug,
             title=require_str(params, "title", max_len=120) or "",
             restart=bool(params.get("restart", True)),
+            add_to_nav=bool(params.get("add_to_nav", True)),
         )
 
     return run_service(_run)

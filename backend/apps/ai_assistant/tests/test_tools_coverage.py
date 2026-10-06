@@ -360,6 +360,25 @@ def test_mock_add_django_page_lievin():
     assert "add_django_page" in names
     call = next(t for t in r.tool_calls if t.name == "add_django_page")
     assert call.arguments.get("slug") == "lievin"
+    assert call.arguments.get("add_to_nav") is True
+
+    # « vas y » après demande menu
+    r2 = p.chat(
+        [
+            ChatMessage(role="user", content="le bouton doit etre dans le menu du site django lievin"),
+            ChatMessage(
+                role="assistant",
+                content="Voulez-vous que je l'ajoute dans base.html ?",
+            ),
+            ChatMessage(role="user", content="vas y"),
+        ],
+        tools=tools,
+    )
+    assert r2.tool_calls
+    assert any(t.name == "add_django_page" for t in r2.tool_calls)
+    call2 = next(t for t in r2.tool_calls if t.name == "add_django_page")
+    assert call2.arguments.get("slug") == "lievin"
+    assert call2.arguments.get("add_to_nav") is True
 
 
 def test_mock_email_page_help_not_python_logs():

@@ -553,6 +553,18 @@ def test_add_django_dynamic_page_files(tmp_path, settings):
         "from django.urls import path\nurlpatterns = []\n",
         encoding="utf-8",
     )
+    # Menu site (comme client/templates/client/base.html)
+    client_tmpl = tmp_path / "client" / "templates" / "client"
+    client_tmpl.mkdir(parents=True)
+    (client_tmpl / "base.html").write_text(
+        "<html><body>\n"
+        '<nav class="navbar"><ul class="navbar-nav">\n'
+        '  <li class="nav-item"><a class="nav-link" href="/">Accueil</a></li>\n'
+        "</ul></nav>\n"
+        "{% block content %}{% endblock %}\n"
+        "</body></html>\n",
+        encoding="utf-8",
+    )
     app = PythonApp(
         owner=user,
         name="vzone",
@@ -577,3 +589,7 @@ def test_add_django_dynamic_page_files(tmp_path, settings):
     assert (tmp_path / "templates" / "vz_pages" / "lievin.html").is_file()
     assert "vz_pages.urls" in (cfg / "urls.py").read_text(encoding="utf-8")
     assert "'vz_pages'" in (cfg / "settings.py").read_text(encoding="utf-8")
+    assert result.get("nav_patched")
+    nav_html = Path(result["nav_patched"][0]).read_text(encoding="utf-8")
+    assert "url 'lievin'" in nav_html
+    assert "Lievin" in nav_html or "Liévin" in nav_html or "lievin" in nav_html.lower()

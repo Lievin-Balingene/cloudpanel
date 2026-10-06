@@ -2740,15 +2740,188 @@ def _ensure_url_include(text: str, *, include_path: str, route: str = "") -> tup
     return text[: m.end()] + snippet + text[m.end() :], True
 
 
+def _find_django_nav_templates(root: Path, *, limit: int = 12) -> list[Path]:
+    """Cherche base.html / nav / header susceptibles de contenir le menu."""
+    if not root.is_dir():
+        return []
+    preferred_names = {
+        "base.html",
+        "navbar.html",
+        "nav.html",
+        "header.html",
+        "navigation.html",
+        "menu.html",
+    }
+    hits: list[Path] = []
+    try:
+        for path in root.rglob("*.html"):
+            try:
+                rel = path.relative_to(root)
+            except ValueError:
+                continue
+            parts = {p.lower() for p in rel.parts}
+            if parts & {"venv", ".venv", "node_modules", "__pycache__", "static", "migrations"}:
+                continue
+            name = path.name.lower()
+            if name not in preferred_names and "base" not in name and "nav" not in name:
+                continue
+            hits.append(path)
+            if len(hits) >= 40:
+                break
+    except OSError:
+        return []
+
+    def _score(p: Path) -> tuple[int, str]:
+        name = p.name.lower()
+        try:
+            text = p.read_text(encoding="utf-8", errors="ignore")[:8000].lower()
+        except OSError:
+            text = ""
+        score = 0
+        if name == "base.html":
+            score += 50
+        if "nav" in name or "menu" in name or "header" in name:
+            score += 30
+        if "<nav" in text or "navbar" in text or "nav-item" in text or "nav-link" in text:
+            score += 40
+        if "</ul>" in text and ("nav" in text or "menu" in text):
+            score += 20
+        if "client" in str(p).lower():
+            score += 5
+        return (-score, str(p).lower())
+
+    hits.sort(key=_score)
+    return hits[:limit]
+
+
+def _nav_link_html(slug: str, title: str, *, bootstrap: bool) -> str:
+    label = title or slug.title()
+    href = f"{{% url '{slug}' %}}"
+    if bootstrap:
+        return (
+            f'    <li class="nav-item">\n'
+            f'      <a class="nav-link" href="{href}">{label}</a>\n'
+            f"    </li>\n"
+        )
+    return f'    <a class="vz-nav-link" href="{href}">{label}</a>\n'
+
+
+def _inject_nav_link_into_html(text: str, *, slug: str, title: str) -> tuple[str, bool]:
+    """Insère le lien menu si absent. Retourne (html, modified)."""
+    markers = (
+        f"url '{slug}'",
+        f'url "{slug}"',
+        f"/{slug}/",
+        f"href=\"/{slug}\"",
+        f"href='/{slug}'",
+    )
+    low = text.lower()
+    if any(m.lower() in low for m in markers) and (slug in low):
+        # Déjà un lien vers cette page
+        if f"url '{slug}'" in text or f'url "{slug}"' in text or f"/{slug}/" in text:
+            return text, False
+
+    bootstrap = "nav-item" in text or "nav-link" in text or "navbar" in text.lower()
+    snippet = _nav_link_html(slug, title, bootstrap=bootstrap)
+
+    # 1) Avant </ul> dans un bloc nav/navbar
+    for m in re.finditer(r"</ul\s*>", text, flags=re.IGNORECASE):
+        start = max(0, m.start() - 800)
+        window = text[start : m.start()].lower()
+        if any(k in window for k in ("nav", "menu", "navbar", "nav-item", "nav-link")):
+            return text[: m.start()] + snippet + text[m.start() :], True
+
+    # 2) Avant </nav>
+    m = re.search(r"</nav\s*>", text, flags=re.IGNORECASE)
+    if m:
+        return text[: m.start()] + snippet + text[m.start() :], True
+
+    # 3) Après le dernier nav-link / nav-item
+    matches = list(re.finditer(r"</(?:li|a)\s*>", text, flags=re.IGNORECASE))
+    for m in reversed(matches):
+        start = max(0, m.start() - 200)
+        if "nav-" in text[start : m.end()].lower():
+            return text[: m.end()] + "\n" + snippet + text[m.end() :], True
+
+    # 4) Fallback : juste après <body>
+    m = re.search(r"<body[^>]*>", text, flags=re.IGNORECASE)
+    if m:
+        bar = (
+            '\n<nav class="vz-auto-nav" style="padding:.75rem 1rem;background:#1f4d2e;">\n'
+            f'{snippet}'
+            "</nav>\n"
+        )
+        return text[: m.end()] + bar + text[m.end() :], True
+
+    return text + "\n" + snippet, True
+
+
+def inject_django_page_into_nav(
+    project: Path,
+    *,
+    slug: str,
+    title: str,
+    extra_roots: list[Path] | None = None,
+) -> dict:
+    """
+    Ajoute le bouton / lien de la page dans le(s) template(s) de navigation du site.
+    Cherche base.html / navbar sous le projet Django (ex. client/templates/…/base.html).
+    """
+    roots = [project]
+    for r in extra_roots or []:
+        if r not in roots:
+            roots.append(r)
+    candidates: list[Path] = []
+    for root in roots:
+        candidates.extend(_find_django_nav_templates(root))
+    # Déduplique en gardant l'ordre (meilleurs scores d'abord par root)
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for p in candidates:
+        key = str(p.resolve()) if p.exists() else str(p)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(p)
+
+    patched: list[str] = []
+    skipped: list[str] = []
+    for path in unique[:8]:
+        try:
+            original = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        updated, changed = _inject_nav_link_into_html(original, slug=slug, title=title)
+        if not changed:
+            skipped.append(str(path))
+            continue
+        try:
+            path.write_text(updated, encoding="utf-8")
+            patched.append(str(path))
+        except OSError as exc:
+            skipped.append(f"{path}: {exc}")
+        # Un seul template principal suffit en général
+        if patched:
+            break
+
+    return {
+        "nav_patched": patched,
+        "nav_skipped": skipped[:10],
+        "nav_candidates": [str(p) for p in unique[:8]],
+    }
+
+
 def add_django_dynamic_page(
     app: PythonApp,
     *,
     slug: str,
     title: str = "",
     restart: bool = True,
+    add_to_nav: bool = True,
 ) -> dict:
     """
     Ajoute une page Django dynamique /{slug}/ sur une app Python (vue + template + URL).
+    Par défaut, injecte aussi le lien dans le menu (base.html / navbar).
     Appliqué immédiatement sur le disque ; redémarre l'app pour que ce soit live.
     """
     slug = (slug or "").strip().lower().strip("/")
@@ -2868,6 +3041,7 @@ def add_django_dynamic_page(
     )
 
     steps: list[str] = [f"view:{view_fn}", f"template:{slug}.html"]
+    nav_info: dict = {}
 
     settings_file = project / pkg / "settings.py"
     if settings_file.is_file():
@@ -2893,7 +3067,24 @@ def add_django_dynamic_page(
             urls_main.write_text(u2, encoding="utf-8")
             steps.append("urls_include")
 
+    if add_to_nav:
+        nav_info = inject_django_page_into_nav(
+            project,
+            slug=slug,
+            title=title,
+            extra_roots=[app_root],
+        )
+        if nav_info.get("nav_patched"):
+            steps.append("nav:" + ",".join(Path(p).name for p in nav_info["nav_patched"]))
+        else:
+            steps.append("nav_not_found")
+
     fix_client_paths(app.owner, pages_dir, tmpl_dir, project / pkg)
+    for p in nav_info.get("nav_patched") or []:
+        try:
+            fix_client_paths(app.owner, Path(p).parent)
+        except Exception:  # noqa: BLE001
+            pass
 
     restarted = False
     if restart and app.is_active:
@@ -2907,6 +3098,7 @@ def add_django_dynamic_page(
 
     domain = (app.domain_name or "").strip()
     page_url = f"https://{domain}/{slug}/" if domain else f"/{slug}/"
+    nav_ok = bool(nav_info.get("nav_patched"))
     return {
         "app_id": app.pk,
         "app_name": app.name,
@@ -2916,10 +3108,18 @@ def add_django_dynamic_page(
         "path": f"/{slug}/",
         "project": str(project),
         "restarted": restarted,
+        "add_to_nav": add_to_nav,
+        "nav_patched": nav_info.get("nav_patched") or [],
+        "nav_candidates": nav_info.get("nav_candidates") or [],
         "steps": steps,
         "message": (
-            f"Page dynamique « {title} » ajoutée sur {app.name} → {page_url} "
-            f"(live{' + restart' if restarted else ''})."
+            f"Page dynamique « {title} » ajoutée sur {app.name} → {page_url}"
+            + (
+                f" + bouton menu dans {Path(nav_info['nav_patched'][0]).name}"
+                if nav_ok
+                else " (menu : aucun base.html/nav trouvé à patcher)"
+            )
+            + f"{' · app redémarrée' if restarted else ''}."
         ),
     }
 

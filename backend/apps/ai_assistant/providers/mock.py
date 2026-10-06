@@ -484,8 +484,12 @@ def _wants_write_file(text: str) -> bool:
 
 
 def _wants_django_page(text: str) -> bool:
-    """« ajoute une page dynamique … lievin » / « page django /lievin/ »."""
+    """« ajoute une page dynamique … lievin » / « page django /lievin/ » / « bouton menu »."""
     t = _norm_text(text)
+    if any(k in t for k in ("menu", "navbar", "navigation", "bouton")) and any(
+        k in t for k in ("lievin", "page", "django", "lien", "ajoute", "vas y", "vas-y")
+    ):
+        return True
     if "page" not in t and "route" not in t and "vue" not in t:
         return False
     djangoish = any(k in t for k in ("django", "dynamique", "site django", "app django"))
@@ -493,6 +497,24 @@ def _wants_django_page(text: str) -> bool:
     return bool(djangoish and action) or (
         "page" in t and action and bool(_extract_django_page_slug(text))
     )
+
+
+def _pending_django_page_slug(messages: list, turns: list[str]) -> str | None:
+    """Slug mentionné dans l'historique (ex. lievin) pour « vas-y »."""
+    for turn in reversed(turns or []):
+        if _wants_django_page(turn) or "lievin" in _norm_text(turn):
+            slug = _extract_django_page_slug(turn)
+            if slug:
+                return slug
+            if "lievin" in _norm_text(turn):
+                return "lievin"
+    for m in reversed(messages or []):
+        content = getattr(m, "content", "") or ""
+        if "lievin" in content.lower() and (
+            "page" in content.lower() or "django" in content.lower() or "menu" in content.lower()
+        ):
+            return _extract_django_page_slug(content) or "lievin"
+    return None
 
 
 def _extract_django_page_slug(text: str) -> str | None:
@@ -2742,16 +2764,31 @@ def _detect_intent(
             ],
         }
 
-    if _wants_django_page(last_user_l) and "add_django_page" in tool_names:
-        slug = _extract_django_page_slug(last_user_l) or "lievin"
+    if (
+        _wants_django_page(last_user_l)
+        or (_wants_go_ahead(last_user_l) and _pending_django_page_slug(messages, turns))
+    ) and "add_django_page" in tool_names:
+        slug = (
+            _extract_django_page_slug(last_user_l)
+            or _pending_django_page_slug(messages, turns)
+            or "lievin"
+        )
         return {
             "say": (
-                f"Compris — page Django dynamique **/{slug}/** "
-                "(vue + template + URL, redémarrage app)…"
+                f"Compris — page Django **/{slug}/** + **bouton dans le menu** "
+                "(base.html/navbar), redémarrage app…"
             ),
             "tools": [
-                ("check_application_status", {}),
-                ("add_django_page", {"slug": slug, "app_name": "vzone", "restart": True}),
+                (
+                    "add_django_page",
+                    {
+                        "slug": slug,
+                        "app_name": "vzone",
+                        "restart": True,
+                        "add_to_nav": True,
+                        "title": slug.replace("-", " ").title(),
+                    },
+                )
             ],
         }
 
