@@ -529,3 +529,51 @@ def test_gunicorn_logs_to_stdio_not_path():
     assert "ModuleNotFoundError" in clipped
     assert "django" in clipped
     assert clipped.startswith("…")
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_add_django_dynamic_page_files(tmp_path, settings):
+    from apps.accounts.models import User
+    from apps.python_apps.models import PythonApp
+    import apps.python_apps.services as svc
+
+    settings.VZONE_PROVISION_MODE = "mock"
+    user = User.objects.create_user(username="djpage", email="dj@example.com", password="x")
+    (tmp_path / "manage.py").write_text("# manage\n", encoding="utf-8")
+    cfg = tmp_path / "config"
+    cfg.mkdir()
+    (cfg / "__init__.py").write_text("", encoding="utf-8")
+    (cfg / "settings.py").write_text(
+        "INSTALLED_APPS = [\n    'django.contrib.staticfiles',\n]\n"
+        "TEMPLATES = [{'BACKEND': 'x', 'DIRS': [], 'APP_DIRS': True}]\n",
+        encoding="utf-8",
+    )
+    (cfg / "urls.py").write_text(
+        "from django.urls import path\nurlpatterns = []\n",
+        encoding="utf-8",
+    )
+    app = PythonApp(
+        owner=user,
+        name="vzone",
+        relative_root="vzone",
+        framework=PythonApp.Framework.DJANGO,
+        mode=PythonApp.Mode.WSGI,
+        domain_name="vzone.example.com",
+        is_active=False,
+        status=PythonApp.Status.STOPPED,
+    )
+
+    orig = svc.absolute_app_root
+    svc.absolute_app_root = lambda _a: tmp_path
+    try:
+        result = svc.add_django_dynamic_page(app, slug="lievin", title="Lievin", restart=False)
+    finally:
+        svc.absolute_app_root = orig
+
+    assert result["page_url"].endswith("/lievin/")
+    assert (tmp_path / "vz_pages" / "views.py").is_file()
+    assert "def page_lievin" in (tmp_path / "vz_pages" / "views.py").read_text(encoding="utf-8")
+    assert (tmp_path / "templates" / "vz_pages" / "lievin.html").is_file()
+    assert "vz_pages.urls" in (cfg / "urls.py").read_text(encoding="utf-8")
+    assert "'vz_pages'" in (cfg / "settings.py").read_text(encoding="utf-8")

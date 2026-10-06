@@ -109,7 +109,8 @@ def create_python_app(user: User, params: dict[str, Any]) -> dict[str, Any]:
     dangerous=True,
 )
 def update_python_app(user: User, params: dict[str, Any]) -> dict[str, Any]:
-    from apps.python_apps.services import apps_qs, update_python_app as svc
+    from apps.ai_assistant.tools.helpers import ai_python_apps_qs as apps_qs
+    from apps.python_apps.services import update_python_app as svc
 
     app = apps_qs(user).filter(pk=require_int(params, "app_id")).first()
     if not app:
@@ -143,7 +144,8 @@ def update_python_app(user: User, params: dict[str, Any]) -> dict[str, Any]:
     dangerous=True,
 )
 def delete_python_app(user: User, params: dict[str, Any]) -> dict[str, Any]:
-    from apps.python_apps.services import apps_qs, delete_python_app as svc
+    from apps.ai_assistant.tools.helpers import ai_python_apps_qs as apps_qs
+    from apps.python_apps.services import delete_python_app as svc
 
     app = apps_qs(user).filter(pk=require_int(params, "app_id")).first()
     if not app:
@@ -225,7 +227,8 @@ def create_node_app(user: User, params: dict[str, Any]) -> dict[str, Any]:
     dangerous=True,
 )
 def update_node_app(user: User, params: dict[str, Any]) -> dict[str, Any]:
-    from apps.node_apps.services import apps_qs, update_node_app as svc
+    from apps.ai_assistant.tools.helpers import ai_node_apps_qs as apps_qs
+    from apps.node_apps.services import update_node_app as svc
 
     app = apps_qs(user).filter(pk=require_int(params, "app_id")).first()
     if not app:
@@ -259,7 +262,8 @@ def update_node_app(user: User, params: dict[str, Any]) -> dict[str, Any]:
     dangerous=True,
 )
 def delete_node_app(user: User, params: dict[str, Any]) -> dict[str, Any]:
-    from apps.node_apps.services import apps_qs, delete_node_app as svc
+    from apps.ai_assistant.tools.helpers import ai_node_apps_qs as apps_qs
+    from apps.node_apps.services import delete_node_app as svc
 
     app = apps_qs(user).filter(pk=require_int(params, "app_id")).first()
     if not app:
@@ -298,7 +302,8 @@ def delete_node_app(user: User, params: dict[str, Any]) -> dict[str, Any]:
     dangerous=True,
 )
 def sync_python_passenger_wsgi(user: User, params: dict[str, Any]) -> dict[str, Any]:
-    from apps.python_apps.services import apps_qs, start_python_app, stop_python_app, sync_passenger_wsgi
+    from apps.ai_assistant.tools.helpers import ai_python_apps_qs as apps_qs
+    from apps.python_apps.services import start_python_app, stop_python_app, sync_passenger_wsgi
 
     app = apps_qs(user).filter(pk=require_int(params, "app_id")).first()
     if not app:
@@ -317,5 +322,71 @@ def sync_python_passenger_wsgi(user: User, params: dict[str, Any]) -> dict[str, 
             start_python_app(app)
             restarted = True
         return {**info, "app": _python_summary(app), "restarted": restarted}
+
+    return run_service(_run)
+
+
+@register_tool(
+    name="add_django_page",
+    description=(
+        "Ajoute une page Django dynamique (vue + template + URL) sur une app Python/Django "
+        "existante, ex. slug=lievin → https://domaine/lievin/. "
+        "Cible via app_id ou app_name (ex: vzone). Redémarre l'app pour appliquer tout de suite."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "app_id": {"type": "integer"},
+            "app_name": {"type": "string", "description": "Nom de l'app (ex: vzone)"},
+            "slug": {
+                "type": "string",
+                "description": "Slug URL (ex: lievin → /lievin/)",
+            },
+            "title": {"type": "string", "description": "Titre affiché (défaut: slug)"},
+            "restart": {
+                "type": "boolean",
+                "description": "Redémarrer l'app après écriture (défaut true)",
+            },
+        },
+        "required": ["slug"],
+        "additionalProperties": False,
+    },
+    dangerous=True,
+)
+def add_django_page(user: User, params: dict[str, Any]) -> dict[str, Any]:
+    from apps.ai_assistant.tools.helpers import ai_python_apps_qs as apps_qs
+    from apps.python_apps.services import add_django_dynamic_page as svc
+
+    slug = require_str(params, "slug", max_len=40)
+    if not slug:
+        return err("slug requis (ex: lievin)")
+    app_id = require_int(params, "app_id")
+    app_name = require_str(params, "app_name", max_len=80)
+    qs = apps_qs(user)
+    app = None
+    if app_id:
+        app = qs.filter(pk=app_id).first()
+    elif app_name:
+        app = qs.filter(name__iexact=app_name.strip()).first()
+    else:
+        # Une seule app Django → cibler automatiquement
+        django_apps = list(qs.filter(framework="django")[:3])
+        if len(django_apps) == 1:
+            app = django_apps[0]
+        elif qs.count() == 1:
+            app = qs.first()
+    if not app:
+        return err(
+            "App Django introuvable — passez app_id ou app_name (ex: vzone).",
+            "not_found",
+        )
+
+    def _run():
+        return svc(
+            app,
+            slug=slug,
+            title=require_str(params, "title", max_len=120) or "",
+            restart=bool(params.get("restart", True)),
+        )
 
     return run_service(_run)

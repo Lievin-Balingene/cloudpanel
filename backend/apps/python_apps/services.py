@@ -2683,6 +2683,247 @@ def restart_python_app(app: PythonApp) -> PythonApp:
     return start_python_app(app)
 
 
+_PAGE_SLUG_RE = re.compile(r"^[a-z][a-z0-9_-]{1,40}$")
+
+
+def _django_project_root(app_root: Path) -> tuple[Path, str]:
+    """Retourne (répertoire manage.py, nom package settings)."""
+    settings_module, subdir = resolve_django_layout(app_root)
+    pkg = settings_module.split(".", 1)[0]
+    project = app_root / subdir if subdir else app_root
+    if not (project / "manage.py").is_file():
+        raise VZoneAPIException(
+            detail="Projet Django introuvable (manage.py manquant).",
+            code="django_missing",
+            status_code=404,
+        )
+    return project, pkg
+
+
+def _ensure_line_in_list(text: str, *, list_name: str, item: str) -> tuple[str, bool]:
+    """Ajoute item dans list_name = [...] si absent."""
+    if re.search(rf"['\"]{re.escape(item)}['\"]", text):
+        return text, False
+    pattern = rf"({list_name}\s*=\s*\[)"
+    m = re.search(pattern, text)
+    if not m:
+        return text, False
+    insert_at = m.end()
+    addition = f"\n    '{item}',"
+    return text[:insert_at] + addition + text[insert_at:], True
+
+
+def _ensure_url_include(text: str, *, include_path: str, route: str = "") -> tuple[str, bool]:
+    """Ajoute path('…', include('…')) dans urlpatterns si absent."""
+    marker = f"include('{include_path}')"
+    if marker in text or f'include("{include_path}")' in text:
+        return text, False
+    if "from django.urls import" in text and "include" not in text:
+        text = re.sub(
+            r"from django\.urls import ([^\n]+)",
+            lambda m: (
+                m.group(0)
+                if "include" in m.group(1)
+                else f"from django.urls import include, {m.group(1).strip()}"
+            ),
+            text,
+            count=1,
+        )
+    elif "from django.urls import" not in text:
+        text = "from django.urls import include, path\n" + text
+    route_arg = f"'{route}'" if route else "''"
+    snippet = f"\n    path({route_arg}, include('{include_path}')),"
+    m = re.search(r"(urlpatterns\s*=\s*\[)", text)
+    if not m:
+        text += f"\nurlpatterns = [{snippet}\n]\n"
+        return text, True
+    return text[: m.end()] + snippet + text[m.end() :], True
+
+
+def add_django_dynamic_page(
+    app: PythonApp,
+    *,
+    slug: str,
+    title: str = "",
+    restart: bool = True,
+) -> dict:
+    """
+    Ajoute une page Django dynamique /{slug}/ sur une app Python (vue + template + URL).
+    Appliqué immédiatement sur le disque ; redémarre l'app pour que ce soit live.
+    """
+    slug = (slug or "").strip().lower().strip("/")
+    if not _PAGE_SLUG_RE.match(slug):
+        raise VZoneAPIException(
+            detail="Slug invalide (ex: lievin, a-propos).",
+            code="invalid_slug",
+            status_code=400,
+        )
+    title = (title or slug.replace("-", " ").replace("_", " ").title()).strip()[:120]
+    app_root = absolute_app_root(app)
+    project, pkg = _django_project_root(app_root)
+    pages_pkg = "vz_pages"
+    pages_dir = project / pages_pkg
+    pages_dir.mkdir(parents=True, exist_ok=True)
+    (pages_dir / "__init__.py").write_text("", encoding="utf-8")
+    (pages_dir / "apps.py").write_text(
+        "from django.apps import AppConfig\n\n\n"
+        f"class VzPagesConfig(AppConfig):\n"
+        f"    default_auto_field = 'django.db.models.BigAutoField'\n"
+        f"    name = '{pages_pkg}'\n",
+        encoding="utf-8",
+    )
+
+    views_path = pages_dir / "views.py"
+    view_fn = f"page_{slug.replace('-', '_')}"
+    view_block = (
+        f"\ndef {view_fn}(request):\n"
+        f"    \"\"\"Page dynamique V-zone : /{slug}/\"\"\"\n"
+        f"    from django.utils import timezone\n"
+        f"    return render(\n"
+        f"        request,\n"
+        f"        '{pages_pkg}/{slug}.html',\n"
+        f"        {{\n"
+        f"            'title': {title!r},\n"
+        f"            'slug': {slug!r},\n"
+        f"            'now': timezone.now(),\n"
+        f"            'path': request.path,\n"
+        f"            'host': request.get_host(),\n"
+        f"        }},\n"
+        f"    )\n"
+    )
+    if views_path.is_file():
+        existing = views_path.read_text(encoding="utf-8", errors="replace")
+        if f"def {view_fn}(" not in existing:
+            if "from django.shortcuts import render" not in existing:
+                existing = "from django.shortcuts import render\n" + existing
+            views_path.write_text(existing.rstrip() + "\n" + view_block, encoding="utf-8")
+    else:
+        views_path.write_text(
+            "from django.shortcuts import render\n" + view_block,
+            encoding="utf-8",
+        )
+
+    urls_app = pages_dir / "urls.py"
+    path_line = f"    path('{slug}/', views.{view_fn}, name='{slug}'),\n"
+    if urls_app.is_file():
+        u = urls_app.read_text(encoding="utf-8", errors="replace")
+        if f"name='{slug}'" not in u and f'name="{slug}"' not in u:
+            if "urlpatterns" not in u:
+                u = (
+                    "from django.urls import path\n"
+                    "from . import views\n\n"
+                    "urlpatterns = [\n"
+                    f"{path_line}"
+                    "]\n"
+                )
+            else:
+                u = u.replace("urlpatterns = [", "urlpatterns = [\n" + path_line, 1)
+            urls_app.write_text(u, encoding="utf-8")
+    else:
+        urls_app.write_text(
+            "from django.urls import path\n"
+            "from . import views\n\n"
+            "urlpatterns = [\n"
+            f"{path_line}"
+            "]\n",
+            encoding="utf-8",
+        )
+
+    tmpl_dir = project / "templates" / pages_pkg
+    tmpl_dir.mkdir(parents=True, exist_ok=True)
+    (tmpl_dir / f"{slug}.html").write_text(
+        "<!DOCTYPE html>\n"
+        '<html lang="fr">\n'
+        "<head>\n"
+        '  <meta charset="utf-8">\n'
+        "  <title>{{ title }}</title>\n"
+        '  <meta name="viewport" content="width=device-width, initial-scale=1">\n'
+        "  <style>\n"
+        "    :root { --ink:#14201a; --moss:#2f6b45; --sand:#f4efe6; }\n"
+        "    body { margin:0; font-family:Georgia,serif; background:var(--sand); color:var(--ink); }\n"
+        "    header { background:linear-gradient(135deg,var(--moss),#1f4d2e); color:#fff;\n"
+        "      padding:3rem 1.5rem 2rem; }\n"
+        "    main { max-width:42rem; margin:0 auto; padding:2rem 1.5rem 4rem; }\n"
+        "    .meta { opacity:.85; font-size:.95rem; margin-top:.75rem; }\n"
+        "    .card { background:#fff; border-radius:12px; padding:1.25rem 1.5rem;\n"
+        "      box-shadow:0 8px 24px rgba(20,32,26,.08); margin-top:1.5rem; }\n"
+        "    a { color:var(--moss); }\n"
+        "  </style>\n"
+        "</head>\n"
+        "<body>\n"
+        "  <header>\n"
+        "    <h1>{{ title }}</h1>\n"
+        "    <p class=\"meta\">Page dynamique Django · {{ path }} · {{ host }}</p>\n"
+        "  </header>\n"
+        "  <main>\n"
+        "    <div class=\"card\">\n"
+        f"      <p>Bienvenue sur la page <strong>{slug}</strong>.</p>\n"
+        "      <p>Générée le {{ now|date:\"d/m/Y H:i\" }} (timezone serveur).</p>\n"
+        "      <p><a href=\"/\">← Retour accueil</a></p>\n"
+        "    </div>\n"
+        "  </main>\n"
+        "</body>\n"
+        "</html>\n",
+        encoding="utf-8",
+    )
+
+    steps: list[str] = [f"view:{view_fn}", f"template:{slug}.html"]
+
+    settings_file = project / pkg / "settings.py"
+    if settings_file.is_file():
+        s = settings_file.read_text(encoding="utf-8", errors="replace")
+        s2, added_app = _ensure_line_in_list(s, list_name="INSTALLED_APPS", item=pages_pkg)
+        if added_app:
+            settings_file.write_text(s2, encoding="utf-8")
+            steps.append("installed_apps")
+            s = s2
+        # TEMPLATES DIRS → project/templates
+        if "TEMPLATES" in s and "BASE_DIR" in s and str(tmpl_dir.parent) not in s:
+            if "DIRS': []" in s or 'DIRS": []' in s:
+                s = s.replace("DIRS': []", "DIRS': [BASE_DIR / 'templates']", 1)
+                s = s.replace('DIRS": []', 'DIRS": [BASE_DIR / "templates"]', 1)
+                settings_file.write_text(s, encoding="utf-8")
+                steps.append("templates_dirs")
+
+    urls_main = project / pkg / "urls.py"
+    if urls_main.is_file():
+        u = urls_main.read_text(encoding="utf-8", errors="replace")
+        u2, added_inc = _ensure_url_include(u, include_path=f"{pages_pkg}.urls")
+        if added_inc:
+            urls_main.write_text(u2, encoding="utf-8")
+            steps.append("urls_include")
+
+    fix_client_paths(app.owner, pages_dir, tmpl_dir, project / pkg)
+
+    restarted = False
+    if restart and app.is_active:
+        try:
+            restart_python_app(app)
+            restarted = True
+            steps.append("app_restarted")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("restart after django page skip: %s", exc)
+            steps.append(f"restart_skip:{exc}")
+
+    domain = (app.domain_name or "").strip()
+    page_url = f"https://{domain}/{slug}/" if domain else f"/{slug}/"
+    return {
+        "app_id": app.pk,
+        "app_name": app.name,
+        "slug": slug,
+        "title": title,
+        "page_url": page_url,
+        "path": f"/{slug}/",
+        "project": str(project),
+        "restarted": restarted,
+        "steps": steps,
+        "message": (
+            f"Page dynamique « {title} » ajoutée sur {app.name} → {page_url} "
+            f"(live{' + restart' if restarted else ''})."
+        ),
+    }
+
+
 @transaction.atomic
 def delete_python_app(app: PythonApp, *, remove_files: bool = False) -> None:
     if app.status == PythonApp.Status.RUNNING:

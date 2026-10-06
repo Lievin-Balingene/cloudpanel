@@ -201,6 +201,8 @@ SYSTEM_PROMPT = """Tu es **V-zone AI**, assistant premium du panneau d'hébergem
   **404 pages LiteSpeed** (accueil OK, autres Not Found) : **uniquement** `fix_wordpress_permalinks`
   (réécrit .htaccess + règles rewrite natives OLS + reload). Pas de jail, pas de beautify pour ça.
   **Interdit** : `run_jail_command`, `list_files`, `read_file_content`, `write_file`, wp-cli via jail.
+- Page Django dynamique (ex. `/lievin/`) : **`add_django_page`** (slug=…, app_name=vzone ou app_id).
+  Pas de write_file manuel pour ça — l'outil crée vue + template + URL et redémarre l'app.
 - Actions sensibles : l'utilisateur doit cliquer **Approuver** dans la fenêtre modale orange —
   ou taper `approuver` / `oui` / `toi meme`. **Interdit** de proposer des étapes manuelles wp-admin / thèmes
   à la place. Pas « Continuer ».
@@ -521,6 +523,7 @@ def run_assistant_turn(
     provider_name = getattr(provider, "name", "")
     model_name = ""
     temperature = float(getattr(settings, "VZONE_AI_TEMPERATURE", 0.65) or 0.65)
+    byok_fallback_note = ""
 
     for _round in range(max_rounds):
         try:
@@ -533,23 +536,25 @@ def run_assistant_turn(
                 getattr(provider, "name", "?"),
                 err_txt,
             )
-            # BYOK : ne pas masquer l'échec derrière le mock « bête »
+            # BYOK en panne → bascule serveur (puis mock) pour continuer l'action
             if provider_source == "byok":
-                final_content = (
-                    "**Votre modèle BYOK a échoué** — le panel n'a pas basculé en mode local.\n\n"
-                    f"```\n{err_txt}\n```\n\n"
-                    "Vérifiez dans ⚙ **Mon modèle IA** :\n"
-                    "- **Gemini** : URL "
-                    "`https://generativelanguage.googleapis.com/v1beta/openai` "
-                    "+ modèle `gemini-3.5-flash` (pas 1.5 / 2.5 — bloqués aux nouveaux comptes) + clé API\n"
-                    "- Bouton **Tester** puis **Enregistrer**\n"
-                    "- Ou repassez en « Serveur (défaut panel) »"
+                byok_fallback_note = (
+                    f"_Modèle BYOK indisponible (`{err_txt[:160]}`). "
+                    "Bascule automatique sur le provider serveur / local — "
+                    "corrigez ⚙ Mon modèle IA quand vous voulez._\n\n"
                 )
-                provider_name = getattr(provider, "name", "byok")
-                model_name = getattr(provider, "model", "") or ""
-                break
-            provider = get_provider("mock")
-            result = provider.chat(messages, tools=tools, temperature=temperature)
+                try:
+                    provider = get_provider()
+                    provider_source = "server"
+                    result = provider.chat(messages, tools=tools, temperature=temperature)
+                except Exception as exc2:  # noqa: BLE001
+                    logger.warning("Server provider fallback failed: %s", exc2)
+                    provider = get_provider("mock")
+                    provider_source = "mock"
+                    result = provider.chat(messages, tools=tools, temperature=temperature)
+            else:
+                provider = get_provider("mock")
+                result = provider.chat(messages, tools=tools, temperature=temperature)
 
         provider_name = result.provider or provider_name
         model_name = result.model or model_name
@@ -558,6 +563,9 @@ def run_assistant_turn(
             final_content = result.content
         elif result.content and not final_content:
             final_content = result.content
+        if byok_fallback_note and final_content and byok_fallback_note not in final_content:
+            final_content = byok_fallback_note + final_content
+            byok_fallback_note = ""  # une seule fois
 
         if not result.tool_calls:
             break

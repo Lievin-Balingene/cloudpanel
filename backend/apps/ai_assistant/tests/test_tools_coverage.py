@@ -337,6 +337,31 @@ def test_mock_create_file_write_file():
     assert r2.tool_calls[0].arguments.get("path") == "logs"
 
 
+def test_mock_add_django_page_lievin():
+    from apps.ai_assistant.providers import ChatMessage, ToolSpec
+    from apps.ai_assistant.providers.mock import (
+        MockProvider,
+        _extract_django_page_slug,
+        _wants_django_page,
+    )
+
+    q = "ajoute une page dynamique sur ce site django qui s'appelle lievin"
+    assert _wants_django_page(q)
+    assert _extract_django_page_slug(q) == "lievin"
+
+    p = MockProvider()
+    tools = [
+        ToolSpec(name=n, description=n, parameters={"type": "object", "properties": {}})
+        for n in ("check_application_status", "add_django_page", "write_file")
+    ]
+    r = p.chat([ChatMessage(role="user", content=q)], tools=tools)
+    assert r.tool_calls
+    names = [t.name for t in r.tool_calls]
+    assert "add_django_page" in names
+    call = next(t for t in r.tool_calls if t.name == "add_django_page")
+    assert call.arguments.get("slug") == "lievin"
+
+
 def test_mock_email_page_help_not_python_logs():
     """Le JSON `python_apps` ne doit pas déclencher les logs Python sur la page Email."""
     from apps.ai_assistant.providers import ChatMessage, ToolSpec

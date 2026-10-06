@@ -220,6 +220,8 @@ PENDING_DESCRIPTIONS: dict[str, str] = {
     "create_python_app": "Créer une application Python",
     "update_python_app": "Mettre à jour une application Python",
     "delete_python_app": "Supprimer une application Python",
+    "add_django_page": "Ajouter une page Django dynamique",
+    "sync_python_passenger_wsgi": "Réparer passenger_wsgi.py",
     "create_node_app": "Créer une application Node",
     "update_node_app": "Mettre à jour une application Node",
     "delete_node_app": "Supprimer une application Node",

@@ -483,6 +483,38 @@ def _wants_write_file(text: str) -> bool:
     return bool(re.search(r"\b[\w./-]+\.[a-z0-9]{1,12}\b", t))
 
 
+def _wants_django_page(text: str) -> bool:
+    """« ajoute une page dynamique … lievin » / « page django /lievin/ »."""
+    t = _norm_text(text)
+    if "page" not in t and "route" not in t and "vue" not in t:
+        return False
+    djangoish = any(k in t for k in ("django", "dynamique", "site django", "app django"))
+    action = any(k in t for k in ("ajoute", "ajouter", "cree", "creer", "ajout"))
+    return bool(djangoish and action) or (
+        "page" in t and action and bool(_extract_django_page_slug(text))
+    )
+
+
+def _extract_django_page_slug(text: str) -> str | None:
+    low = (text or "").lower()
+    patterns = (
+        r"s['’]appelle\s+[«\"']?([a-z][a-z0-9_-]{1,40})",
+        r"nomm[ée]e?\s+[«\"']?([a-z][a-z0-9_-]{1,40})",
+        r"slug\s*[:=]?\s*[«\"']?([a-z][a-z0-9_-]{1,40})",
+        r"page\s+(?:dynamique\s+)?(?:sur\s+ce\s+site\s+django\s+)?(?:qui\s+)?(?:s['’]appelle\s+)?[«\"']?([a-z][a-z0-9_-]{1,40})",
+        r"/([a-z][a-z0-9_-]{1,40})/",
+    )
+    skip = {"page", "django", "site", "une", "le", "la", "dynamique", "app", "qui", "ce", "sur"}
+    for pat in patterns:
+        m = re.search(pat, low)
+        if m:
+            slug = m.group(1).strip("-_")
+            if slug in skip:
+                continue
+            return slug
+    return None
+
+
 def _wants_mkdir(text: str) -> bool:
     t = (text or "").lower()
     if not _create_verb(t) and "mkdir" not in t:
@@ -2707,6 +2739,19 @@ def _detect_intent(
                         "app_id": int(app_id),
                     },
                 )
+            ],
+        }
+
+    if _wants_django_page(last_user_l) and "add_django_page" in tool_names:
+        slug = _extract_django_page_slug(last_user_l) or "lievin"
+        return {
+            "say": (
+                f"Compris — page Django dynamique **/{slug}/** "
+                "(vue + template + URL, redémarrage app)…"
+            ),
+            "tools": [
+                ("check_application_status", {}),
+                ("add_django_page", {"slug": slug, "app_name": "vzone", "restart": True}),
             ],
         }
 
