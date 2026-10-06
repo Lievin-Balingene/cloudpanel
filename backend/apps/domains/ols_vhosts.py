@@ -362,30 +362,66 @@ def rebuild_ols_maps() -> int:
     return len(domains)
 
 
+def _start_ols_reload_service() -> None:
+    """Déclenche l'agent root (systemctl direct, puis sudo allowlisté)."""
+    cmds: list[list[str]] = [
+        ["systemctl", "start", "vzone-ols-reload.service"],
+        ["sudo", "-n", "systemctl", "start", "vzone-ols-reload.service"],
+        ["sudo", "-n", "/usr/local/sbin/vzone-ols-reload"],
+    ]
+    for cmd in cmds:
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=25,
+            )
+            if proc.returncode == 0:
+                return
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            continue
+
+
 def reload_ols() -> bool:
+    """
+    Recharge OLS immédiatement après écriture vhconf.
+
+    Même modèle que reload_nginx : flag + agent root + attente confirmation.
+    Sans ça, les pages WP créées par l'IA restent en 404 LiteSpeed jusqu'à update.sh.
+    """
     if not ols_installed():
         return False
     helper = Path("/usr/local/sbin/vzone-ols-reload")
     flag = Path(getattr(settings, "VZONE_DATA_ROOT", "/var/lib/vzone")) / "ols" / "reload.requested"
     try:
         flag.parent.mkdir(parents=True, exist_ok=True)
+        # Toujours recréer le flag (PathExists ne re-déclenche pas si le fichier existe déjà)
+        flag.unlink(missing_ok=True)
         flag.write_text(str(int(time.time())), encoding="utf-8")
-    except OSError:
-        pass
-    try:
-        subprocess.run(
-            ["systemctl", "start", "vzone-ols-reload.service"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=20,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        pass
+    except OSError as exc:
+        logger.error("OLS reload flag: %s", exc)
+        return False
+
+    _start_ols_reload_service()
+
     if helper.is_file() and os.geteuid() == 0:
         result = subprocess.run([str(helper)], capture_output=True, text=True)
         return result.returncode == 0
-    return True
+
+    # Succès = helper root a supprimé le flag
+    for _ in range(40):
+        if not flag.exists():
+            return True
+        time.sleep(0.25)
+
+    logger.error(
+        "OLS reload non confirmé — exécutez: "
+        "sudo bash /opt/vzone-src/scripts/ensure-ols-reload-agent.sh && "
+        "sudo systemctl start vzone-ols-reload.service"
+    )
+    return False
 
 
 def adopt_php_domains_to_ols() -> dict:

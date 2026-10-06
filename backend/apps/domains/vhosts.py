@@ -583,23 +583,31 @@ def reload_nginx() -> bool:
 
     try:
         flag.parent.mkdir(parents=True, exist_ok=True)
+        flag.unlink(missing_ok=True)
         flag.write_text(str(int(time.time())), encoding="utf-8")
     except OSError as exc:
         logger.error("reload flag: %s", exc)
         return False
 
     if helper.is_file():
-        try:
-            subprocess.run(
-                ["systemctl", "start", "vzone-nginx-reload.service"],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=30,
-            )
-        except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
-            logger.error("systemctl vzone-nginx-reload: %s", exc)
-            return False
+        for cmd in (
+            ["systemctl", "start", "vzone-nginx-reload.service"],
+            ["sudo", "-n", "systemctl", "start", "vzone-nginx-reload.service"],
+            ["sudo", "-n", "/usr/local/sbin/vzone-nginx-reload"],
+        ):
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=30,
+                )
+                if proc.returncode == 0:
+                    break
+            except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+                logger.debug("nginx reload trigger skip %s: %s", cmd, exc)
+                continue
         # Succès = helper root a supprimé le flag après nginx -t && reload
         for _ in range(24):
             if not flag.exists():

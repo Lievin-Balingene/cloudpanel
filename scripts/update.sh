@@ -198,6 +198,10 @@ if [[ -f "${REPO_DIR}/scripts/ensure-nginx-reload-agent.sh" ]]; then
   bash "${REPO_DIR}/scripts/ensure-nginx-reload-agent.sh" || echo "[vzone] Avertissement: ensure-nginx-reload-agent.sh a échoué"
 fi
 
+if [[ -f "${REPO_DIR}/scripts/ensure-ols-reload-agent.sh" ]]; then
+  bash "${REPO_DIR}/scripts/ensure-ols-reload-agent.sh" || echo "[vzone] Avertissement: ensure-ols-reload-agent.sh a échoué"
+fi
+
 # Secret FTP interne si manquant (fail-closed sinon)
 if [[ -f /etc/vzone/vzone.env ]] && ! grep -q '^VZONE_FTP_AUTH_SECRET=.\+' /etc/vzone/vzone.env 2>/dev/null; then
   FTP_SECRET="$(openssl rand -hex 32)"

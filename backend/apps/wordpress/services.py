@@ -762,6 +762,89 @@ def _upsert_post(site: WordPressSite, slug: str, title: str, excerpt: str, body:
     return int(m.group(1)) if m else 0
 
 
+def _purge_web_caches(docroot: Path) -> list[str]:
+    """Purge caches LiteSpeed / WP pour que les pages IA soient visibles tout de suite."""
+    done: list[str] = []
+    candidates = [
+        docroot / "wp-content" / "cache",
+        docroot / "wp-content" / "litespeed",
+        docroot / "wp-content" / "ls-cache",
+        docroot / "lscache",
+    ]
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            if path.is_dir():
+                for child in path.iterdir():
+                    try:
+                        if child.is_dir():
+                            shutil.rmtree(child, ignore_errors=True)
+                        else:
+                            child.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                done.append(str(path.name))
+            else:
+                path.unlink(missing_ok=True)
+                done.append(path.name)
+        except OSError:
+            pass
+    return done
+
+
+def publish_wordpress_live(site: WordPressSite) -> dict[str, Any]:
+    """
+    Applique immédiatement les changements WP sur le web live (sans update.sh).
+
+    - retire index.html « Site prêt » qui masque WordPress
+    - purge caches LiteSpeed / WP
+    - resync vhost Nginx + rewrite natives OLS + reload confirmé
+    """
+    docroot = Path(site.document_root or "")
+    steps: list[str] = []
+    if docroot.is_dir():
+        if _clear_welcome_index(docroot, force=True):
+            steps.append("welcome_index_removed")
+        purged = _purge_web_caches(docroot)
+        if purged:
+            steps.append("cache_purged:" + ",".join(purged))
+        try:
+            _run_wp(["cache", "flush"], path=docroot, php_version=site.php_version or "")
+            steps.append("wp_cache_flush")
+        except Exception:  # noqa: BLE001
+            pass
+
+    ols_engine = False
+    try:
+        from apps.domains.ols_vhosts import reload_ols, uses_ols_engine
+        from apps.domains.vhosts import sync_domain_vhost
+
+        if site.domain_id:
+            ols_engine = bool(uses_ols_engine(site.domain))
+            sync_domain_vhost(site.domain)
+            steps.append("vhost_synced")
+            # sync_domain_vhost reload déjà ; second coup sûr si le path unit a raté
+            if ols_engine:
+                ok = reload_ols()
+                steps.append(f"ols_reload_confirmed:{ok}")
+                if not ok:
+                    logger.error(
+                        "OLS non rechargé après publish WP site=%s domain=%s",
+                        getattr(site, "pk", None),
+                        site.domain.name,
+                    )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("publish_wordpress_live routing failed site=%s", getattr(site, "pk", None))
+        steps.append(f"routing_err:{exc}")
+
+    return {
+        "live": True,
+        "ols_engine": ols_engine,
+        "steps": steps,
+    }
+
+
 def _flush_wp_rewrites(site: WordPressSite) -> dict[str, Any]:
     """Force permaliens /%postname%/ + .htaccess (LiteSpeed/Apache) pour éviter les 404."""
     docroot = Path(site.document_root).resolve()
@@ -862,24 +945,11 @@ def fix_wordpress_permalinks(site: WordPressSite) -> dict[str, Any]:
             status_code=404,
         )
     result = _flush_wp_rewrites(site)
-    ols_synced = False
-    web_engine = ""
-    try:
-        domain = site.domain
-        web_engine = str(getattr(domain, "web_engine", "") or "")
-        from apps.domains.ols_vhosts import uses_ols_engine
-        from apps.domains.vhosts import sync_domain_vhost
-
-        # Resync Nginx + OLS vhconf (règles rewrite natives dans le vhost LiteSpeed)
-        sync_domain_vhost(domain)
-        ols_synced = bool(uses_ols_engine(domain))
-        result["steps"] = list(result.get("steps") or []) + [
-            "vhost_synced",
-            f"ols_native_rewrite:{ols_synced}",
-        ]
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("vhost resync after permalink fix failed")
-        result["steps"] = list(result.get("steps") or []) + [f"routing_err:{exc}"]
+    live = publish_wordpress_live(site)
+    web_engine = str(getattr(site.domain, "web_engine", "") or "") if site.domain_id else ""
+    ols_synced = bool(live.get("ols_engine"))
+    result["steps"] = list(result.get("steps") or []) + list(live.get("steps") or [])
+    result["live"] = live
 
     return {
         "site_id": site.pk,
@@ -888,9 +958,9 @@ def fix_wordpress_permalinks(site: WordPressSite) -> dict[str, Any]:
         "web_engine": web_engine,
         "ols_native_rewrite": ols_synced,
         "message": (
-            f"Permaliens + routage LiteSpeed corrigés pour {site.domain.name} "
-            f"(engine={web_engine or '?'}, ols_rewrite={ols_synced}). "
-            "Rechargez /a-propos/, /blog/, /contact/ (Ctrl+F5)."
+            f"Permaliens + routage LiteSpeed appliqués immédiatement pour {site.domain.name} "
+            f"(engine={web_engine or '?'}, ols={ols_synced}). "
+            "Rechargez /a-propos/, /blog/, /contact/ (Ctrl+F5) — pas besoin d'update panneau."
         ),
         **result,
     }
@@ -2038,13 +2108,9 @@ def _beautify_wordpress_site_inner(site: WordPressSite, *, theme: str = "astra")
 
     _flush_wp_rewrites(site)
     steps.append("rewrite_flush")
-    try:
-        from apps.domains.vhosts import sync_domain_vhost
 
-        sync_domain_vhost(site.domain)
-        steps.append("vhost_synced_ols_rewrite")
-    except Exception:  # noqa: BLE001
-        logger.debug("vhost sync after beautify skip", exc_info=True)
+    live = publish_wordpress_live(site)
+    steps.extend(list(live.get("steps") or []))
 
     try:
         username = (site.owner.username or site.owner.system_username or "").strip()
@@ -2073,8 +2139,10 @@ def _beautify_wordpress_site_inner(site: WordPressSite, *, theme: str = "astra")
         "page_urls": page_urls,
         "posts_created": posts_created,
         "steps": steps,
+        "live": live,
         "message": (
-            f"Design nature applique sur {site.domain.name} "
-            f"({len(page_ids)} pages, blog, {posts_created} articles, permaliens regeneres)."
+            f"Design nature appliqué immédiatement sur {site.domain.name} "
+            f"({len(page_ids)} pages, blog, {posts_created} articles, OLS/nginx rechargés). "
+            "Pas besoin de redémarrer ni d'update panneau."
         ),
     }

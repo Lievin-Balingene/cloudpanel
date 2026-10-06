@@ -111,13 +111,17 @@ fi
 chown -R "${VZONE_USER}:${VZONE_USER}" "${OLS_DIR}/default" "${VHCONF_DIR}"
 
 # Agent reload
-install -m 755 "${REPO_DIR}/scripts/vzone-ols-reload.sh" /usr/local/sbin/vzone-ols-reload
-install -m 644 "${REPO_DIR}/deploy/systemd/vzone-ols-reload.service" /etc/systemd/system/vzone-ols-reload.service
-install -m 644 "${REPO_DIR}/deploy/systemd/vzone-ols-reload.path" /etc/systemd/system/vzone-ols-reload.path
+if [[ -f "${REPO_DIR}/scripts/ensure-ols-reload-agent.sh" ]]; then
+  bash "${REPO_DIR}/scripts/ensure-ols-reload-agent.sh"
+else
+  install -m 755 "${REPO_DIR}/scripts/vzone-ols-reload.sh" /usr/local/sbin/vzone-ols-reload
+  install -m 644 "${REPO_DIR}/deploy/systemd/vzone-ols-reload.service" /etc/systemd/system/vzone-ols-reload.service
+  install -m 644 "${REPO_DIR}/deploy/systemd/vzone-ols-reload.path" /etc/systemd/system/vzone-ols-reload.path
+  systemctl daemon-reload
+  systemctl enable --now vzone-ols-reload.path
+fi
 
-systemctl daemon-reload
 systemctl enable --now lshttpd 2>/dev/null || systemctl enable --now lsws 2>/dev/null || true
-systemctl enable --now vzone-ols-reload.path
 
 # Graceful restart
 if [[ -x "${OLS_ROOT}/bin/lswsctrl" ]]; then

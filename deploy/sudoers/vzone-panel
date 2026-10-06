@@ -36,6 +36,14 @@ vzone ALL=(root) NOPASSWD: /usr/bin/systemctl start vzone-update-job.path
 vzone ALL=(root) NOPASSWD: /bin/systemctl start vzone-repair-job.path
 vzone ALL=(root) NOPASSWD: /usr/bin/systemctl start vzone-repair-job.path
 
+# Reload web immédiat (IA WordPress / domaines) — sans attendre update.sh
+vzone ALL=(root) NOPASSWD: /bin/systemctl start vzone-ols-reload.service
+vzone ALL=(root) NOPASSWD: /usr/bin/systemctl start vzone-ols-reload.service
+vzone ALL=(root) NOPASSWD: /bin/systemctl start vzone-nginx-reload.service
+vzone ALL=(root) NOPASSWD: /usr/bin/systemctl start vzone-nginx-reload.service
+vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-ols-reload
+vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-nginx-reload
+
 # SMTP Restrictions (WHM Security Center) — iptables OUTPUT port 25
 vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-smtp-restrictions --status
 vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-smtp-restrictions --enable
