@@ -229,10 +229,28 @@ PY
   configure_firewall
 
   # ------------------------------------------------------------------
-  # Bootstrap complet : tous les modules + agents + réparations jour 0
+  # FTP dès la 1ʳᵉ install (Pure-FTPd + ExtAuth — sans option -l cassée)
   # ------------------------------------------------------------------
-  log "Bootstrap modules + réparations (mail, Roundcube, phpMyAdmin, agents, ACL…)"
+  if [[ -f "${SCRIPT_DIR}/install-ftp.sh" ]]; then
+    log "Installation FTP Pure-FTPd + ExtAuth (première install)"
+    bash "${SCRIPT_DIR}/install-ftp.sh" || log "Avertissement: install-ftp.sh a échoué — relancez: sudo bash ${SCRIPT_DIR}/repair-ftp.sh"
+  fi
+
+  # ------------------------------------------------------------------
+  # Bootstrap complet : tous les modules + agents + réparations jour 0
+  # (ré-appelle install-ftp.sh de façon idempotente)
+  # ------------------------------------------------------------------
+  log "Bootstrap modules + réparations (mail, FTP, Roundcube, phpMyAdmin, agents, ACL…)"
   bash "${SCRIPT_DIR}/post-install-bootstrap.sh" || warn_bootstrap
+
+  # Garantie FTP après bootstrap (au cas où le 1er passage aurait échoué tôt)
+  if [[ -f "${SCRIPT_DIR}/install-ftp.sh" ]]; then
+    if ! systemctl is-active --quiet pure-ftpd.service 2>/dev/null \
+      && ! systemctl is-active --quiet pure-ftpd 2>/dev/null; then
+      log "FTP inactif après bootstrap — nouvelle tentative install-ftp.sh"
+      bash "${SCRIPT_DIR}/install-ftp.sh" || log "Avertissement: FTP toujours inactif — sudo bash ${SCRIPT_DIR}/repair-ftp.sh"
+    fi
+  fi
 
   HOST_IP="$(hostname -I | awk '{print $1}')"
   ADMIN_PORT="${VZONE_ADMIN_PORT:-9086}"
@@ -264,6 +282,8 @@ EOF
   echo " Re-bootstrap / repair:"
   echo "   sudo bash ${SCRIPT_DIR}/post-install-bootstrap.sh"
   echo "   sudo bash ${SCRIPT_DIR}/post-install-bootstrap.sh --repair-only"
+  echo "   sudo bash ${SCRIPT_DIR}/repair-ftp.sh"
+  echo " FTP                  : Pure-FTPd + ExtAuth (install-ftp.sh dès le jour 0)"
   echo " Version installée    : ${VZONE_VERSION}"
   echo "============================================================"
 }
@@ -277,6 +297,8 @@ configure_firewall() {
     ufw allow OpenSSH || true
     ufw allow 80/tcp || true
     ufw allow 443/tcp || true
+    ufw allow 21/tcp || true
+    ufw allow 30000:30100/tcp || true
     ufw allow "${VZONE_ADMIN_PORT:-9086}"/tcp || true
     ufw allow "${VZONE_CLIENT_PORT:-9082}"/tcp || true
     ufw allow "${VZONE_WEBMAIL_PORT:-9095}"/tcp || true
@@ -293,6 +315,8 @@ configure_firewall() {
     firewall-cmd --permanent --add-service=ssh
     firewall-cmd --permanent --add-service=http
     firewall-cmd --permanent --add-service=https
+    firewall-cmd --permanent --add-service=ftp || firewall-cmd --permanent --add-port=21/tcp || true
+    firewall-cmd --permanent --add-port=30000-30100/tcp || true
     firewall-cmd --permanent --add-port="${VZONE_ADMIN_PORT:-9086}"/tcp
     firewall-cmd --permanent --add-port="${VZONE_CLIENT_PORT:-9082}"/tcp
     firewall-cmd --permanent --add-port="${VZONE_WEBMAIL_PORT:-9095}"/tcp

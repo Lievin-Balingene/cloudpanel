@@ -20,10 +20,17 @@ for arg in "$@"; do
   esac
 done
 
-# Préférer le dépôt déployé s'il existe
-if [[ -d "${VZONE_ROOT}/scripts" ]]; then
-  SCRIPT_DIR="${VZONE_ROOT}/scripts"
-  REPO_DIR="${VZONE_ROOT}"
+# Si lancé via /usr/local/sbin/vzone-bootstrap (copie sans voisins),
+# retrouver les scripts dans /opt/vzone ou /opt/vzone-src.
+# Ne PAS écraser SCRIPT_DIR quand on est déjà dans un vrai dépôt (install.sh / git pull).
+if [[ ! -f "${SCRIPT_DIR}/install-ftp.sh" ]]; then
+  if [[ -f "${VZONE_ROOT}/scripts/install-ftp.sh" ]]; then
+    SCRIPT_DIR="${VZONE_ROOT}/scripts"
+    REPO_DIR="${VZONE_ROOT}"
+  elif [[ -f /opt/vzone-src/scripts/install-ftp.sh ]]; then
+    SCRIPT_DIR="/opt/vzone-src/scripts"
+    REPO_DIR="/opt/vzone-src"
+  fi
 fi
 
 log()  { printf '\033[1;34m[bootstrap]\033[0m %s\n' "$*"; }
