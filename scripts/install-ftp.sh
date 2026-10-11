@@ -53,11 +53,14 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 # --- pure-authd (systemd) ---
+# NOTE: pure-authd Debian/Ubuntu n'a PAS d'option -l (log) — elle fait planter le daemon
+# Options valides : -s socket, -r run, -p pidfile, -u uid, -g gid, -B daemonize
 cat >"${UNIT_DIR}/vzone-ftp-authd.service" <<EOF
 [Unit]
 Description=V-zone Pure-FTPd ExtAuth daemon
 After=network.target vzone-api.service
 Wants=vzone-api.service
+Before=pure-ftpd.service
 
 [Service]
 Type=simple
@@ -65,10 +68,13 @@ EnvironmentFile=-${ENV_FILE}
 Environment=VZONE_ROOT=${VZONE_ROOT}
 Environment=DJANGO_SETTINGS_MODULE=vzone.settings.production
 ExecStartPre=/bin/rm -f ${AUTH_SOCK}
-ExecStart=/usr/sbin/pure-authd -s ${AUTH_SOCK} -r ${AUTH_BIN} -l /var/log/vzone/ftp-authd.log
+# Pas de -B : rester au premier plan (Type=simple). Pas de -l (inexistant sur Ubuntu).
+ExecStart=/usr/sbin/pure-authd -s ${AUTH_SOCK} -r ${AUTH_BIN} -p /run/vzone-ftp-authd.pid
 Restart=on-failure
-RestartSec=3
+RestartSec=2
 UMask=0007
+StandardOutput=append:/var/log/vzone/ftp-authd.log
+StandardError=append:/var/log/vzone/ftp-authd.log
 
 [Install]
 WantedBy=multi-user.target
@@ -146,36 +152,41 @@ chmod 664 /var/log/vzone/ftp-authd.log 2>/dev/null || true
 
 systemctl daemon-reload
 systemctl enable vzone-ftp-authd.service
-systemctl restart vzone-ftp-authd.service || true
-sleep 1
+systemctl stop vzone-ftp-authd.service 2>/dev/null || true
+systemctl start vzone-ftp-authd.service || true
 
-if [[ ! -S "${AUTH_SOCK}" ]]; then
+# Attendre que le socket ExtAuth existe (requis par pure-ftpd-wrapper)
+SOCK_OK=0
+for _ in $(seq 1 20); do
+  if [[ -S "${AUTH_SOCK}" ]] && systemctl is-active --quiet vzone-ftp-authd.service; then
+    SOCK_OK=1
+    break
+  fi
+  sleep 0.25
+done
+
+if [[ "${SOCK_OK}" -ne 1 ]]; then
   warn "Socket ExtAuth absent (${AUTH_SOCK}) — journal authd :"
-  journalctl -u vzone-ftp-authd.service -n 30 --no-pager || true
-  # Continuer : Pure-FTPd peut démarrer ; les logins échoueront jusqu'à réparation authd
+  journalctl -u vzone-ftp-authd.service -n 40 --no-pager || true
+  # Test manuel sans -l
+  warn "Test manuel pure-authd :"
+  /usr/sbin/pure-authd -h 2>&1 | head -20 || true
+  exit 1
 fi
+log "OK — vzone-ftp-authd actif (${AUTH_SOCK})"
 
 systemctl enable pure-ftpd.service 2>/dev/null || systemctl enable pure-ftpd 2>/dev/null || true
 
-# Test syntaxe / démarrage avec diagnostic
 set +e
 systemctl restart pure-ftpd.service 2>/dev/null || systemctl restart pure-ftpd 2>/dev/null
 RC=$?
 set -e
-
 sleep 1
-if systemctl is-active --quiet vzone-ftp-authd.service; then
-  log "OK — vzone-ftp-authd actif (${AUTH_SOCK})"
-else
-  warn "vzone-ftp-authd non actif"
-  systemctl status vzone-ftp-authd.service --no-pager -l || true
-fi
 
 if systemctl is-active --quiet pure-ftpd.service 2>/dev/null || systemctl is-active --quiet pure-ftpd 2>/dev/null; then
   log "OK — Pure-FTPd actif (port 21)"
 else
   warn "Pure-FTPd non actif (restart rc=${RC})"
-  # Tentative de secours : TLS off (cert souvent en cause)
   if [[ -f /etc/pure-ftpd/conf/TLS ]]; then
     warn "Nouvelle tentative sans TLS…"
     rm -f /etc/pure-ftpd/conf/TLS /etc/pure-ftpd/conf/CertFile
@@ -186,8 +197,7 @@ else
     log "OK — Pure-FTPd actif (sans TLS)"
   else
     warn "Échec start — journal :"
-    journalctl -xeu pure-ftpd.service -n 40 --no-pager || journalctl -xeu pure-ftpd -n 40 --no-pager || true
-    # Affiche la ligne de commande générée (debug)
+    journalctl -xeu pure-ftpd.service -n 40 --no-pager || true
     if [[ -x /usr/sbin/pure-ftpd-wrapper ]]; then
       warn "Commande wrapper :"
       /usr/sbin/pure-ftpd-wrapper 2>&1 | head -5 || true
