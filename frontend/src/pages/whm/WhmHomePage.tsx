@@ -254,9 +254,40 @@ export function WhmHomePage() {
 
   return (
     <div className="animate-fade-up">
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="min-w-0 space-y-5">
-          <div>
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px] xl:gap-6">
+        <div className="min-w-0 space-y-4 sm:space-y-5">
+          <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-gradient-to-br from-[#1e3a55] via-[#2a4a6b] to-[#345578] px-4 py-5 text-white shadow-md sm:px-5 sm:py-6 xl:hidden">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/60">
+              V-zone WHM
+            </p>
+            <h1 className="mt-1 text-xl font-semibold tracking-tight">
+              {tweaks.panel_locale === "en" ? "Admin Home" : "Accueil Admin"}
+            </h1>
+            <p className="mt-1 text-[13px] text-white/75">{t("homeSubtitle")}</p>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              {[
+                { label: "Comptes", value: data?.users_total ?? "—", to: "/whm/accounts" },
+                { label: "Domaines", value: data?.domains_total ?? "—", to: "/whm/domains" },
+                { label: "Packages", value: data?.packages_active ?? "—", to: "/whm/packages" },
+                { label: "DNS", value: data?.dns_zones ?? "—", to: "/whm/dns" },
+              ].map((card) => (
+                <Link
+                  key={card.label}
+                  to={card.to}
+                  className="rounded-xl border border-white/15 bg-white/10 px-3 py-2.5 backdrop-blur-sm transition active:bg-white/18"
+                >
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-white/60">
+                    {card.label}
+                  </p>
+                  <p className="mt-0.5 text-xl font-bold tabular-nums text-white">
+                    {isLoading ? "…" : card.value}
+                  </p>
+                </Link>
+              ))}
+            </div>
+          </div>
+
+          <div className="hidden xl:block">
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
               V-zone WHM
             </p>
@@ -266,25 +297,25 @@ export function WhmHomePage() {
             <p className="mt-1 max-w-2xl text-sm text-slate-500">{t("homeSubtitle")}</p>
           </div>
 
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
             {quickFiltered.map((tool) => (
               <Link
                 key={tool.to + tool.label}
                 to={tool.to}
-                className={`group flex items-center gap-2.5 rounded-lg border border-slate-200/90 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition hover:-translate-y-0.5 hover:border-cp-orange/40 hover:shadow-md dark:border-ink-700 dark:bg-ink-950 ${
-                  compact ? "px-3 py-2.5" : "px-4 py-4"
+                className={`group flex flex-col items-start gap-2.5 rounded-2xl border border-slate-200/90 bg-gradient-to-b from-white to-slate-50/80 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition active:scale-[0.98] hover:border-cp-orange/40 hover:shadow-md dark:border-ink-700 dark:from-ink-950 dark:to-ink-900 sm:flex-row sm:items-center ${
+                  compact ? "p-3" : "p-3.5 sm:px-4 sm:py-4"
                 }`}
               >
                 <span
-                  className={`flex shrink-0 items-center justify-center rounded-lg bg-orange-50 text-cp-orange dark:bg-orange-950/40 ${
-                    compact ? "h-8 w-8" : "h-11 w-11"
+                  className={`flex shrink-0 items-center justify-center rounded-xl bg-orange-50 text-cp-orange dark:bg-orange-950/40 ${
+                    compact ? "h-9 w-9" : "h-11 w-11"
                   }`}
                 >
                   <tool.icon className={compact ? "h-4 w-4" : "h-5 w-5"} />
                 </span>
                 <span
-                  className={`min-w-0 truncate font-semibold text-slate-800 group-hover:text-cp-link dark:text-ink-50 ${
-                    compact ? "text-sm" : "text-base"
+                  className={`min-w-0 font-semibold leading-snug text-slate-800 group-hover:text-cp-link dark:text-ink-50 ${
+                    compact ? "text-[13px]" : "text-sm sm:text-base"
                   }`}
                 >
                   {tool.label}
@@ -293,7 +324,7 @@ export function WhmHomePage() {
             ))}
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="hidden grid-cols-2 gap-3 sm:grid xl:grid-cols-4">
             {[
               { label: "Accounts", value: data?.users_total ?? "—", to: "/whm/accounts" },
               { label: "Domains", value: data?.domains_total ?? "—", to: "/whm/domains" },
@@ -315,14 +346,16 @@ export function WhmHomePage() {
             ))}
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-2.5 sm:grid-cols-2 sm:gap-3">
             {hubs.map((hub) => (
               <section
                 key={hub.title}
-                className="overflow-hidden rounded-xl border border-slate-200/90 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-ink-700 dark:bg-ink-950"
+                className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-ink-700 dark:bg-ink-950"
               >
-                <div className="flex items-center gap-2 border-b border-slate-100 bg-[#f4f7fa] px-3.5 py-2.5 dark:border-ink-800 dark:bg-ink-900">
-                  <hub.icon className="h-4 w-4 text-cp-orange" />
+                <div className="flex items-center gap-2 border-b border-slate-100 bg-gradient-to-r from-[#eef3f8] to-[#f7f9fc] px-3.5 py-2.5 dark:border-ink-800 dark:from-ink-900 dark:to-ink-950">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-orange-50 text-cp-orange dark:bg-orange-950/40">
+                    <hub.icon className="h-3.5 w-3.5" />
+                  </span>
                   <h2 className="text-sm font-semibold text-slate-800 dark:text-ink-50">{hub.title}</h2>
                 </div>
                 <ul className="divide-y divide-slate-100 dark:divide-ink-800">
@@ -330,7 +363,7 @@ export function WhmHomePage() {
                     <li key={hub.title + link.to + link.label}>
                       <Link
                         to={link.to}
-                        className="flex items-center justify-between px-3.5 py-2 text-sm text-cp-link transition hover:bg-orange-50/60 dark:hover:bg-ink-900"
+                        className="flex min-h-11 items-center justify-between px-3.5 py-2.5 text-sm text-cp-link transition active:bg-orange-50/70 dark:active:bg-ink-900 sm:min-h-0 sm:py-2 sm:hover:bg-orange-50/60"
                       >
                         <span>{link.label}</span>
                         <span className="text-xs text-slate-400">→</span>

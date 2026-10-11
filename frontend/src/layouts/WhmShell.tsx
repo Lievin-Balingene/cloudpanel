@@ -596,7 +596,7 @@ export function WhmShell() {
       {navOpen ? (
         <button
           type="button"
-          className="fixed inset-0 z-40 bg-black/45 md:hidden"
+          className="vz-drawer-backdrop md:hidden"
           aria-label="Fermer le menu"
           onClick={() => setNavOpen(false)}
         />
@@ -604,9 +604,10 @@ export function WhmShell() {
 
       {/* Sidebar V-zone Admin — drawer mobile, fixe desktop */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 flex h-full w-[min(248px,88vw)] shrink-0 flex-col bg-[#2a4a6b] text-white shadow-[2px_0_8px_rgba(0,0,0,0.25)] transition-transform duration-200 ease-out md:static md:z-auto md:w-[248px] md:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-50 flex h-full w-[min(272px,90vw)] shrink-0 flex-col bg-gradient-to-b from-[#2a4a6b] to-[#1e3a55] text-white shadow-[4px_0_24px_rgba(0,0,0,0.28)] transition-transform duration-200 ease-out md:static md:z-auto md:w-[248px] md:translate-x-0 ${
           navOpen ? "translate-x-0" : "-translate-x-full"
         }`}
+        style={navOpen ? { paddingBottom: "env(safe-area-inset-bottom, 0)" } : undefined}
       >
         <div className="shrink-0 px-3 pb-2 pt-3">
           <div className="flex items-center gap-2.5">
@@ -722,14 +723,17 @@ export function WhmShell() {
 
       {/* Colonne droite : topbar */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="z-30 shrink-0 border-b border-[#c5d0dc] bg-white shadow-sm dark:border-ink-700 dark:bg-ink-950">
-          <div className="hidden flex-wrap items-center gap-x-4 gap-y-2 px-3 py-1.5 text-[11px] text-[#5a6f85] dark:text-ink-300 sm:flex sm:px-4">
-            <span>
-              <span className="text-[#8a9bb0]">Username:</span>{" "}
-              <span className="font-medium text-[#2c3e50] dark:text-ink-100">{user?.username || "—"}</span>
+        <header
+          className="z-30 shrink-0 border-b border-[#c5d0dc] bg-white/95 shadow-sm backdrop-blur-md dark:border-ink-700 dark:bg-ink-950/95"
+          style={{ paddingTop: "env(safe-area-inset-top, 0)" }}
+        >
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1.5 text-[11px] text-[#5a6f85] dark:text-ink-300 sm:gap-x-4 sm:px-4">
+            <span className="truncate">
+              <span className="text-[#8a9bb0]">User:</span>{" "}
+              <span className="font-semibold text-[#2c3e50] dark:text-ink-100">{user?.username || "—"}</span>
             </span>
-            <span className="hidden sm:inline">
-              <span className="text-[#8a9bb0]">Hostname:</span>{" "}
+            <span className="truncate sm:inline">
+              <span className="text-[#8a9bb0]">Host:</span>{" "}
               <span className="font-medium text-[#2c3e50] dark:text-ink-100">{hostname}</span>
             </span>
             {version && (
@@ -739,19 +743,19 @@ export function WhmShell() {
               </span>
             )}
             <span className="ml-auto hidden lg:inline">
-              <span className="text-[#8a9bb0]">Load Averages:</span>{" "}
+              <span className="text-[#8a9bb0]">Load:</span>{" "}
               <span className="font-mono font-medium text-[#2c3e50] dark:text-ink-100">{loadLabel}</span>
             </span>
-            <span className="hidden items-center gap-1 rounded-full bg-[#eef2f6] px-2 py-0.5 text-[10px] font-medium text-[#5a6f85] dark:bg-ink-800 lg:inline-flex">
+            <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 sm:ml-0 lg:inline-flex">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              No alerts
+              OK
             </span>
           </div>
 
-          <div className="flex items-center gap-2 border-t border-[#e8eef4] px-2 py-2 dark:border-ink-800 sm:px-4">
+          <div className="flex items-center gap-2 border-t border-[#e8eef4] px-2 py-2.5 dark:border-ink-800 sm:px-4">
             <button
               type="button"
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#c5d0dc] text-[#2c3e50] hover:bg-[#f0f4f8] dark:border-ink-600 dark:text-ink-100 dark:hover:bg-ink-800 md:hidden"
+              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[#c5d0dc] bg-[#f7f9fc] text-[#2c3e50] shadow-sm active:bg-[#eef2f6] dark:border-ink-600 dark:bg-ink-900 dark:text-ink-100 md:hidden"
               aria-label="Ouvrir le menu"
               aria-expanded={navOpen}
               onClick={() => setNavOpen(true)}
@@ -778,7 +782,7 @@ export function WhmShell() {
               {user?.role === "reseller" && (
                 <a
                   href={cpanelPortalUrl("/panel")}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-full border border-cp-orange/40 bg-cp-orange-soft px-2.5 text-xs font-semibold text-cp-orange-dark hover:brightness-105"
+                  className="inline-flex h-11 items-center gap-1.5 rounded-xl border border-cp-orange/40 bg-cp-orange-soft px-2.5 text-xs font-semibold text-cp-orange-dark active:brightness-105 sm:h-9 sm:rounded-full"
                   title="Ouvrir V-zone Panel"
                 >
                   <AppWindow className="h-3.5 w-3.5" />
@@ -787,7 +791,7 @@ export function WhmShell() {
               )}
               <button
                 type="button"
-                className="flex h-9 w-9 items-center justify-center rounded-full border border-[#c5d0dc] text-[#5a6f85] hover:bg-[#f0f4f8] dark:border-ink-600 dark:text-ink-300 dark:hover:bg-ink-800"
+                className="flex h-11 w-11 items-center justify-center rounded-xl border border-[#c5d0dc] text-[#5a6f85] active:bg-[#eef2f6] dark:border-ink-600 dark:text-ink-300 dark:active:bg-ink-800 sm:h-9 sm:w-9 sm:rounded-full"
                 onClick={toggle}
                 title="Theme"
               >
@@ -802,7 +806,7 @@ export function WhmShell() {
               </button>
               <button
                 type="button"
-                className="inline-flex h-9 items-center gap-1.5 rounded-full border border-[#c5d0dc] px-2.5 text-xs font-medium text-[#2c3e50] hover:bg-[#f0f4f8] dark:border-ink-600 dark:text-ink-100 dark:hover:bg-ink-800"
+                className="inline-flex h-11 items-center gap-1.5 rounded-xl border border-[#c5d0dc] px-2.5 text-xs font-medium text-[#2c3e50] active:bg-[#eef2f6] dark:border-ink-600 dark:text-ink-100 dark:active:bg-ink-800 sm:h-9 sm:rounded-full"
                 onClick={() => void logout()}
               >
                 <LogOut className="h-3.5 w-3.5" />

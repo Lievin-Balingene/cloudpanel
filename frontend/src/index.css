@@ -144,6 +144,64 @@ html.dark body {
       #0e1520;
   }
 
+  /* ——— Mobile polish (Client + WHM) ——— */
+  .vz-mobile-header {
+    @apply sticky top-0 z-30 border-b border-black/15 bg-cp-header/95 text-white shadow-md backdrop-blur-md;
+    padding-top: env(safe-area-inset-top, 0);
+  }
+
+  .vz-drawer-backdrop {
+    @apply fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px];
+    animation: vz-fade-in 0.18s ease-out;
+  }
+
+  .vz-drawer-panel {
+    @apply fixed inset-y-0 left-0 z-50 flex w-[min(20rem,92vw)] flex-col shadow-2xl;
+    animation: vz-slide-in 0.22s var(--vz-ease);
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+
+  .vz-stat-tile {
+    @apply relative overflow-hidden rounded-2xl border border-cp-border/60 bg-white p-3 shadow-sm
+      transition active:scale-[0.98] dark:border-ink-700 dark:bg-ink-900/80;
+  }
+
+  .vz-stat-tile::after {
+    content: "";
+    position: absolute;
+    inset: auto -20% -40% auto;
+    width: 4.5rem;
+    height: 4.5rem;
+    border-radius: 9999px;
+    background: radial-gradient(circle, rgba(255, 106, 0, 0.12), transparent 70%);
+    pointer-events: none;
+  }
+
+  .vz-tool-tile {
+    @apply flex flex-col items-start gap-2.5 rounded-2xl border border-cp-border/70 bg-gradient-to-b from-white to-[#f7f9fc]
+      p-3.5 shadow-sm transition active:scale-[0.98]
+      dark:border-ink-700 dark:from-ink-950 dark:to-ink-900;
+  }
+
+  .vz-chip-scroll {
+    @apply flex gap-2 overflow-x-auto overscroll-x-contain pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none];
+  }
+  .vz-chip-scroll::-webkit-scrollbar {
+    display: none;
+  }
+
+  .vz-quick-chip {
+    @apply inline-flex shrink-0 items-center gap-1.5 rounded-full border border-white/25 px-3.5 py-2
+      text-xs font-semibold text-white backdrop-blur-sm transition active:bg-white/20;
+    background-color: rgba(255, 255, 255, 0.12);
+  }
+
+  @media (hover: none) {
+    .vz-panel:hover {
+      box-shadow: 0 1px 3px rgba(26, 43, 60, 0.08);
+    }
+  }
+
   select.vz-input {
     @apply bg-white;
   }
@@ -190,6 +248,26 @@ html.dark body {
   }
   100% {
     transform: translateX(320%);
+  }
+}
+
+@keyframes vz-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes vz-slide-in {
+  from {
+    transform: translateX(-100%);
+    opacity: 0.85;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
   }
 }
 

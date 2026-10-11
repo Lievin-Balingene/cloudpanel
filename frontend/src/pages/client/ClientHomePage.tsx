@@ -110,24 +110,49 @@ const sections: Section[] = [
   },
 ];
 
-function StatChip({
+function StatTile({
   label,
   value,
   to,
+  icon: Icon,
+  percent,
 }: {
   label: string;
   value: string;
   to?: string;
+  icon: LucideIcon;
+  percent?: number;
 }) {
+  const pct =
+    typeof percent === "number" ? Math.max(0, Math.min(100, percent)) : null;
   const inner = (
-    <div className="rounded-xl border border-cp-border/70 bg-white/80 px-3 py-2.5 dark:border-ink-700 dark:bg-ink-900/70">
-      <p className="text-[11px] font-medium uppercase tracking-wide text-cp-muted">{label}</p>
-      <p className="mt-0.5 text-base font-semibold text-cp-text">{value}</p>
+    <div className="vz-stat-tile">
+      <div className="relative z-[1] flex items-start justify-between gap-2">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-cp-muted">
+          {label}
+        </p>
+        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-cp-orange/10 text-cp-orange">
+          <Icon className="h-3.5 w-3.5" />
+        </span>
+      </div>
+      <p className="relative z-[1] mt-2 text-[15px] font-bold leading-tight tabular-nums text-cp-text sm:text-base">
+        {value}
+      </p>
+      {pct != null ? (
+        <div className="relative z-[1] mt-2.5 h-1.5 overflow-hidden rounded-full bg-[#e8eef4] dark:bg-ink-800">
+          <div
+            className={`h-full rounded-full transition-all ${
+              pct >= 90 ? "bg-cp-danger" : pct >= 70 ? "bg-amber-500" : "bg-cp-orange"
+            }`}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      ) : null}
     </div>
   );
   if (!to) return inner;
   return (
-    <Link to={to} className="block transition hover:-translate-y-0.5 hover:shadow-sm">
+    <Link to={to} className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-cp-orange/40">
       {inner}
     </Link>
   );
@@ -146,6 +171,12 @@ export function ClientHomePage() {
   });
 
   const greetName = user?.first_name?.trim() || user?.username || "bienvenue";
+  const diskUsedMb =
+    typeof data?.disk?.used_mb === "number"
+      ? data.disk.used_mb
+      : data?.disk
+        ? data.disk.used / (1024 * 1024)
+        : 0;
   const diskUsed =
     typeof data?.disk?.used_mb === "number"
       ? data.disk.used_mb < 10
@@ -161,6 +192,12 @@ export function ClientHomePage() {
       : data?.disk
         ? formatBytes(data.disk.total)
         : "—";
+  const diskPct = data?.disk?.unlimited
+    ? 0
+    : data?.disk?.percent ??
+      (data?.disk?.quota_mb && data.disk.quota_mb > 0
+        ? Math.min(100, (diskUsedMb / data.disk.quota_mb) * 100)
+        : undefined);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -169,13 +206,21 @@ export function ClientHomePage() {
       .map((section) => ({
         ...section,
         tools: section.tools.filter(
-          (t) =>
-            t.label.toLowerCase().includes(needle) ||
+          (tool) =>
+            tool.label.toLowerCase().includes(needle) ||
             section.title.toLowerCase().includes(needle),
         ),
       }))
       .filter((s) => s.tools.length > 0);
   }, [q]);
+
+  const quickLinks = [
+    { to: "/panel/files", label: "Fichiers", icon: Folder },
+    { to: "/panel/email", label: "E-mail", icon: Mail },
+    { to: "/panel/wordpress", label: "WordPress", icon: LayoutTemplate },
+    { to: "/panel/domains", label: "Domaines", icon: AppWindow },
+    { to: "/panel/backups", label: "Sauvegarde", icon: HardDrive },
+  ];
 
   return (
     <div className="space-y-4 animate-fade-up">
@@ -198,14 +243,23 @@ export function ClientHomePage() {
       )}
 
       <div className="vz-panel overflow-hidden">
-        <div className="bg-gradient-to-br from-[#1e3a5f] via-[#243d5c] to-[#2a4a6b] px-4 py-5 text-white sm:px-5 sm:py-6">
-          <p className="text-xs font-medium uppercase tracking-wider text-white/70">
+        <div className="relative overflow-hidden bg-gradient-to-br from-[#1a3354] via-[#243d5c] to-[#2f5680] px-4 pb-4 pt-5 text-white sm:px-5 sm:pb-5 sm:pt-6">
+          <div
+            className="pointer-events-none absolute -right-8 -top-10 h-40 w-40 rounded-full bg-white/10 blur-2xl"
+            aria-hidden
+          />
+          <div
+            className="pointer-events-none absolute -bottom-12 left-1/3 h-32 w-32 rounded-full bg-cp-orange/20 blur-3xl"
+            aria-hidden
+          />
+          <p className="relative text-[10px] font-semibold uppercase tracking-[0.16em] text-white/65">
             Informations générales
           </p>
-          <h1 className="mt-1 text-xl font-semibold tracking-tight sm:text-2xl">
-            {t("panelGreeting")}, {greetName}
+          <h1 className="relative mt-1.5 text-[1.35rem] font-semibold tracking-tight sm:text-2xl">
+            {t("panelGreeting")},{" "}
+            <span className="text-white">{greetName}</span>
           </h1>
-          <p className="mt-1 max-w-xl text-sm text-white/80">
+          <p className="relative mt-1.5 max-w-xl text-[13px] leading-relaxed text-white/80 sm:text-sm">
             {data?.account?.primary_domain
               ? tweaks.panel_locale === "en"
                 ? `Primary domain: ${data.account.primary_domain}.`
@@ -217,54 +271,68 @@ export function ClientHomePage() {
               <>
                 {" "}
                 {tweaks.panel_locale === "en" ? "Plan" : "Forfait"}{" "}
-                <strong className="text-white">{data.my_package}</strong>.
+                <strong className="font-semibold text-white">{data.my_package}</strong>.
               </>
             ) : null}
           </p>
+
           <label className="relative mt-4 block max-w-md">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/50" />
+            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-white/55" />
             <input
-              className="w-full rounded-xl border border-white/20 bg-white/10 py-2.5 pl-9 pr-3 text-sm text-white placeholder:text-white/50 outline-none backdrop-blur-sm transition focus:border-white/40 focus:bg-white/15"
+              className="w-full rounded-2xl border border-white/20 bg-white/12 py-3 pl-10 pr-3 text-sm text-white placeholder:text-white/50 outline-none shadow-inner backdrop-blur-md transition focus:border-white/45 focus:bg-white/18"
               placeholder={t("toolsSearch")}
               value={q}
               onChange={(e) => setQ(e.target.value)}
               aria-label={t("toolsSearch")}
             />
           </label>
+
+          <div className="vz-chip-scroll relative mt-3.5 sm:hidden">
+            {quickLinks.map((a) => (
+              <Link key={a.to} to={a.to} className="vz-quick-chip">
+                <a.icon className="h-3.5 w-3.5 opacity-90" />
+                {a.label}
+              </Link>
+            ))}
+          </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 p-3 sm:grid-cols-4 sm:gap-3 sm:p-4 xl:hidden">
-          <StatChip label="Disque" value={`${diskUsed} / ${diskQuota}`} to="/panel/disk-usage" />
-          <StatChip
+        <div className="grid grid-cols-2 gap-2.5 p-3 sm:grid-cols-4 sm:gap-3 sm:p-4 xl:hidden">
+          <StatTile
+            label="Disque"
+            value={`${diskUsed} / ${diskQuota}`}
+            to="/panel/disk-usage"
+            icon={HardDrive}
+            percent={diskPct}
+          />
+          <StatTile
             label="Domaines"
             value={String(data?.domains_total ?? data?.usage?.domains ?? 0)}
             to="/panel/domains"
+            icon={Globe}
           />
-          <StatChip
+          <StatTile
             label="E-mails"
             value={String(data?.usage?.emails ?? 0)}
             to="/panel/email"
+            icon={Mail}
           />
-          <StatChip
+          <StatTile
             label="Bases"
             value={String(data?.usage?.databases ?? 0)}
             to="/panel/databases"
+            icon={Database}
           />
         </div>
 
-        <div className="flex flex-wrap gap-2 border-t border-cp-border px-3 py-3 sm:px-4 dark:border-ink-800">
-          {[
-            { to: "/panel/files", label: "Fichiers" },
-            { to: "/panel/email", label: "E-mail" },
-            { to: "/panel/wordpress", label: "WordPress" },
-            { to: "/panel/domains", label: "Domaines" },
-            { to: "/panel/backups", label: "Sauvegarde" },
-          ].map((a) => (
+        <div className="hidden flex-wrap gap-2 border-t border-cp-border px-3 py-3 sm:flex sm:px-4 dark:border-ink-800">
+          {quickLinks.map((a) => (
             <Link
               key={a.to + a.label}
               to={a.to}
-              className="inline-flex min-h-9 items-center rounded-full border border-cp-border bg-cp-canvas px-3 text-xs font-medium text-cp-text transition hover:border-cp-orange/50 hover:bg-white dark:border-ink-700 dark:bg-ink-900 dark:hover:bg-ink-800"
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-cp-border bg-cp-canvas px-3 text-xs font-medium text-cp-text transition hover:border-cp-orange/50 hover:bg-white dark:border-ink-700 dark:bg-ink-900 dark:hover:bg-ink-800"
             >
+              <a.icon className="h-3.5 w-3.5 text-cp-orange" />
               {a.label}
             </Link>
           ))}
@@ -273,27 +341,37 @@ export function ClientHomePage() {
 
       {filtered.map((section) => (
         <section key={section.title} className="vz-panel overflow-hidden">
-          <div className="border-b border-cp-border bg-[#f0f4f8] px-3 py-2.5 sm:px-4 dark:border-ink-700 dark:bg-ink-900">
+          <div className="flex items-center justify-between border-b border-cp-border bg-gradient-to-r from-[#eef3f8] to-[#f7f9fc] px-3 py-2.5 sm:px-4 dark:border-ink-700 dark:from-ink-900 dark:to-ink-950">
             <h2 className="text-sm font-semibold text-cp-text">{section.title}</h2>
+            <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold tabular-nums text-cp-muted dark:bg-ink-800">
+              {section.tools.length}
+            </span>
           </div>
-          <div className={`grid grid-cols-2 gap-2 p-3 sm:grid-cols-3 sm:p-4 lg:grid-cols-4 ${compact ? "" : "gap-3"}`}>
+          {/* Mobile : tuiles verticales ; desktop : rangées horizontales */}
+          <div
+            className={`grid p-3 sm:p-4 ${
+              compact
+                ? "grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4"
+                : "grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3 lg:grid-cols-4"
+            }`}
+          >
             {section.tools.map((tool) => (
               <Link
                 key={`${section.title}-${tool.label}`}
                 to={tool.to}
-                className={`group flex items-center gap-2.5 rounded-lg border border-cp-border/70 bg-[#f7f9fc] transition hover:border-cp-orange/45 hover:bg-white hover:shadow-sm dark:border-ink-700 dark:bg-ink-900/70 dark:hover:bg-ink-900 ${
-                  compact ? "px-2.5 py-2" : "px-3.5 py-3.5"
-                }`}
+                className="vz-tool-tile group sm:flex-row sm:items-center"
               >
                 <span
-                  className={`flex shrink-0 items-center justify-center rounded-lg bg-white text-cp-orange shadow-sm ring-1 ring-cp-border/60 transition group-hover:ring-cp-orange/30 dark:bg-ink-950 dark:ring-ink-700 ${
-                    compact ? "h-8 w-8" : "h-11 w-11"
+                  className={`flex shrink-0 items-center justify-center rounded-xl bg-white text-cp-orange shadow-sm ring-1 ring-cp-border/50 transition group-hover:ring-cp-orange/35 dark:bg-ink-950 dark:ring-ink-700 ${
+                    compact ? "h-9 w-9" : "h-11 w-11"
                   }`}
                 >
                   <tool.icon className={compact ? "h-4 w-4" : "h-5 w-5"} />
                 </span>
                 <span
-                  className={`min-w-0 truncate font-medium text-cp-text ${compact ? "text-sm" : "text-base"}`}
+                  className={`min-w-0 font-medium leading-snug text-cp-text ${
+                    compact ? "text-[13px]" : "text-sm sm:text-base"
+                  }`}
                 >
                   {tool.label}
                 </span>

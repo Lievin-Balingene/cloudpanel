@@ -430,29 +430,29 @@ export function ClientShell() {
 
   return (
     <div className="vz-client-canvas min-h-screen dark:bg-surface-dark">
-      <header className="sticky top-0 z-20 border-b border-black/20 bg-cp-header text-white shadow-md">
+      <header className="vz-mobile-header">
         <div className="flex items-center justify-between gap-2 px-3 py-2.5 sm:px-4">
-          <div className="flex min-w-0 items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2.5">
             <button
               type="button"
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg hover:bg-white/15 lg:hidden"
+              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/15 transition active:bg-white/20 lg:hidden"
               aria-label="Ouvrir le menu"
               aria-expanded={navOpen}
               onClick={() => setNavOpen(true)}
             >
               <Menu className="h-5 w-5" />
             </button>
-            <NavLink to="/panel" className="flex min-w-0 items-center gap-2">
+            <NavLink to="/panel" className="flex min-w-0 items-center gap-2.5">
               <img
                 src="/vzone-mark.svg"
                 alt=""
-                className="h-8 w-8 shrink-0 rounded-lg shadow-sm"
-                width={32}
-                height={32}
+                className="h-9 w-9 shrink-0 rounded-xl shadow-md ring-1 ring-white/20"
+                width={36}
+                height={36}
               />
               <div className="min-w-0">
-                <p className="text-sm font-semibold tracking-wide">V-zone Panel</p>
-                <p className="truncate text-[11px] text-white/85">
+                <p className="text-[15px] font-semibold leading-tight tracking-wide">V-zone Panel</p>
+                <p className="truncate text-[11px] text-white/75">
                   {user?.role === "reseller"
                     ? "Espace client · revendeur"
                     : "Espace client"}
@@ -460,15 +460,15 @@ export function ClientShell() {
               </div>
             </NavLink>
           </div>
-          <div className="flex shrink-0 items-center gap-1 text-sm sm:gap-2">
+          <div className="flex shrink-0 items-center gap-1 text-sm sm:gap-1.5">
             {user?.role === "reseller" && (
               <a
                 href={whmPortalUrl("/whm")}
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-cp-orange px-2.5 text-xs font-bold uppercase tracking-wide text-white shadow hover:brightness-110 sm:px-3"
+                className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-cp-orange px-2.5 text-xs font-bold uppercase tracking-wide text-white shadow-md hover:brightness-110 sm:px-3"
                 title="Ouvrir V-zone Admin (WHM)"
               >
                 <Server className="h-3.5 w-3.5" />
-                <span className="hidden xs:inline sm:inline">Admin</span>
+                <span className="hidden sm:inline">Admin</span>
               </a>
             )}
             <span className="hidden max-w-[8rem] truncate rounded-full bg-white/15 px-2.5 py-1 text-xs sm:inline">
@@ -476,7 +476,7 @@ export function ClientShell() {
             </span>
             <button
               type="button"
-              className="inline-flex h-10 w-10 items-center justify-center rounded-lg transition hover:bg-white/15"
+              className="inline-flex h-11 w-11 items-center justify-center rounded-xl transition hover:bg-white/15"
               onClick={toggle}
               aria-label={theme === "dark" ? "Passer en mode clair" : "Passer en mode sombre"}
             >
@@ -484,7 +484,7 @@ export function ClientShell() {
             </button>
             <button
               type="button"
-              className="inline-flex h-10 items-center gap-1.5 rounded-lg px-2 transition hover:bg-white/15 sm:px-2.5"
+              className="inline-flex h-11 items-center gap-1.5 rounded-xl px-2 transition hover:bg-white/15 sm:px-2.5"
               onClick={() => void logout()}
               aria-label={t("logout")}
             >
@@ -499,35 +499,39 @@ export function ClientShell() {
         <>
           <button
             type="button"
-            className="fixed inset-0 z-40 bg-black/45 backdrop-blur-[1px] lg:hidden"
+            className="vz-drawer-backdrop lg:hidden"
             aria-label="Fermer le menu"
             onClick={() => setNavOpen(false)}
           />
-          <div className="fixed inset-y-0 left-0 z-50 flex w-[min(19rem,90vw)] flex-col bg-cp-canvas p-3 shadow-2xl dark:bg-ink-950 lg:hidden">
-            <div className="mb-2 flex items-center justify-between gap-2 px-1">
-              <div>
-                <p className="text-sm font-semibold text-cp-text">Menu</p>
-                {user?.username ? (
-                  <p className="text-xs text-cp-muted">Connecté · {user.username}</p>
-                ) : null}
+          <div className="vz-drawer-panel bg-cp-canvas dark:bg-ink-950 lg:hidden">
+            <div className="border-b border-cp-border bg-gradient-to-r from-[#1e3a5f] to-[#2a4a6b] px-4 py-4 text-white">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">Menu</p>
+                  {user?.username ? (
+                    <p className="truncate text-xs text-white/70">Connecté · {user.username}</p>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-white hover:bg-white/20"
+                  aria-label="Fermer"
+                  onClick={() => setNavOpen(false)}
+                >
+                  <X className="h-5 w-5" />
+                </button>
               </div>
-              <button
-                type="button"
-                className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-cp-muted hover:bg-white hover:text-cp-text dark:hover:bg-ink-900"
-                aria-label="Fermer"
-                onClick={() => setNavOpen(false)}
-              >
-                <X className="h-5 w-5" />
-              </button>
             </div>
-            <div className="vz-panel min-h-0 flex-1 overflow-hidden">
-              <ToolsNav onNavigate={() => setNavOpen(false)} />
+            <div className="min-h-0 flex-1 overflow-hidden p-2.5">
+              <div className="vz-panel h-full min-h-0 overflow-hidden">
+                <ToolsNav onNavigate={() => setNavOpen(false)} />
+              </div>
             </div>
           </div>
         </>
       ) : null}
 
-      <div className="mx-auto flex max-w-[1400px] gap-3 p-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:gap-4 sm:p-4 md:gap-5 md:p-5 lg:gap-6">
+      <div className="mx-auto flex max-w-[1400px] gap-3 p-3 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:gap-4 sm:p-4 md:gap-5 md:p-5 lg:gap-6">
         <AsideMenu />
         <main className="min-w-0 flex-1 space-y-4 animate-fade-up">
           <Outlet />
