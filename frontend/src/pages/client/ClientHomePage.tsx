@@ -243,51 +243,75 @@ export function ClientHomePage() {
       )}
 
       <div className="vz-panel overflow-hidden">
-        <div className="relative overflow-hidden bg-gradient-to-br from-[#1a3354] via-[#243d5c] to-[#2f5680] px-4 pb-4 pt-5 text-white sm:px-5 sm:pb-5 sm:pt-6">
+        <div className="relative overflow-hidden bg-gradient-to-br from-[#152a45] via-[#1e3a55] to-[#2a5080] px-4 pb-5 pt-5 text-white sm:px-6 sm:pb-6 sm:pt-6">
           <div
-            className="pointer-events-none absolute -right-8 -top-10 h-40 w-40 rounded-full bg-white/10 blur-2xl"
+            className="pointer-events-none absolute inset-0 opacity-[0.07]"
+            style={{
+              backgroundImage:
+                "radial-gradient(circle at 1px 1px, #fff 1px, transparent 0)",
+              backgroundSize: "22px 22px",
+            }}
             aria-hidden
           />
           <div
-            className="pointer-events-none absolute -bottom-12 left-1/3 h-32 w-32 rounded-full bg-cp-orange/20 blur-3xl"
+            className="pointer-events-none absolute -right-10 -top-14 h-48 w-48 rounded-full bg-cp-orange/25 blur-3xl"
             aria-hidden
           />
-          <p className="relative text-[10px] font-semibold uppercase tracking-[0.16em] text-white/65">
-            Informations générales
-          </p>
-          <h1 className="relative mt-1.5 text-[1.35rem] font-semibold tracking-tight sm:text-2xl">
-            {t("panelGreeting")},{" "}
-            <span className="text-white">{greetName}</span>
-          </h1>
-          <p className="relative mt-1.5 max-w-xl text-[13px] leading-relaxed text-white/80 sm:text-sm">
-            {data?.account?.primary_domain
-              ? tweaks.panel_locale === "en"
-                ? `Primary domain: ${data.account.primary_domain}.`
-                : `Domaine principal : ${data.account.primary_domain}.`
-              : tweaks.panel_locale === "en"
-                ? "Manage your sites, email and files."
-                : "Gérez vos sites, e-mails et fichiers."}
-            {data?.my_package ? (
-              <>
-                {" "}
-                {tweaks.panel_locale === "en" ? "Plan" : "Forfait"}{" "}
-                <strong className="font-semibold text-white">{data.my_package}</strong>.
-              </>
-            ) : null}
-          </p>
+          <div
+            className="pointer-events-none absolute -bottom-16 left-1/4 h-40 w-40 rounded-full bg-sky-400/15 blur-3xl"
+            aria-hidden
+          />
 
-          <label className="relative mt-4 block max-w-md">
-            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-white/55" />
-            <input
-              className="w-full rounded-2xl border border-white/20 bg-white/12 py-3 pl-10 pr-3 text-sm text-white placeholder:text-white/50 outline-none shadow-inner backdrop-blur-md transition focus:border-white/45 focus:bg-white/18"
-              placeholder={t("toolsSearch")}
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              aria-label={t("toolsSearch")}
-            />
-          </label>
+          <div className="relative flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between sm:gap-6">
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/55">
+                Informations générales
+              </p>
+              <h1 className="mt-2 text-[1.5rem] font-semibold tracking-tight sm:text-[1.75rem]">
+                {t("panelGreeting")},{" "}
+                <span className="bg-gradient-to-r from-white to-orange-100 bg-clip-text text-transparent">
+                  {greetName}
+                </span>
+              </h1>
+              <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[13px] sm:text-sm">
+                {data?.account?.primary_domain ? (
+                  <span className="inline-flex max-w-full items-center gap-1.5 rounded-lg bg-white/10 px-2.5 py-1 ring-1 ring-white/15">
+                    <Globe className="h-3.5 w-3.5 shrink-0 text-sky-200" />
+                    <span className="truncate text-white/90">
+                      {data.account.primary_domain}
+                    </span>
+                  </span>
+                ) : (
+                  <span className="text-white/75">
+                    {tweaks.panel_locale === "en"
+                      ? "Manage your sites, email and files."
+                      : "Gérez vos sites, e-mails et fichiers."}
+                  </span>
+                )}
+                {data?.my_package ? (
+                  <span className="inline-flex items-center gap-1.5 rounded-lg bg-cp-orange/20 px-2.5 py-1 font-medium text-orange-100 ring-1 ring-cp-orange/35">
+                    <Package className="h-3.5 w-3.5 shrink-0" />
+                    {data.my_package}
+                  </span>
+                ) : null}
+              </div>
+            </div>
 
-          <div className="vz-chip-scroll relative mt-3.5 sm:hidden">
+            <label className="relative block w-full max-w-md shrink-0 sm:w-[min(100%,22rem)]">
+              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7a8fa3]" />
+              <input
+                className="vz-hero-search w-full rounded-xl border border-white/25 bg-white py-3 pl-10 pr-3.5 text-sm font-medium text-[#1a2b3c] shadow-[0_8px_24px_rgba(0,0,0,0.18)] outline-none transition placeholder:font-normal placeholder:text-[#8a9bb0] focus:border-cp-orange focus:ring-2 focus:ring-cp-orange/35"
+                placeholder={t("toolsSearch")}
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                aria-label={t("toolsSearch")}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
+          </div>
+
+          <div className="vz-chip-scroll relative mt-4 sm:hidden">
             {quickLinks.map((a) => (
               <Link key={a.to} to={a.to} className="vz-quick-chip">
                 <a.icon className="h-3.5 w-3.5 opacity-90" />
@@ -325,12 +349,12 @@ export function ClientHomePage() {
           />
         </div>
 
-        <div className="hidden flex-wrap gap-2 border-t border-cp-border px-3 py-3 sm:flex sm:px-4 dark:border-ink-800">
+        <div className="hidden flex-wrap gap-2 border-t border-cp-border bg-[#f7f9fc]/80 px-4 py-3 sm:flex dark:border-ink-800 dark:bg-ink-900/40">
           {quickLinks.map((a) => (
             <Link
               key={a.to + a.label}
               to={a.to}
-              className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-cp-border bg-cp-canvas px-3 text-xs font-medium text-cp-text transition hover:border-cp-orange/50 hover:bg-white dark:border-ink-700 dark:bg-ink-900 dark:hover:bg-ink-800"
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-cp-border bg-white px-3.5 text-xs font-semibold text-cp-text shadow-sm transition hover:border-cp-orange/45 hover:text-cp-orange dark:border-ink-700 dark:bg-ink-900 dark:hover:bg-ink-800"
             >
               <a.icon className="h-3.5 w-3.5 text-cp-orange" />
               {a.label}

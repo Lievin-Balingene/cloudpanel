@@ -196,6 +196,25 @@ html.dark body {
     background-color: rgba(255, 255, 255, 0.12);
   }
 
+  /* Search hero : fond blanc opaque + texte sombre (lisible, anti-autofill) */
+  .vz-hero-search {
+    color: #1a2b3c !important;
+    background-color: #ffffff !important;
+    -webkit-text-fill-color: #1a2b3c;
+  }
+  .vz-hero-search::placeholder {
+    color: #8a9bb0 !important;
+    -webkit-text-fill-color: #8a9bb0;
+    opacity: 1;
+  }
+  .vz-hero-search:-webkit-autofill,
+  .vz-hero-search:-webkit-autofill:hover,
+  .vz-hero-search:-webkit-autofill:focus {
+    -webkit-text-fill-color: #1a2b3c;
+    box-shadow: 0 0 0 1000px #ffffff inset;
+    transition: background-color 99999s ease-in-out 0s;
+  }
+
   @media (hover: none) {
     .vz-panel:hover {
       box-shadow: 0 1px 3px rgba(26, 43, 60, 0.08);
