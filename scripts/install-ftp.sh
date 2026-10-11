@@ -14,6 +14,7 @@ DATA_ROOT="${VZONE_DATA_ROOT:-/var/lib/vzone}"
 AUTH_BIN="/usr/local/sbin/vzone-ftp-auth"
 AUTH_SOCK="/var/run/vzone-ftp-authd.sock"
 UNIT_DIR="/etc/systemd/system"
+TLS_COMBINED="/etc/ssl/private/vzone-pure-ftpd.pem"
 
 if [[ -f "$ENV_FILE" ]]; then
   # shellcheck disable=SC1090
@@ -21,35 +22,33 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 DATA_ROOT="${VZONE_DATA_ROOT:-$DATA_ROOT}"
 
-echo "[vzone] Installation Pure-FTPd (auth V-zone)"
+log() { echo "[vzone] $*"; }
+warn() { echo "[vzone] AVERTISSEMENT — $*" >&2; }
+
+log "Installation Pure-FTPd (auth V-zone)"
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq pure-ftpd openssl ca-certificates curl
+apt-get install -y -qq pure-ftpd openssl ca-certificates curl ssl-cert 2>/dev/null \
+  || apt-get install -y -qq pure-ftpd openssl ca-certificates curl
 
 # Binaire auth (Django direct — pas besoin d'HTTP)
 install -m 755 "${REPO_DIR}/scripts/vzone-ftp-auth.py" "$AUTH_BIN"
-# Shebang venv si dispo
 if [[ -x "${VZONE_ROOT}/backend/.venv/bin/python" ]]; then
   sed -i "1s|^#!.*|#!${VZONE_ROOT}/backend/.venv/bin/python|" "$AUTH_BIN" || true
 fi
 
-mkdir -p "${DATA_ROOT}/ftp"
+mkdir -p "${DATA_ROOT}/ftp" /var/log/vzone /var/run
 chown -R "${VZONE_USER}:${VZONE_USER}" "${DATA_ROOT}/ftp" 2>/dev/null || true
 chmod 750 "${DATA_ROOT}/ftp" 2>/dev/null || true
 
-# Secret auth (pour API HTTP optionnelle) — générer si absent
-if [[ -f "$ENV_FILE" ]] && ! grep -q '^VZONE_FTP_AUTH_SECRET=' "$ENV_FILE" 2>/dev/null; then
-  SECRET="$(openssl rand -hex 24)"
-  echo "VZONE_FTP_AUTH_SECRET=${SECRET}" >>"$ENV_FILE"
-  echo "[vzone] VZONE_FTP_AUTH_SECRET ajouté à ${ENV_FILE}"
-elif [[ -f "$ENV_FILE" ]]; then
-  # shellcheck disable=SC1090
-  set -a; source "$ENV_FILE"; set +a
-  if [[ -z "${VZONE_FTP_AUTH_SECRET:-}" ]]; then
+# Secret auth — générer si absent
+if [[ -f "$ENV_FILE" ]]; then
+  if ! grep -qE '^VZONE_FTP_AUTH_SECRET=.+' "$ENV_FILE" 2>/dev/null; then
     SECRET="$(openssl rand -hex 24)"
-    sed -i '/^VZONE_FTP_AUTH_SECRET=/d' "$ENV_FILE"
+    sed -i '/^VZONE_FTP_AUTH_SECRET=/d' "$ENV_FILE" 2>/dev/null || true
     echo "VZONE_FTP_AUTH_SECRET=${SECRET}" >>"$ENV_FILE"
+    log "VZONE_FTP_AUTH_SECRET ajouté à ${ENV_FILE}"
   fi
 fi
 
@@ -62,45 +61,79 @@ Wants=vzone-api.service
 
 [Service]
 Type=simple
+EnvironmentFile=-${ENV_FILE}
+Environment=VZONE_ROOT=${VZONE_ROOT}
+Environment=DJANGO_SETTINGS_MODULE=vzone.settings.production
 ExecStartPre=/bin/rm -f ${AUTH_SOCK}
 ExecStart=/usr/sbin/pure-authd -s ${AUTH_SOCK} -r ${AUTH_BIN} -l /var/log/vzone/ftp-authd.log
 Restart=on-failure
 RestartSec=3
-RuntimeDirectory=vzone-ftp
 UMask=0007
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# --- Conf Pure-FTPd (Debian style) ---
-mkdir -p /etc/pure-ftpd/conf /etc/pure-ftpd/auth
-# ExtAuth socket
-echo "${AUTH_SOCK}" >/etc/pure-ftpd/conf/ExtAuth
-# Auth order: ExtAuth only
-rm -f /etc/pure-ftpd/auth/*
-ln -sf ../conf/ExtAuth /etc/pure-ftpd/auth/50ext
+# Drop-in : Pure-FTPd démarre après ExtAuth (évite échec socket)
+mkdir -p "${UNIT_DIR}/pure-ftpd.service.d"
+cat >"${UNIT_DIR}/pure-ftpd.service.d/vzone.conf" <<EOF
+[Unit]
+After=vzone-ftp-authd.service network-online.target
+Wants=vzone-ftp-authd.service
+EOF
 
-# Options utiles panneau
+# --- Conf Pure-FTPd (Debian style / pure-ftpd-wrapper) ---
+mkdir -p /etc/pure-ftpd/conf /etc/pure-ftpd/auth
+
+# ExtAuth uniquement
+echo "${AUTH_SOCK}" >/etc/pure-ftpd/conf/ExtAuth
+rm -f /etc/pure-ftpd/auth/*
+ln -sfn ../conf/ExtAuth /etc/pure-ftpd/auth/50ext
+# Retirer les méthodes Debian par défaut qui cassent le démarrage / auth
+rm -f /etc/pure-ftpd/auth/70unix /etc/pure-ftpd/auth/65unix \
+  /etc/pure-ftpd/auth/60pam /etc/pure-ftpd/auth/PureDB \
+  /etc/pure-ftpd/conf/UnixAuthentication /etc/pure-ftpd/conf/PAMAuthentication \
+  /etc/pure-ftpd/conf/MySQLConfigFile /etc/pure-ftpd/conf/LDAPConfigFile 2>/dev/null || true
+echo "no" >/etc/pure-ftpd/conf/UnixAuthentication
+echo "no" >/etc/pure-ftpd/conf/PAMAuthentication
+
+# Options panneau
 echo "yes" >/etc/pure-ftpd/conf/ChrootEveryone
 echo "yes" >/etc/pure-ftpd/conf/NoAnonymous
 echo "yes" >/etc/pure-ftpd/conf/DontResolve
 echo "yes" >/etc/pure-ftpd/conf/VerboseLog
 echo "yes" >/etc/pure-ftpd/conf/Daemonize
-echo "21" >/etc/pure-ftpd/conf/Bind
+# Format Debian : IP,port (un simple « 21 » fait souvent échouer le wrapper)
+echo "0.0.0.0,21" >/etc/pure-ftpd/conf/Bind
 echo "30000 30100" >/etc/pure-ftpd/conf/PassivePortRange
 echo "yes" >/etc/pure-ftpd/conf/NoChmod
-echo "2" >/etc/pure-ftpd/conf/MinUID
-# TLS optionnel si certificat présent
-if [[ -f /etc/ssl/private/ssl-cert-snakeoil.key ]]; then
+echo "100" >/etc/pure-ftpd/conf/MinUID
+echo "15" >/etc/pure-ftpd/conf/MaxClientsNumber
+echo "no" >/etc/pure-ftpd/conf/DisplayDotFiles 2>/dev/null || true
+
+# TLS : Pure-FTPd exige un PEM cert+clé combinés — le snakeoil séparé fait crasher le start
+rm -f /etc/pure-ftpd/conf/TLS /etc/pure-ftpd/conf/CertFile /etc/pure-ftpd/conf/TLSCipherSuite 2>/dev/null || true
+if [[ -f /etc/ssl/certs/ssl-cert-snakeoil.pem && -f /etc/ssl/private/ssl-cert-snakeoil.key ]]; then
+  cat /etc/ssl/certs/ssl-cert-snakeoil.pem /etc/ssl/private/ssl-cert-snakeoil.key >"${TLS_COMBINED}"
+  chmod 640 "${TLS_COMBINED}"
+  chown root:root "${TLS_COMBINED}" 2>/dev/null || true
   echo "1" >/etc/pure-ftpd/conf/TLS
-  echo "/etc/ssl/certs/ssl-cert-snakeoil.pem" >/etc/pure-ftpd/conf/CertFile
+  echo "${TLS_COMBINED}" >/etc/pure-ftpd/conf/CertFile
+  log "TLS FTP activé (${TLS_COMBINED})"
+else
+  log "TLS FTP désactivé (pas de snakeoil) — FTP clair sur le port 21"
 fi
 
-# Passivewall
+# Port 21 déjà pris ?
+if ss -lntp 2>/dev/null | grep -qE ':21\s' || netstat -lntp 2>/dev/null | grep -qE ':21\s'; then
+  warn "Le port 21 est déjà utilisé — arrêt des conflits éventuels"
+  systemctl stop vsftpd proftpd pure-ftpd-mysql 2>/dev/null || true
+fi
+
+# Firewall
 if command -v ufw >/dev/null 2>&1; then
-  ufw allow 21/tcp || true
-  ufw allow 30000:30100/tcp || true
+  ufw allow 21/tcp >/dev/null 2>&1 || true
+  ufw allow 30000:30100/tcp >/dev/null 2>&1 || true
 fi
 if command -v firewall-cmd >/dev/null 2>&1; then
   firewall-cmd --permanent --add-service=ftp 2>/dev/null || firewall-cmd --permanent --add-port=21/tcp || true
@@ -108,28 +141,59 @@ if command -v firewall-cmd >/dev/null 2>&1; then
   firewall-cmd --reload 2>/dev/null || true
 fi
 
-mkdir -p /var/log/vzone
 touch /var/log/vzone/ftp-authd.log
-chown "${VZONE_USER}:${VZONE_USER}" /var/log/vzone/ftp-authd.log 2>/dev/null || true
+chmod 664 /var/log/vzone/ftp-authd.log 2>/dev/null || true
 
 systemctl daemon-reload
-systemctl enable --now vzone-ftp-authd.service
-# Pure-FTPd : certains paquets exposent pure-ftpd.service, d'autres pure-ftpd-mysql
-systemctl enable pure-ftpd 2>/dev/null || systemctl enable pure-ftpd.service 2>/dev/null || true
-systemctl restart pure-ftpd 2>/dev/null || systemctl restart pure-ftpd.service 2>/dev/null || true
+systemctl enable vzone-ftp-authd.service
+systemctl restart vzone-ftp-authd.service || true
+sleep 1
+
+if [[ ! -S "${AUTH_SOCK}" ]]; then
+  warn "Socket ExtAuth absent (${AUTH_SOCK}) — journal authd :"
+  journalctl -u vzone-ftp-authd.service -n 30 --no-pager || true
+  # Continuer : Pure-FTPd peut démarrer ; les logins échoueront jusqu'à réparation authd
+fi
+
+systemctl enable pure-ftpd.service 2>/dev/null || systemctl enable pure-ftpd 2>/dev/null || true
+
+# Test syntaxe / démarrage avec diagnostic
+set +e
+systemctl restart pure-ftpd.service 2>/dev/null || systemctl restart pure-ftpd 2>/dev/null
+RC=$?
+set -e
 
 sleep 1
 if systemctl is-active --quiet vzone-ftp-authd.service; then
-  echo "[vzone] OK — vzone-ftp-authd actif (${AUTH_SOCK})"
+  log "OK — vzone-ftp-authd actif (${AUTH_SOCK})"
 else
-  echo "[vzone] AVERTISSEMENT — vzone-ftp-authd non actif" >&2
+  warn "vzone-ftp-authd non actif"
   systemctl status vzone-ftp-authd.service --no-pager -l || true
 fi
 
-if systemctl is-active --quiet pure-ftpd 2>/dev/null || systemctl is-active --quiet pure-ftpd.service 2>/dev/null; then
-  echo "[vzone] OK — Pure-FTPd actif (port 21)"
+if systemctl is-active --quiet pure-ftpd.service 2>/dev/null || systemctl is-active --quiet pure-ftpd 2>/dev/null; then
+  log "OK — Pure-FTPd actif (port 21)"
 else
-  echo "[vzone] AVERTISSEMENT — Pure-FTPd non actif ; vérifiez: systemctl status pure-ftpd" >&2
+  warn "Pure-FTPd non actif (restart rc=${RC})"
+  # Tentative de secours : TLS off (cert souvent en cause)
+  if [[ -f /etc/pure-ftpd/conf/TLS ]]; then
+    warn "Nouvelle tentative sans TLS…"
+    rm -f /etc/pure-ftpd/conf/TLS /etc/pure-ftpd/conf/CertFile
+    systemctl restart pure-ftpd.service 2>/dev/null || systemctl restart pure-ftpd 2>/dev/null || true
+    sleep 1
+  fi
+  if systemctl is-active --quiet pure-ftpd.service 2>/dev/null || systemctl is-active --quiet pure-ftpd 2>/dev/null; then
+    log "OK — Pure-FTPd actif (sans TLS)"
+  else
+    warn "Échec start — journal :"
+    journalctl -xeu pure-ftpd.service -n 40 --no-pager || journalctl -xeu pure-ftpd -n 40 --no-pager || true
+    # Affiche la ligne de commande générée (debug)
+    if [[ -x /usr/sbin/pure-ftpd-wrapper ]]; then
+      warn "Commande wrapper :"
+      /usr/sbin/pure-ftpd-wrapper 2>&1 | head -5 || true
+    fi
+    exit 1
+  fi
 fi
 
-echo "[vzone] FTP prêt. Créez des comptes dans V-zone → FTP, login = username_compte (ex: user_web)."
+log "FTP prêt. Comptes dans V-zone → FTP (login = username_compte, ex: user_web)."
