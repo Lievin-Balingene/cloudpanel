@@ -4,6 +4,8 @@ import { LoginPage } from "./pages/LoginPage";
 import { ChangePasswordPage } from "./pages/ChangePasswordPage";
 import { WhmShell } from "./layouts/WhmShell";
 import { ClientShell } from "./layouts/ClientShell";
+import { FileManagerShell } from "./layouts/FileManagerShell";
+import { FileManager } from "./components/FileManager";
 import { WhmHomePage } from "./pages/whm/WhmHomePage";
 import { WhmPackagesPage } from "./pages/whm/WhmPackagesPage";
 import { WhmPackageCreatePage } from "./pages/whm/WhmPackageCreatePage";
@@ -136,6 +138,34 @@ export default function App() {
           </RequireAuth>
         }
       />
+      <Route
+        path="/panel/fm"
+        element={
+          <RequireAuth>
+            <RequireClient>
+              <FileManagerShell />
+            </RequireClient>
+          </RequireAuth>
+        }
+      >
+        <Route index element={<FileManager title="Mes fichiers" />} />
+        <Route path="upload" element={<ClientFilesUploadPage />} />
+        <Route path="edit" element={<ClientFilesEditPage />} />
+      </Route>
+      <Route
+        path="/whm/fm"
+        element={
+          <RequireAuth>
+            <RequireWhm>
+              <FileManagerShell />
+            </RequireWhm>
+          </RequireAuth>
+        }
+      >
+        <Route index element={<FileManager title="File Manager" />} />
+        <Route path="upload" element={<WhmFilesUploadPage />} />
+        <Route path="edit" element={<WhmFilesEditPage />} />
+      </Route>
       <Route
         path="/whm"
         element={

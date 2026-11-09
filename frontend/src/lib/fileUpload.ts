@@ -378,7 +378,7 @@ export function uploadPageUrl(
   q.set("path", destPath);
   if (options?.handoff) q.set("handoff", options.handoff);
   if (options?.folder) q.set("folder", "1");
-  return `${base}/files/upload?${q.toString()}`;
+  return `${base}/fm/upload?${q.toString()}`;
 }
 
 /** Ouvre l'onglet Upload (style cPanel). Optionnellement transfère des jobs déjà sélectionnés. */

@@ -15,7 +15,7 @@ export function FileEditorPage() {
   const [params] = useSearchParams();
   const filePath = (params.get("path") || "").replace(/^\/+/, "");
   const panelBase = resolvePanelBase(window.location.pathname);
-  const filesHome = `${panelBase}/files`;
+  const filesHome = `${panelBase}/fm`;
 
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [loading, setLoading] = useState(true);

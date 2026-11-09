@@ -46,7 +46,14 @@ import { AiDeploymentAssistant } from "@/components/AiDeploymentAssistant";
 import { usePanelSessionEffects, usePanelI18n, usePanelTweaks } from "@/lib/panelTweaks";
 import type { DashboardOverview } from "@/types";
 
-type NavItem = { to: string; label: string; icon: typeof Home; end?: boolean };
+type NavItem = {
+  to: string;
+  label: string;
+  icon: typeof Home;
+  end?: boolean;
+  /** Ouvre une URL dédiée dans un nouvel onglet (ex. File Manager plein écran). */
+  newTab?: string;
+};
 
 type NavSection = { id: string; label: string; items: NavItem[] };
 
@@ -56,7 +63,12 @@ const sections: NavSection[] = [
     id: "files",
     label: "Fichiers",
     items: [
-      { to: "/panel/files", label: "Gestionnaire de fichiers", icon: FolderOpen },
+      {
+        to: "/panel/files",
+        label: "Gestionnaire de fichiers",
+        icon: FolderOpen,
+        newTab: "/panel/fm",
+      },
       { to: "/panel/disk-usage", label: "Utilisation disque", icon: PieChart },
       { to: "/panel/directory-privacy", label: "Confidentialité dossiers", icon: FileLock2 },
       { to: "/panel/ftp", label: "Comptes FTP", icon: Upload },
@@ -355,24 +367,38 @@ function ToolsNav({ onNavigate }: { onNavigate?: () => void }) {
             </button>
             {open && (
               <div className="pb-1">
-                {section.items.map((item) => (
-                  <NavLink
-                    key={`${section.id}-${item.to}-${item.label}`}
-                    to={item.to}
-                    end={item.end}
-                    onClick={onNavigate}
-                    className={({ isActive }) =>
-                      `flex min-h-10 items-center gap-2.5 px-3 py-2 pl-4 text-sm sm:min-h-0 sm:py-1.5 ${
-                        isActive
-                          ? "bg-cp-orange-soft font-medium text-cp-orange-dark"
-                          : "text-cp-text hover:bg-cp-canvas"
-                      }`
-                    }
-                  >
-                    <item.icon className="h-3.5 w-3.5 shrink-0 text-cp-orange" />
-                    <span className="truncate">{item.label}</span>
-                  </NavLink>
-                ))}
+                {section.items.map((item) =>
+                  item.newTab ? (
+                    <a
+                      key={`${section.id}-${item.to}-${item.label}`}
+                      href={item.newTab}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={onNavigate}
+                      className="flex min-h-10 items-center gap-2.5 px-3 py-2 pl-4 text-sm text-cp-text hover:bg-cp-canvas sm:min-h-0 sm:py-1.5"
+                    >
+                      <item.icon className="h-3.5 w-3.5 shrink-0 text-cp-orange" />
+                      <span className="truncate">{item.label}</span>
+                    </a>
+                  ) : (
+                    <NavLink
+                      key={`${section.id}-${item.to}-${item.label}`}
+                      to={item.to}
+                      end={item.end}
+                      onClick={onNavigate}
+                      className={({ isActive }) =>
+                        `flex min-h-10 items-center gap-2.5 px-3 py-2 pl-4 text-sm sm:min-h-0 sm:py-1.5 ${
+                          isActive
+                            ? "bg-cp-orange-soft font-medium text-cp-orange-dark"
+                            : "text-cp-text hover:bg-cp-canvas"
+                        }`
+                      }
+                    >
+                      <item.icon className="h-3.5 w-3.5 shrink-0 text-cp-orange" />
+                      <span className="truncate">{item.label}</span>
+                    </NavLink>
+                  ),
+                )}
               </div>
             )}
           </div>

@@ -564,6 +564,15 @@ export function WhmShell() {
   }
 
   function goTo(to: string) {
+    // File Manager → nouvel onglet plein écran (style cPanel)
+    if (to === "/whm/files" || to === "/whm/fm") {
+      window.open("/whm/fm", "_blank", "noopener,noreferrer");
+      setHeaderQuery("");
+      setHeaderOpen(false);
+      setAsideQuery("");
+      setNavOpen(false);
+      return;
+    }
     navigate(to);
     setHeaderQuery("");
     setHeaderOpen(false);
@@ -686,27 +695,44 @@ export function WhmShell() {
                   </button>
                   {open && (
                     <div className="bg-[#23405c] pb-1">
-                      {section.items.map((item) => (
-                        <NavLink
-                          key={`${section.id}-${item.to}-${item.label}`}
-                          to={item.to}
-                          end={item.end}
-                          className={({ isActive }) =>
-                            `flex items-center gap-2 border-l-2 py-1.5 pl-8 pr-3 text-[12.5px] transition ${
-                              isActive
-                                ? "border-cp-orange bg-white/10 font-semibold text-white"
-                                : "border-transparent text-white/85 hover:bg-white/10 hover:text-white"
-                            }`
-                          }
-                          onClick={() => {
-                            setAsideQuery("");
-                            setNavOpen(false);
-                          }}
-                        >
-                          <item.icon className="h-3.5 w-3.5 shrink-0 opacity-80" />
-                          <span className="truncate">{item.label}</span>
-                        </NavLink>
-                      ))}
+                      {section.items.map((item) =>
+                        item.to === "/whm/files" ? (
+                          <a
+                            key={`${section.id}-${item.to}-${item.label}`}
+                            href="/whm/fm"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-2 border-l-2 border-transparent py-1.5 pl-8 pr-3 text-[12.5px] text-white/85 transition hover:bg-white/10 hover:text-white"
+                            onClick={() => {
+                              setAsideQuery("");
+                              setNavOpen(false);
+                            }}
+                          >
+                            <item.icon className="h-3.5 w-3.5 shrink-0 opacity-80" />
+                            <span className="truncate">{item.label}</span>
+                          </a>
+                        ) : (
+                          <NavLink
+                            key={`${section.id}-${item.to}-${item.label}`}
+                            to={item.to}
+                            end={item.end}
+                            className={({ isActive }) =>
+                              `flex items-center gap-2 border-l-2 py-1.5 pl-8 pr-3 text-[12.5px] transition ${
+                                isActive
+                                  ? "border-cp-orange bg-white/10 font-semibold text-white"
+                                  : "border-transparent text-white/85 hover:bg-white/10 hover:text-white"
+                              }`
+                            }
+                            onClick={() => {
+                              setAsideQuery("");
+                              setNavOpen(false);
+                            }}
+                          >
+                            <item.icon className="h-3.5 w-3.5 shrink-0 opacity-80" />
+                            <span className="truncate">{item.label}</span>
+                          </NavLink>
+                        ),
+                      )}
                     </div>
                   )}
                 </div>

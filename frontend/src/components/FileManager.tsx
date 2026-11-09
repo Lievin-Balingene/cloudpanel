@@ -443,8 +443,14 @@ export function FileManager({ title }: { title: string }) {
     e.currentTarget.reset();
   }
 
+  const standalone = location.pathname.includes("/fm");
+
   return (
-    <div className="space-y-2 animate-fade-up">
+    <div
+      className={`space-y-2 animate-fade-up ${
+        standalone ? "flex min-h-0 flex-col" : ""
+      }`}
+    >
       <div className="vz-panel flex flex-wrap items-center justify-between gap-2 px-3 py-2">
         <div>
           <h1 className="text-base font-semibold leading-tight">{title}</h1>

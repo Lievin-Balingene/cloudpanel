@@ -8,7 +8,7 @@ export type { PanelBase };
 export function editPageUrl(base: PanelBase, filePath: string): string {
   const q = new URLSearchParams();
   q.set("path", filePath);
-  return `${base}/files/edit?${q.toString()}`;
+  return `${base}/fm/edit?${q.toString()}`;
 }
 
 /** Ouvre l'éditeur dans un nouvel onglet (comme cPanel). */

@@ -94,7 +94,7 @@ export function FileUploadPage() {
   const preferFolder = params.get("folder") === "1";
 
   const base = resolvePanelBase(window.location.pathname);
-  const filesHome = `${base}/files`;
+  const filesHome = `${base}/fm`;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);

@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { openFileManagerTab } from "@/lib/fileManager";
 import { useQuery } from "@tanstack/react-query";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -312,12 +313,24 @@ export function ClientHomePage() {
           </div>
 
           <div className="vz-chip-scroll relative mt-4 sm:hidden">
-            {quickLinks.map((a) => (
-              <Link key={a.to} to={a.to} className="vz-quick-chip">
-                <a.icon className="h-3.5 w-3.5 opacity-90" />
-                {a.label}
-              </Link>
-            ))}
+            {quickLinks.map((a) =>
+              a.to === "/panel/files" ? (
+                <button
+                  key={a.to}
+                  type="button"
+                  className="vz-quick-chip"
+                  onClick={() => openFileManagerTab("/panel")}
+                >
+                  <a.icon className="h-3.5 w-3.5 opacity-90" />
+                  {a.label}
+                </button>
+              ) : (
+                <Link key={a.to} to={a.to} className="vz-quick-chip">
+                  <a.icon className="h-3.5 w-3.5 opacity-90" />
+                  {a.label}
+                </Link>
+              ),
+            )}
           </div>
         </div>
 
@@ -350,16 +363,28 @@ export function ClientHomePage() {
         </div>
 
         <div className="hidden flex-wrap gap-2 border-t border-cp-border bg-[#f7f9fc]/80 px-4 py-3 sm:flex dark:border-ink-800 dark:bg-ink-900/40">
-          {quickLinks.map((a) => (
-            <Link
-              key={a.to + a.label}
-              to={a.to}
-              className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-cp-border bg-white px-3.5 text-xs font-semibold text-cp-text shadow-sm transition hover:border-cp-orange/45 hover:text-cp-orange dark:border-ink-700 dark:bg-ink-900 dark:hover:bg-ink-800"
-            >
-              <a.icon className="h-3.5 w-3.5 text-cp-orange" />
-              {a.label}
-            </Link>
-          ))}
+          {quickLinks.map((a) =>
+            a.to === "/panel/files" ? (
+              <button
+                key={a.to + a.label}
+                type="button"
+                onClick={() => openFileManagerTab("/panel")}
+                className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-cp-border bg-white px-3.5 text-xs font-semibold text-cp-text shadow-sm transition hover:border-cp-orange/45 hover:text-cp-orange dark:border-ink-700 dark:bg-ink-900 dark:hover:bg-ink-800"
+              >
+                <a.icon className="h-3.5 w-3.5 text-cp-orange" />
+                {a.label}
+              </button>
+            ) : (
+              <Link
+                key={a.to + a.label}
+                to={a.to}
+                className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-cp-border bg-white px-3.5 text-xs font-semibold text-cp-text shadow-sm transition hover:border-cp-orange/45 hover:text-cp-orange dark:border-ink-700 dark:bg-ink-900 dark:hover:bg-ink-800"
+              >
+                <a.icon className="h-3.5 w-3.5 text-cp-orange" />
+                {a.label}
+              </Link>
+            ),
+          )}
         </div>
       </div>
 
@@ -379,28 +404,47 @@ export function ClientHomePage() {
                 : "grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3 lg:grid-cols-4"
             }`}
           >
-            {section.tools.map((tool) => (
-              <Link
-                key={`${section.title}-${tool.label}`}
-                to={tool.to}
-                className="vz-tool-tile group sm:flex-row sm:items-center"
-              >
-                <span
-                  className={`flex shrink-0 items-center justify-center rounded-xl bg-white text-cp-orange shadow-sm ring-1 ring-cp-border/50 transition group-hover:ring-cp-orange/35 dark:bg-ink-950 dark:ring-ink-700 ${
-                    compact ? "h-9 w-9" : "h-11 w-11"
-                  }`}
+            {section.tools.map((tool) => {
+              const inner = (
+                <>
+                  <span
+                    className={`flex shrink-0 items-center justify-center rounded-xl bg-white text-cp-orange shadow-sm ring-1 ring-cp-border/50 transition group-hover:ring-cp-orange/35 dark:bg-ink-950 dark:ring-ink-700 ${
+                      compact ? "h-9 w-9" : "h-11 w-11"
+                    }`}
+                  >
+                    <tool.icon className={compact ? "h-4 w-4" : "h-5 w-5"} />
+                  </span>
+                  <span
+                    className={`min-w-0 font-medium leading-snug text-cp-text ${
+                      compact ? "text-[13px]" : "text-sm sm:text-base"
+                    }`}
+                  >
+                    {tool.label}
+                  </span>
+                </>
+              );
+              if (tool.to === "/panel/files") {
+                return (
+                  <button
+                    key={`${section.title}-${tool.label}`}
+                    type="button"
+                    onClick={() => openFileManagerTab("/panel")}
+                    className="vz-tool-tile group w-full text-left sm:flex-row sm:items-center"
+                  >
+                    {inner}
+                  </button>
+                );
+              }
+              return (
+                <Link
+                  key={`${section.title}-${tool.label}`}
+                  to={tool.to}
+                  className="vz-tool-tile group sm:flex-row sm:items-center"
                 >
-                  <tool.icon className={compact ? "h-4 w-4" : "h-5 w-5"} />
-                </span>
-                <span
-                  className={`min-w-0 font-medium leading-snug text-cp-text ${
-                    compact ? "text-[13px]" : "text-sm sm:text-base"
-                  }`}
-                >
-                  {tool.label}
-                </span>
-              </Link>
-            ))}
+                  {inner}
+                </Link>
+              );
+            })}
           </div>
         </section>
       ))}
