@@ -73,6 +73,8 @@ vzone-runas|vzone-runas.sh
 vzone-fix-app-perms|vzone-fix-app-perms.sh
 vzone-kill-port|vzone-kill-port.sh
 vzone-smtp-restrictions|vzone-smtp-restrictions.sh
+vzone-php-sendmail|vzone-php-sendmail.sh
+vzone-mail-reputation-check|vzone-mail-reputation-check.sh
 vzone-resourcectl|vzone-resourcectl.sh
 vzone-svcctl|vzone-svcctl.sh
 EOF

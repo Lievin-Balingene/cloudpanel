@@ -169,6 +169,25 @@ if [[ -f "$ENV_FILE" ]]; then
   fi
 fi
 
+# Header checks + PHP sendmail rate-limit + SMTP restrictions
+if [[ -f "${REPO_DIR}/deploy/postfix/header_checks" ]]; then
+  install -m 644 "${REPO_DIR}/deploy/postfix/header_checks" /etc/postfix/header_checks
+fi
+if [[ -f "${REPO_DIR}/scripts/vzone-php-sendmail.sh" ]]; then
+  install -m 755 "${REPO_DIR}/scripts/vzone-php-sendmail.sh" /usr/local/sbin/vzone-php-sendmail
+  mkdir -p /var/lib/vzone/php-mail /var/log/vzone
+  chmod 1777 /var/lib/vzone/php-mail
+fi
+if [[ -f "${REPO_DIR}/scripts/vzone-smtp-restrictions.sh" ]]; then
+  install -m 755 "${REPO_DIR}/scripts/vzone-smtp-restrictions.sh" /usr/local/sbin/vzone-smtp-restrictions
+  /usr/local/sbin/vzone-smtp-restrictions --enable || true
+fi
+if [[ -f "${REPO_DIR}/scripts/vzone-mail-reputation-check.sh" ]]; then
+  install -m 755 "${REPO_DIR}/scripts/vzone-mail-reputation-check.sh" /usr/local/sbin/vzone-mail-reputation-check
+fi
+touch "${MAPS_DIR}/sender_login"
+postmap "${MAPS_DIR}/sender_login" 2>/dev/null || true
+
 systemctl enable --now opendkim
 systemctl enable --now dovecot
 systemctl enable --now postfix
@@ -179,5 +198,7 @@ systemctl reload postfix || systemctl restart postfix
 echo "[vzone] Stack mail active — hostname=${HOSTNAME_FQDN} maps=${MAPS_DIR} ip=${PUBLIC_IP}"
 echo "[vzone] Ports : 25/587/465 (SMTP) · 143/993 (IMAP) · 110/995 (POP3)"
 echo "[vzone] DKIM: milter submission/smtps → inet:127.0.0.1:8891 (accept si erreur)"
-echo "[vzone] Réputation: SPF/DKIM auto à la création domaine. PTR rDNS chez l'hébergeur."
-echo "[vzone] Réparer: sudo bash ${REPO_DIR}/scripts/repair-mail-reputation.sh && sudo bash ${REPO_DIR}/scripts/repair-dkim.sh"
+echo "[vzone] Anti-Spamhaus: SMTP restrictions ON · PHP mail rate-limit · sender login match · rate-limits Postfix"
+echo "[vzone] PTR rDNS chez l'hébergeur OBLIGATOIRE (IP → ${HOSTNAME_FQDN})"
+echo "[vzone] Réparer: sudo bash ${REPO_DIR}/scripts/repair-mail-reputation.sh"
+echo "[vzone] Audit:   sudo vzone-mail-reputation-check"

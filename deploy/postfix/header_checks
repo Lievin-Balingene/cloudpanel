@@ -1,0 +1,5 @@
+# AngaPanel — filtres anti-abus (header_checks)
+# Garde des contrôles strictes à faible faux-positif (réputation CSS / DBL).
+
+/^From:\s*$/i REJECT empty From header not allowed
+/^To:\s*$/i REJECT empty To header not allowed

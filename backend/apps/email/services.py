@@ -473,7 +473,7 @@ def reload_mail_services() -> None:
     if not _mail_stack_live():
         return
     root = mail_storage_root()
-    for name in ("valiases", "virtual_mailboxes", "vdomains"):
+    for name in ("valiases", "virtual_mailboxes", "vdomains", "sender_login"):
         path = root / name
         if path.exists():
             subprocess.run(["postmap", str(path)], check=False, capture_output=True)
@@ -527,6 +527,7 @@ def write_mail_maps() -> Path:
     dovecot_users = root / "dovecot-users"
     vmailbox_legacy = root / "vmailbox"
     virtual_mailboxes = root / "virtual_mailboxes"
+    sender_login = root / "sender_login"
     valiases = root / "valiases"
     vdomains = root / "vdomains"
     key_table = root / "opendkim-KeyTable"
@@ -534,6 +535,7 @@ def write_mail_maps() -> Path:
 
     dovecot_lines: list[str] = []
     mailbox_lines: list[str] = []
+    sender_login_lines: list[str] = []
     alias_lines: list[str] = []
     domain_lines: list[str] = []
     key_lines: list[str] = []
@@ -588,6 +590,8 @@ def write_mail_maps() -> Path:
         pwd = dovecot_password_field(box.password_hash)
         dovecot_lines.append(f"{box.address}:{pwd}:5000:5000::{maildir}::")
         mailbox_lines.append(f"{box.address} {box.mail_domain.name}/{box.local_part}/")
+        # Anti-spoofing submission : From/envelope = identité SASL
+        sender_login_lines.append(f"{box.address} {box.address}")
         legacy_lines.append(f"{box.address}:{box.password_hash}::::{maildir}::")
 
     for fwd in MailForwarder.objects.filter(is_active=True).select_related("mail_domain"):
@@ -610,6 +614,7 @@ def write_mail_maps() -> Path:
 
     _write(dovecot_users, dovecot_lines)
     _write(virtual_mailboxes, mailbox_lines)
+    _write(sender_login, sender_login_lines)
     _write(valiases, alias_lines)
     _write(vdomains, domain_lines)
     _write(vmailbox_legacy, legacy_lines)

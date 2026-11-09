@@ -224,6 +224,7 @@ pm.process_idle_timeout = 10s
 chdir = {home / selector.relative_path}
 php_admin_value[open_basedir] = {home}:/tmp
 php_admin_value[disable_functions] = exec,passthru,shell_exec,system
+php_admin_value[sendmail_path] = /usr/local/sbin/vzone-php-sendmail -t -i
 php_admin_value[memory_limit] = {max(64, int(limits.get('memory_mb') or 256))}M
 """
     path = config_root() / "pools" / f"{pool_name}.conf"

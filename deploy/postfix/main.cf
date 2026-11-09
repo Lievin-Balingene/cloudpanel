@@ -1,5 +1,6 @@
-# Postfix — V-zone Panel (virtual users + Dovecot LMTP + OpenDKIM)
-smtpd_banner = $myhostname ESMTP V-zone
+# Postfix — AngaPanel (virtual users + Dovecot LMTP + OpenDKIM)
+# Hardening anti-Spamhaus CSS / DBL / open-relay
+smtpd_banner = $myhostname ESMTP AngaPanel
 biff = no
 append_dot_mydomain = no
 readme_directory = no
@@ -13,7 +14,7 @@ mynetworks = 127.0.0.0/8 [::1]/128
 inet_interfaces = all
 inet_protocols = all
 
-# TLS (utilise le certificat système / snakeoil en attendant Let's Encrypt mail.)
+# TLS (certificat système / snakeoil → Let's Encrypt mail.)
 smtpd_tls_cert_file=/etc/ssl/certs/ssl-cert-snakeoil.pem
 smtpd_tls_key_file=/etc/ssl/private/ssl-cert-snakeoil.key
 smtpd_tls_security_level = may
@@ -35,7 +36,10 @@ smtpd_sasl_security_options = noanonymous
 smtpd_sasl_local_domain = $myhostname
 broken_sasl_auth_clients = yes
 
-# Restrictions anti-spam / réputation
+# Anti-spoofing : l'expéditeur doit correspondre au compte SASL
+smtpd_sender_login_maps = hash:__MAPS_DIR__/sender_login
+
+# Restrictions anti-spam / réputation (pas d'open-relay)
 smtpd_helo_required = yes
 smtpd_helo_restrictions =
     permit_mynetworks,
@@ -44,9 +48,9 @@ smtpd_helo_restrictions =
     permit
 smtpd_sender_restrictions =
     permit_mynetworks,
-    permit_sasl_authenticated,
     reject_non_fqdn_sender,
     reject_unknown_sender_domain,
+    permit_sasl_authenticated,
     permit
 smtpd_recipient_restrictions =
     permit_mynetworks,
@@ -63,9 +67,30 @@ smtpd_relay_restrictions =
 disable_vrfy_command = yes
 strict_rfc821_envelopes = yes
 smtpd_delay_reject = yes
+smtpd_error_sleep_time = 5s
+smtpd_soft_error_limit = 5
+smtpd_hard_error_limit = 10
+
+# Rate-limits (anvil) — freine les campagnes spam / bruteforce
+anvil_rate_time_unit = 60s
+smtpd_client_connection_count_limit = 20
+smtpd_client_connection_rate_limit = 30
+smtpd_client_message_rate_limit = 60
+smtpd_client_recipient_rate_limit = 120
+smtpd_client_auth_rate_limit = 15
+
+# Sortie : ralentit les rafales (CSS Spamhaus)
+default_destination_concurrency_limit = 8
+default_destination_rate_delay = 1s
+smtp_destination_concurrency_limit = 5
+smtp_destination_recipient_limit = 25
 maximal_queue_lifetime = 1d
 bounce_queue_lifetime = 1d
 message_size_limit = 52428800
+mailbox_size_limit = 0
+
+# Header checks anti-abus
+header_checks = regexp:/etc/postfix/header_checks
 
 # Domaines / boîtes virtuelles
 virtual_mailbox_domains = hash:__MAPS_DIR__/vdomains

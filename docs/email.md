@@ -49,14 +49,19 @@ Boîtes créées **avant** cette version : réinitialisez le mot de passe dans l
 - Mots de passe **SHA512-CRYPT** (natifs Dovecot) + secret Fernet pour SSO
 - Quotas package (`emails`), Roundcube intégré
 
-## Réputation (checklist)
+## Réputation (checklist anti-Spamhaus CSS / DBL)
 
-1. **PTR / rDNS** chez l’hébergeur → hostname du serveur
-2. **SPF** : généré avec `ip4:<VZONE_MAIL_PUBLIC_IP> mx a ~all` (passer à `-all` une fois stable)
-3. **DKIM** : activer dans le panel (OpenDKIM signe les sorties)
+1. **PTR / rDNS** chez l'hébergeur → hostname FQDN du serveur (critique CSS)
+2. **SPF** : `ip4:<VZONE_MAIL_PUBLIC_IP> mx a:mail.domaine ~all` (passer à `-all` une fois stable)
+3. **DKIM** : OpenDKIM sur submission/smtps
 4. **DMARC** : démarrer en `p=none`, puis `quarantine` / `reject`
-5. **TLS** : remplacer snakeoil par un certificat Let’s Encrypt pour `mail.domaine`
-6. Fail2ban : jails Postfix/Dovecot (`deploy/fail2ban/jail.d/vzone-mail.conf`)
+5. **SMTP Restrictions** : ON par défaut (bloque tcp/25 hors Postfix)
+6. **PHP mail()** : wrapper rate-limité `/usr/local/sbin/vzone-php-sendmail` (40/h/uid)
+7. **Anti-spoofing** : `reject_sender_login_mismatch` sur 587/465
+8. **Rate-limits** Postfix (anvil + destination_rate_delay)
+9. **TLS** : Let's Encrypt pour `mail.domaine`
+10. Fail2ban : jails Postfix/Dovecot
+11. Audit : `sudo vzone-mail-reputation-check` · delist : https://check.spamhaus.org/
 
 ## Configuration
 
