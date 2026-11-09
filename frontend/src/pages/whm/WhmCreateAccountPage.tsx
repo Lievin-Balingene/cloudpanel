@@ -171,7 +171,7 @@ export function WhmCreateAccountPage() {
         </div>
         <p className="px-4 py-3 text-sm text-cp-muted">
           Comme cPanel : le <strong className="text-cp-text">domaine principal</strong> est
-          obligatoire. V-zone crée le home, <code className="font-mono text-xs">public_html</code>,
+          obligatoire. AngaPanel crée le home, <code className="font-mono text-xs">public_html</code>,
           la zone DNS et le vhost (OpenLiteSpeed / Nginx). Aucun{" "}
           <code className="font-mono text-xs">index.html</code> n&apos;est créé sauf si vous le
           demandez ci-dessous.
@@ -218,7 +218,7 @@ export function WhmCreateAccountPage() {
             <div className="flex gap-2 border-b border-cp-border p-4">
               {(
                 [
-                  ["client", "V-zone Panel (client)"],
+                  ["client", "AngaPanel (client)"],
                   ["reseller", "Reseller Account"],
                 ] as const
               ).map(([id, label]) => (
@@ -286,7 +286,7 @@ export function WhmCreateAccountPage() {
         <div className="whm-form-row">
           <div>
             <p className="whm-form-label">Username *</p>
-            <p className="whm-form-hint">System / V-zone style (a-z, 0-9)</p>
+            <p className="whm-form-hint">System / AngaPanel style (a-z, 0-9)</p>
           </div>
           <input
             className="vz-input font-mono"

@@ -9,13 +9,13 @@ export function AdminLoginView({ onBack }: Props) {
       <div className="mb-6 flex items-center gap-3">
         <img src="/vzone-mark.svg" alt="" className="h-10 w-10 rounded-lg" width={40} height={40} />
         <span className="text-2xl font-semibold tracking-tight text-white">
-          V-zone <span className="font-normal text-[#8eb8e0]">WHM</span>
+          AngaPanel <span className="font-normal text-[#8eb8e0]">WHM</span>
         </span>
       </div>
 
       <main className="w-full max-w-[360px] rounded border border-[#3d4f63] bg-[#f0f2f5] p-6 shadow-lg">
         <p className="mb-4 text-center text-xs font-medium uppercase tracking-wider text-slate-500">
-          V-zone Admin
+          AngaPanel Admin
         </p>
         <LoginFormFields variant="admin" idHint="Username" passwordHint="Password" submitLabel="Log in" />
         {onBack && (
@@ -29,7 +29,7 @@ export function AdminLoginView({ onBack }: Props) {
         )}
       </main>
 
-      <p className="mt-8 text-xs text-slate-500">Copyright © {new Date().getFullYear()} V-zone</p>
+      <p className="mt-8 text-xs text-slate-500">Copyright © {new Date().getFullYear()} AngaPanel</p>
     </div>
   );
 }

@@ -178,7 +178,7 @@ def _pending_action_payload(action: PendingAction) -> dict[str, Any]:
     }
 
 
-SYSTEM_PROMPT = """Tu es **V-zone AI**, assistant premium du panneau d'hébergement V-zone.
+SYSTEM_PROMPT = """Tu es **AngaPanel AI**, assistant premium du panneau d'hébergement AngaPanel.
 
 ## Règle d'or
 - **Le message utilisateur prime toujours** sur la page UI, le contexte JSON, ou les suggestions.

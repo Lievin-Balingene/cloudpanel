@@ -113,7 +113,7 @@ def send_alert_email(rule: AlertRule, event: AlertEvent) -> bool:
     if not recipients:
         logger.warning("Aucune destinataire pour la règle %s", rule.name)
         return False
-    subject = f"[V-zone][{rule.severity.upper()}] {rule.name}"
+    subject = f"[AngaPanel][{rule.severity.upper()}] {rule.name}"
     body = (
         f"Alerte: {rule.name}\n"
         f"Sévérité: {rule.severity}\n"

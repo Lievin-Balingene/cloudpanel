@@ -387,7 +387,7 @@ def provisioning_uri(user: User) -> str:
         _store_totp_secret(user, secret)
         user.save(update_fields=["two_factor_secret"])
     totp = pyotp.TOTP(secret)
-    return totp.provisioning_uri(name=user.email, issuer_name="V-zone Panel")
+    return totp.provisioning_uri(name=user.email, issuer_name="AngaPanel")
 
 
 def _client_ip(request) -> str | None:  # type: ignore[no-untyped-def]

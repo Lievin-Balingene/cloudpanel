@@ -169,10 +169,10 @@ export function WebTerminalManager({
       setStatus(isRoot ? "Connecté — root (WHM)" : "Connecté — jail client");
       term.clear();
       if (isRoot) {
-        term.writeln("\x1b[1;33m[V-zone WHM Terminal — shell root]\x1b[0m\r\n");
+        term.writeln("\x1b[1;33m[AngaPanel WHM Terminal — shell root]\x1b[0m\r\n");
       } else {
         term.writeln(
-          `\x1b[1;36m[V-zone Terminal jailé — ${access?.username || "user"}]\x1b[0m\r\n`,
+          `\x1b[1;36m[AngaPanel Terminal jailé — ${access?.username || "user"}]\x1b[0m\r\n`,
         );
       }
       sendResize();

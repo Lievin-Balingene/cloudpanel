@@ -32,10 +32,10 @@ export function LoginPage() {
   useEffect(() => {
     const label =
       portal === "admin" || sharedChoice === "admin"
-        ? "V-zone Admin"
+        ? "AngaPanel Admin"
         : portal === "client" || sharedChoice === "client"
-          ? "V-zone Panel"
-          : "V-zone";
+          ? "AngaPanel"
+          : "AngaPanel";
     document.title = `Connexion · ${label}`;
   }, [portal, sharedChoice]);
 

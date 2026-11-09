@@ -275,7 +275,7 @@ def status_for_user(user: User) -> dict[str, Any]:
 
     return {
         "engine": "pulse",
-        "brand": "V-zone Pulse",
+        "brand": "AngaPanel Pulse",
         "username": jail,
         "active": bool(data.get("active")),
         "mock": bool(data.get("mock")) or provision_mode() == "mock",
@@ -330,7 +330,7 @@ def overview() -> dict[str, Any]:
     active = sum(1 for r in rows if r.get("active"))
     return {
         "engine": "pulse",
-        "brand": "V-zone Pulse",
+        "brand": "AngaPanel Pulse",
         "tagline": "Resource Governor — cgroups v2 / systemd, sans noyau propriétaire",
         "accounts_tracked": len(rows),
         "slices_active": active,

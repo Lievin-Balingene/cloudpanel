@@ -40,7 +40,7 @@ class VersionView(APIView):
                 "success": True,
                 "data": {
                     "version": __version__,
-                    "product": "V-zone Panel",
+                    "product": "AngaPanel",
                     "api": "v1",
                 },
             }

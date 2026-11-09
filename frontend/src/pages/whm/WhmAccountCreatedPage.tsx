@@ -110,7 +110,7 @@ export function WhmAccountCreatedPage() {
           </p>
           <p>
             Au registrar : configurez les nameservers ci-dessus (délégation). Le serveur BIND
-            V-zone publie les enregistrements A (@ / www) vers l&apos;IP du serveur. Propager
+            AngaPanel publie les enregistrements A (@ / www) vers l&apos;IP du serveur. Propager
             peut prendre quelques minutes à 24–48&nbsp;h.
           </p>
           {httpUrl && (
@@ -136,7 +136,7 @@ export function WhmAccountCreatedPage() {
             List Accounts
           </Link>
           <Link to="/whm" className="vz-btn-ghost">
-            Go to V-zone Admin Home
+            Go to AngaPanel Admin Home
           </Link>
         </div>
       </div>

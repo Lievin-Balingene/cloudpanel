@@ -59,7 +59,7 @@ const UI: Record<"fr" | "en", Record<string, string>> = {
     aiHidden: "Assistant IA masqué (Tweak Settings)",
     sessionExpired: "Session expirée pour inactivité",
     homeSubtitle:
-      "Comptes, packages, DNS, services et sécurité — panneau d'administration V-zone.",
+      "Comptes, packages, DNS, services et sécurité — panneau d'administration AngaPanel.",
     panelGreeting: "Bonjour",
     toolsSearch: "Rechercher un outil…",
   },
@@ -70,7 +70,7 @@ const UI: Record<"fr" | "en", Record<string, string>> = {
     welcome: "Home",
     aiHidden: "AI assistant hidden (Tweak Settings)",
     sessionExpired: "Session expired due to inactivity",
-    homeSubtitle: "Accounts, packages, DNS, services and security — V-zone admin panel.",
+    homeSubtitle: "Accounts, packages, DNS, services and security — AngaPanel Admin panel.",
     panelGreeting: "Hello",
     toolsSearch: "Search for a tool…",
   },

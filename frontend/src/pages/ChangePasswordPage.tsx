@@ -54,7 +54,7 @@ export function ChangePasswordPage() {
     <div className="vz-login-bg relative flex min-h-screen items-center justify-center overflow-hidden p-5">
       <div className="vz-login-grid pointer-events-none absolute inset-0" aria-hidden />
       <div className="relative z-10 w-full max-w-[420px] animate-fade-up rounded-2xl border border-white/10 bg-white p-7 shadow-login sm:p-9">
-        <p className="font-display text-2xl font-semibold text-cp-navy">V-zone</p>
+        <p className="font-display text-2xl font-semibold text-cp-navy">AngaPanel</p>
         <h1 className="mt-4 font-display text-xl font-semibold text-cp-navy">Nouveau mot de passe</h1>
         <p className="mt-1 text-sm text-cp-muted">Obligatoire avant d&apos;accéder au panneau</p>
 

@@ -425,7 +425,7 @@ export function IpFunctionsManager({ title }: { title: string }) {
           )}
           <p className="flex items-start gap-2 text-xs text-cp-muted">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
-            L’ajout d’IP dans V-zone enregistre l’adresse pour l’assignation de sites ; le bind OS reste à gérer côté réseau.
+            L’ajout d’IP dans AngaPanel enregistre l’adresse pour l’assignation de sites ; le bind OS reste à gérer côté réseau.
           </p>
         </div>
       )}

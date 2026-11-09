@@ -562,7 +562,7 @@ export function WhmResourcesPage() {
                 {health.label}
               </span>
               <span className="text-sm font-semibold text-cp-text truncate">
-                {server?.identity.product || "V-zone Admin"}
+                {server?.identity.product || "AngaPanel Admin"}
               </span>
             </div>
             <p className="mt-1 text-sm text-cp-muted">

@@ -236,8 +236,8 @@ SIMPLE_JWT = {
 }
 
 SPECTACULAR_SETTINGS = {
-    "TITLE": "V-zone Panel API",
-    "DESCRIPTION": "API REST du panneau de contrôle d'hébergement V-zone Panel.",
+    "TITLE": "AngaPanel API",
+    "DESCRIPTION": "API REST du panneau de contrôle d'hébergement AngaPanel.",
     "VERSION": __version__,
     "SERVE_INCLUDE_SCHEMA": False,
     "COMPONENT_SPLIT_REQUEST": True,

@@ -55,7 +55,7 @@ const hubs: HubSection[] = [
     links: [
       { to: "/whm/packages/create", label: "Add a Package" },
       { to: "/whm/packages", label: "List Packages" },
-      { to: "/whm/pulse", label: "V-zone Pulse" },
+      { to: "/whm/pulse", label: "AngaPanel Pulse" },
     ],
   },
   {
@@ -258,7 +258,7 @@ export function WhmHomePage() {
         <div className="min-w-0 space-y-4 sm:space-y-5">
           <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-gradient-to-br from-[#1e3a55] via-[#2a4a6b] to-[#345578] px-4 py-5 text-white shadow-md sm:px-5 sm:py-6 xl:hidden">
             <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/60">
-              V-zone WHM
+              AngaPanel WHM
             </p>
             <h1 className="mt-1 text-xl font-semibold tracking-tight">
               {tweaks.panel_locale === "en" ? "Admin Home" : "Accueil Admin"}
@@ -289,10 +289,10 @@ export function WhmHomePage() {
 
           <div className="hidden xl:block">
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-              V-zone WHM
+              AngaPanel WHM
             </p>
             <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-800 dark:text-ink-50">
-              {tweaks.panel_locale === "en" ? "V-zone Admin Home" : "Accueil V-zone Admin"}
+              {tweaks.panel_locale === "en" ? "AngaPanel Admin Home" : "Accueil AngaPanel Admin"}
             </h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-500">{t("homeSubtitle")}</p>
           </div>
@@ -519,7 +519,7 @@ export function WhmHomePage() {
                     Product
                   </p>
                   <p className="mt-1 text-[13px] font-medium text-slate-700 dark:text-ink-100">
-                    {stats?.product || "V-zone Admin"}
+                    {stats?.product || "AngaPanel Admin"}
                   </p>
                 </div>
               </section>

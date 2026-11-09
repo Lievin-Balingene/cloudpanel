@@ -177,7 +177,7 @@ export function FtpManager({ title }: { title: string }) {
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-100">
           Serveur FTP actif
           {stats.daemon.unit ? ` (${stats.daemon.unit})` : ""}
-          {stats.daemon.authd_active ? " · auth V-zone OK" : " · authd à vérifier"}
+          {stats.daemon.authd_active ? " · auth AngaPanel OK" : " · authd à vérifier"}
         </div>
       )}
 

@@ -1141,7 +1141,7 @@ def _is_howto_or_explain(text: str) -> bool:
 
 def _python_deploy_howto() -> str:
     return (
-        "Voici **comment mettre en ligne une app Python** sur V-zone :\n\n"
+        "Voici **comment mettre en ligne une app Python** sur AngaPanel :\n\n"
         "1. **Dossier projet** dans ton home (ex. `vzone`) avec le code "
         "(`manage.py` pour Django, ou `app.py` / ASGI…).\n"
         "2. **Domaine** déjà créé (ex. `vzone.7une.info`).\n"
@@ -3581,7 +3581,7 @@ def _converse(
     if re.search(r"\b(bonjour|salut|hello|hey|coucou|bonsoir)\b", low) and len(low) < 48:
         return (
             "Salut ! Content de te parler.\n\n"
-            "Je peux discuter normalement **ou** agir sur ton compte V-zone "
+            "Je peux discuter normalement **ou** agir sur ton compte AngaPanel "
             "(lister/arrêter des apps, domaines, SSL, DB, emails…). "
             "Dis-moi juste ce dont tu as besoin."
         )
@@ -3605,7 +3605,7 @@ def _converse(
         )
     ):
         return (
-            "Je suis **V-zone AI**, l'assistant du panneau.\n\n"
+            "Je suis **AngaPanel AI**, l'assistant du panneau.\n\n"
             "En mode local (sans LLM distant) je suis surtout fort pour **agir** :\n"
             "- apps Python/Node (liste, stop, start, logs)\n"
             "- domaines, SSL, bases, emails, fichiers, cron, WP, backups…\n\n"

@@ -1127,7 +1127,7 @@ def _whm_statistics() -> dict[str, Any]:
     return {
         "hostname": hostname,
         "operating_system": os_pretty,
-        "product": f"V-zone Admin v{get_version()}",
+        "product": f"AngaPanel Admin v{get_version()}",
         "version": get_version(),
         "platform": platform.machine() or "",
     }

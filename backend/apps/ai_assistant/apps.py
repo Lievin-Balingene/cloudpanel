@@ -7,4 +7,4 @@ class AiAssistantConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.ai_assistant"
     label = "ai_assistant"
-    verbose_name = "V-zone AI Deployment Assistant"
+    verbose_name = "AngaPanel AI Deployment Assistant"

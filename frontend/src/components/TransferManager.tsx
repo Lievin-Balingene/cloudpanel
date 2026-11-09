@@ -280,7 +280,7 @@ export function TransferManager({ title }: { title: string }) {
               {title}
             </h1>
             <p className="mt-1 text-sm text-cp-muted max-w-3xl">
-              Migrez des comptes cPanel/WHM vers V-zone sans perte de données. L’arborescence cible
+              Migrez des comptes cPanel/WHM vers AngaPanel sans perte de données. L’arborescence cible
               reste identique à cPanel (<code className="text-xs">public_html</code>,{" "}
               <code className="text-xs">mail/</code>, <code className="text-xs">ssl/</code>,{" "}
               <code className="text-xs">domains/</code>, etc.).
@@ -467,7 +467,7 @@ export function TransferManager({ title }: { title: string }) {
       )}
 
       <div className="vz-panel space-y-3 p-4">
-        <h2 className="text-sm font-semibold uppercase text-cp-muted">2. Compte cible V-zone</h2>
+        <h2 className="text-sm font-semibold uppercase text-cp-muted">2. Compte cible AngaPanel</h2>
         <div className="grid gap-2 md:grid-cols-2">
           <input
             className="vz-input"
@@ -497,7 +497,7 @@ export function TransferManager({ title }: { title: string }) {
           />
           <input
             className="vz-input"
-            placeholder="package V-zone (optionnel)"
+            placeholder="package AngaPanel (optionnel)"
             value={packageName}
             onChange={(e) => setPackageName(e.target.value)}
           />

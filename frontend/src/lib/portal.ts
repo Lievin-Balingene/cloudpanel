@@ -46,7 +46,7 @@ export function roleAllowedOnPortal(
   if (!role || portal === "shared" || portal === "webmail") return true;
   // Admin (WHM) : administrator + reseller
   if (portal === "admin") return role === "administrator" || role === "reseller";
-  // V-zone Panel : client + reseller (le revendeur a aussi son panel client)
+  // AngaPanel : client + reseller (le revendeur a aussi son panel client)
   if (portal === "client") return role === "client" || role === "reseller";
   return true;
 }
@@ -58,24 +58,24 @@ export function homePathFor(
   if (portal === "admin") return "/whm";
   if (portal === "client") return "/panel";
   if (role === "client") return "/panel";
-  // Shared hostname : reseller → Admin par défaut (peut ouvrir V-zone Panel via le lien)
+  // Shared hostname : reseller → Admin par défaut (peut ouvrir AngaPanel via le lien)
   return "/whm";
 }
 
 export function portalLabel(portal: PortalKind = detectPortalSync()): string {
-  if (portal === "admin") return "V-zone Admin";
-  if (portal === "client") return "V-zone Panel";
-  return "V-zone";
+  if (portal === "admin") return "AngaPanel Admin";
+  if (portal === "client") return "AngaPanel";
+  return "AngaPanel";
 }
 
-/** URL vers V-zone Admin / WHM (port Admin) — depuis le V-zone Panel du revendeur. */
+/** URL vers AngaPanel Admin / WHM (port Admin) — depuis AngaPanel (revendeur). */
 export function whmPortalUrl(path = "/whm"): string {
   const { protocol, hostname } = window.location;
   const p = path.startsWith("/") ? path : `/${path}`;
   return `${protocol}//${hostname}:9086${p}`;
 }
 
-/** URL vers V-zone Panel (port Client) — depuis V-zone Admin / WHM. */
+/** URL vers AngaPanel (port Client) — depuis AngaPanel Admin / WHM. */
 export function cpanelPortalUrl(path = "/panel"): string {
   const { protocol, hostname } = window.location;
   const p = path.startsWith("/") ? path : `/${path}`;

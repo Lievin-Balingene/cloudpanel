@@ -269,7 +269,7 @@ export function PackageFormPage({
         </div>
 
         <div className="border-y border-cp-border bg-cp-canvas/60 px-4 py-2 text-xs font-bold uppercase tracking-wide text-cp-muted dark:border-ink-800 dark:bg-ink-900">
-          V-zone Pulse (CPU / RAM / processus / inodes)
+          AngaPanel Pulse (CPU / RAM / processus / inodes)
         </div>
         <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
           <Field label="CPU (millicores, 1000 = 1 cœur)">

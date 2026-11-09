@@ -136,7 +136,7 @@ export function PulseManager({ title, mode = "whm" }: { title: string; mode?: "w
         <div className="flex items-start gap-3">
           <Zap className="mt-0.5 h-8 w-8 shrink-0 text-cp-orange" />
           <div className="text-sm leading-relaxed">
-            <p className="font-semibold text-cp-navy dark:text-white">V-zone Pulse</p>
+            <p className="font-semibold text-cp-navy dark:text-white">AngaPanel Pulse</p>
             <p className="mt-1 text-cp-muted">
               Limites CPU, RAM, processus et I/O par compte via <strong>cgroups v2</strong> et
               slices systemd. Les apps (Python, Node, cron) démarrent dans le slice via{" "}

@@ -87,7 +87,7 @@ const sections: NavSection[] = [
     items: [
       { to: "/panel/metrics", label: "Visiteurs & erreurs", icon: BarChart3 },
       { to: "/panel/package", label: "Ressources & quotas", icon: Gauge },
-      { to: "/panel/pulse", label: "V-zone Pulse", icon: Zap },
+      { to: "/panel/pulse", label: "AngaPanel Pulse", icon: Zap },
     ],
   },
   {
@@ -411,7 +411,7 @@ export function ClientShell() {
   }, [location.pathname]);
 
   useEffect(() => {
-    document.title = tweaks.panel_locale === "en" ? "V-zone Panel" : "V-zone Panel";
+    document.title = tweaks.panel_locale === "en" ? "AngaPanel" : "AngaPanel";
   }, [tweaks.panel_locale]);
 
   useEffect(() => {
@@ -451,7 +451,7 @@ export function ClientShell() {
                 height={36}
               />
               <div className="min-w-0">
-                <p className="text-[15px] font-semibold leading-tight tracking-wide">V-zone Panel</p>
+                <p className="text-[15px] font-semibold leading-tight tracking-wide">AngaPanel</p>
                 <p className="truncate text-[11px] text-white/75">
                   {user?.role === "reseller"
                     ? "Espace client · revendeur"
@@ -465,7 +465,7 @@ export function ClientShell() {
               <a
                 href={whmPortalUrl("/whm")}
                 className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-cp-orange px-2.5 text-xs font-bold uppercase tracking-wide text-white shadow-md hover:brightness-110 sm:px-3"
-                title="Ouvrir V-zone Admin (WHM)"
+                title="Ouvrir AngaPanel Admin (WHM)"
               >
                 <Server className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">Admin</span>

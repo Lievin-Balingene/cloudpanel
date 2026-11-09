@@ -198,7 +198,7 @@ const navSections: NavSection[] = [
       },
       {
         to: "/whm/pulse",
-        label: "V-zone Pulse",
+        label: "AngaPanel Pulse",
         icon: Zap,
         keywords: ["cgroups", "lve", "cpu", "ram", "resource", "governor"],
       },
@@ -293,7 +293,7 @@ const navSections: NavSection[] = [
   },
   {
     id: "cpanel-dev",
-    title: "V-zone Panel & Development",
+    title: "AngaPanel & Development",
     items: [
       { to: "/whm/files", label: "Browse Account Files", icon: FolderOpen },
       { to: "/whm/terminal", label: "Terminal / API Ops", icon: Terminal },
@@ -472,7 +472,7 @@ export function WhmShell() {
   });
 
   useEffect(() => {
-    document.title = "V-zone WHM · Admin";
+    document.title = "AngaPanel WHM · Admin";
   }, []);
 
   useEffect(() => {
@@ -602,7 +602,7 @@ export function WhmShell() {
         />
       ) : null}
 
-      {/* Sidebar V-zone Admin — drawer mobile, fixe desktop */}
+      {/* Sidebar AngaPanel Admin — drawer mobile, fixe desktop */}
       <aside
         className={`fixed inset-y-0 left-0 z-50 flex h-full w-[min(272px,90vw)] shrink-0 flex-col bg-gradient-to-b from-[#2a4a6b] to-[#1e3a55] text-white shadow-[4px_0_24px_rgba(0,0,0,0.28)] transition-transform duration-200 ease-out md:static md:z-auto md:w-[248px] md:translate-x-0 ${
           navOpen ? "translate-x-0" : "-translate-x-full"
@@ -613,17 +613,17 @@ export function WhmShell() {
           <div className="flex items-center gap-2.5">
             <img
               src="/vzone-mark.svg"
-              alt="V-zone"
+              alt="AngaPanel"
               className="h-9 w-9 shrink-0 rounded-[9px] shadow-sm"
               width={36}
               height={36}
             />
             <div className="min-w-0 flex-1">
               <p className="select-none font-sans text-[17px] font-bold leading-tight tracking-tight text-white">
-                V-zone WHM
+                AngaPanel WHM
               </p>
               <p className="mt-0.5 truncate text-[10px] font-medium uppercase tracking-[0.12em] text-white/55">
-                V-zone Admin
+                AngaPanel Admin
               </p>
             </div>
             <button
@@ -738,7 +738,7 @@ export function WhmShell() {
             </span>
             {version && (
               <span className="hidden md:inline">
-                <span className="text-[#8a9bb0]">V-zone:</span>{" "}
+                <span className="text-[#8a9bb0]">AngaPanel:</span>{" "}
                 <span className="font-medium text-[#2c3e50] dark:text-ink-100">{version}</span>
               </span>
             )}
@@ -783,10 +783,10 @@ export function WhmShell() {
                 <a
                   href={cpanelPortalUrl("/panel")}
                   className="inline-flex h-11 items-center gap-1.5 rounded-xl border border-cp-orange/40 bg-cp-orange-soft px-2.5 text-xs font-semibold text-cp-orange-dark active:brightness-105 sm:h-9 sm:rounded-full"
-                  title="Ouvrir V-zone Panel"
+                  title="Ouvrir AngaPanel"
                 >
                   <AppWindow className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">V-zone Panel</span>
+                  <span className="hidden sm:inline">AngaPanel</span>
                 </a>
               )}
               <button

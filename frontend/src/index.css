@@ -314,7 +314,7 @@ html.dark body {
   top: 0 !important;
 }
 
-/* —— V-zone AI assistant —— */
+/* —— AngaPanel AI assistant —— */
 .vz-ai-fab {
   animation: vz-ai-enter 0.45s var(--vz-ease) both;
   background: linear-gradient(145deg, #1a2b3c 0%, #243b53 55%, #1a2b3c 100%);

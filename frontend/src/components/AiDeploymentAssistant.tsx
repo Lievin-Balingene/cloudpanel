@@ -379,7 +379,7 @@ function guessCompletedSteps(playbook: Playbook | null, messages: AiMessage[], t
 }
 
 const WELCOME =
-  "Salut ! Je suis **V-zone AI** — assistant du panneau client.\n\n" +
+  "Salut ! Je suis **AngaPanel AI** — assistant du panneau client.\n\n" +
   "Je peux **lister et piloter** apps, domaines, SSL, DB, email, fichiers, cron, " +
   "WordPress, FTP, backups, Git, Docker… Les actions sensibles demandent ta confirmation. " +
   "Mot de passe / 2FA : je guide seulement (pas d'exécution).";
@@ -968,7 +968,7 @@ export function AiDeploymentAssistant() {
           type="button"
           onClick={() => setOpen(true)}
           className="vz-ai-fab group fixed bottom-5 right-5 z-40 inline-flex items-center gap-2.5 rounded-full bg-cp-navy pl-2 pr-4 py-2 text-sm font-medium text-white shadow-lg transition hover:bg-cp-navy-soft hover:shadow-xl"
-          aria-label="Ouvrir V-zone AI"
+          aria-label="Ouvrir AngaPanel AI"
         >
           <span className="relative flex h-9 w-9 items-center justify-center rounded-full bg-white/15">
             <span className="vz-ai-fab-ring" aria-hidden />
@@ -981,7 +981,7 @@ export function AiDeploymentAssistant() {
             )}
           </span>
           <span className="hidden flex-col items-start leading-tight sm:flex">
-            <span>V-zone AI</span>
+            <span>AngaPanel AI</span>
             <span className="text-[10px] font-normal text-white/70">
               {pendingCount > 0 ? "Approuver requis" : "Assistant intelligent"}
             </span>
@@ -1008,7 +1008,7 @@ export function AiDeploymentAssistant() {
             className="vz-ai-panel fixed bottom-3 right-3 z-50 flex flex-col overflow-hidden sm:bottom-5 sm:right-5"
             style={{ width: panelWidth, height: panelHeight }}
             role="dialog"
-            aria-label="V-zone AI"
+            aria-label="AngaPanel AI"
           >
             <header className="vz-ai-header flex items-center justify-between gap-2 px-3 py-3 text-white">
               <div className="flex min-w-0 items-center gap-2.5">
@@ -1016,7 +1016,7 @@ export function AiDeploymentAssistant() {
                   <Bot className="relative z-[1] h-[18px] w-[18px]" />
                 </div>
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold tracking-wide">V-zone AI</p>
+                  <p className="truncate text-sm font-semibold tracking-wide">AngaPanel AI</p>
                   <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
                     <span
                       className={`vz-ai-pill ${

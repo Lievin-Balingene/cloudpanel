@@ -46,7 +46,7 @@ def test_pulse_apply_and_status(api: APIClient, tmp_path, settings):
     api.force_authenticate(user=admin)
     overview = api.get(reverse("pulse-overview"))
     assert overview.status_code == 200
-    assert overview.json()["data"]["brand"] == "V-zone Pulse"
+    assert overview.json()["data"]["brand"] == "AngaPanel Pulse"
 
     api.force_authenticate(user=client)
     mine = api.get(reverse("pulse-mine"))
