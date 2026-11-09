@@ -123,12 +123,24 @@ export function FileManager({ title }: { title: string }) {
   const dragDepth = useRef(0);
   const lastClickedRef = useRef<string | null>(null);
 
-  const { data, isLoading, isFetching, refetch } = useQuery({
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const authHydrated = useAuthStore((s) => s._hasHydrated);
+  const tokenReady = Boolean(accessToken && authHydrated);
+  const { data, isLoading, isFetching, isError, error: queryError, refetch } = useQuery({
     queryKey: ["files", cwd],
     queryFn: () => apiRequest<Listing>(`/files/?path=${encodeURIComponent(cwd)}`),
+    enabled: tokenReady,
     placeholderData: (prev) => prev,
     staleTime: 15_000,
+    retry: 2,
   });
+  const listError =
+    error ||
+    (isError
+      ? queryError instanceof Error
+        ? queryError.message
+        : "Impossible de charger le dossier."
+      : null);
 
   const entryPaths = useMemo(
     () => (data?.entries ?? []).map((e) => e.path),
@@ -448,26 +460,48 @@ export function FileManager({ title }: { title: string }) {
   return (
     <div
       className={`space-y-2 animate-fade-up ${
-        standalone ? "flex min-h-0 flex-col" : ""
+        standalone ? "flex h-full min-h-0 flex-col" : ""
       }`}
     >
-      <div className="vz-panel flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+      <div className="vz-panel flex shrink-0 flex-wrap items-center justify-between gap-2 px-3 py-2">
         <div>
           <h1 className="text-base font-semibold leading-tight">{title}</h1>
           <p className="text-[11px] text-cp-muted">
-            Envoyez, modifiez et organisez vos fichiers
+            {data?.root ? (
+              <>
+                Racine : <span className="font-mono text-cp-text">{data.root}</span>
+              </>
+            ) : (
+              "Envoyez, modifiez et organisez vos fichiers"
+            )}
           </p>
         </div>
         <button
           type="button"
           className="vz-btn-ghost vz-btn-sm"
           onClick={() => void refetch()}
-          disabled={isFetching}
+          disabled={isFetching || !tokenReady}
         >
           <RefreshCw className={`h-3 w-3 ${isFetching ? "animate-spin" : ""}`} />
           Actualiser
         </button>
       </div>
+
+      {listError ? (
+        <div className="rounded-xl border border-cp-danger/40 bg-cp-danger/10 px-3 py-2 text-sm text-cp-danger">
+          {listError}
+          <button
+            type="button"
+            className="ml-3 underline"
+            onClick={() => {
+              setError(null);
+              void refetch();
+            }}
+          >
+            Réessayer
+          </button>
+        </div>
+      ) : null}
 
       <div className="vz-panel flex flex-wrap items-center gap-0.5 px-2 py-1 text-xs">
         {crumbs.map((c, idx) => (
@@ -622,11 +656,15 @@ export function FileManager({ title }: { title: string }) {
         </form>
       </div>
 
-      <div className="grid gap-2 lg:grid-cols-[1fr_180px]">
+      <div
+        className={`grid gap-2 lg:grid-cols-[1fr_180px] ${
+          standalone ? "min-h-0 flex-1" : ""
+        }`}
+      >
         <div
-          className={`vz-panel relative min-h-[280px] overflow-auto sm:min-h-[360px] ${
-            dragOver && !internalDrag ? "ring-2 ring-cp-orange" : ""
-          }`}
+          className={`vz-panel relative overflow-auto ${
+            standalone ? "min-h-0 h-full" : "min-h-[280px] sm:min-h-[360px]"
+          } ${dragOver && !internalDrag ? "ring-2 ring-cp-orange" : ""}`}
           onDragEnter={(e) => {
             e.preventDefault();
             dragDepth.current += 1;
@@ -725,14 +763,14 @@ export function FileManager({ title }: { title: string }) {
                   </td>
                 </tr>
               )}
-              {isLoading && !data && (
+              {(!tokenReady || (isLoading && !data)) && (
                 <tr>
-                  <td className="px-2 py-3 text-cp-muted" colSpan={5}>
-                    Chargement…
+                  <td className="px-2 py-6 text-center text-cp-muted" colSpan={5}>
+                    Chargement du dossier…
                   </td>
                 </tr>
               )}
-              {(data?.entries ?? []).map((entry) => {
+              {tokenReady && !isLoading && !isError && (data?.entries ?? []).map((entry) => {
                 const active = selected.includes(entry.path);
                 const isDropTarget = dropTargetPath === entry.path && entry.is_dir;
                 return (
@@ -852,10 +890,14 @@ export function FileManager({ title }: { title: string }) {
               Déposez fichiers ou dossiers ici
             </div>
           )}
-          {!isLoading && !(data?.entries?.length) && !cwd && (
-            <p className="px-3 py-4 text-center text-[11px] text-cp-muted">
-              Glissez-déposez des fichiers ou dossiers (nouvel onglet), ou utilisez Upload / Dossier.
-            </p>
+          {tokenReady && !isLoading && !isError && data && !(data.entries?.length) && (
+            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center">
+              <Folder className="h-10 w-10 text-cp-orange/50" />
+              <p className="text-sm font-medium text-cp-text">Dossier vide</p>
+              <p className="max-w-sm text-[12px] text-cp-muted">
+                Glissez-déposez des fichiers ici, ou utilisez Upload / Dossier.
+              </p>
+            </div>
           )}
         </div>
 
@@ -923,12 +965,6 @@ export function FileManager({ title }: { title: string }) {
           )}
         </div>
       </div>
-
-      {error && (
-        <p className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-cp-danger">
-          {error}
-        </p>
-      )}
 
       {searchMutation.data && (
         <div className="vz-panel p-3">

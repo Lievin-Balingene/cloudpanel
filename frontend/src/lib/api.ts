@@ -96,7 +96,9 @@ async function apiRequestOnce<T>(
     throw new ApiClientError(hint, 0, null);
   }
 
-  if (response.status === 401) {
+  // Ne pas effacer la session si la requête est partie SANS token
+  // (course d'hydratation localStorage dans un nouvel onglet).
+  if (response.status === 401 && token) {
     clearAuth();
   }
 

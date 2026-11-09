@@ -7,6 +7,8 @@ interface AuthState {
   accessToken: string | null;
   refreshToken: string | null;
   user: User | null;
+  _hasHydrated: boolean;
+  setHasHydrated: (value: boolean) => void;
   setSession: (access: string, refresh: string, user: User) => void;
   clearSession: () => void;
   login: (email: string, password: string, otp?: string) => Promise<void>;
@@ -26,6 +28,8 @@ export const useAuthStore = create<AuthState>()(
         accessToken: null,
         refreshToken: null,
         user: null,
+        _hasHydrated: false,
+        setHasHydrated: (value) => set({ _hasHydrated: value }),
         setSession: (access, refresh, user) =>
           set({ accessToken: access, refreshToken: refresh, user }),
         clearSession: () => set({ accessToken: null, refreshToken: null, user: null }),
@@ -66,6 +70,21 @@ export const useAuthStore = create<AuthState>()(
         },
       };
     },
-    { name: "vzone-auth" },
+    {
+      name: "vzone-auth",
+      partialize: (s) => ({
+        accessToken: s.accessToken,
+        refreshToken: s.refreshToken,
+        user: s.user,
+      }),
+      onRehydrateStorage: () => (state) => {
+        state?.setHasHydrated(true);
+      },
+    },
   ),
 );
+
+/** True une fois le localStorage auth lu (nouvel onglet / F5). */
+export function useAuthHydrated(): boolean {
+  return useAuthStore((s) => s._hasHydrated);
+}

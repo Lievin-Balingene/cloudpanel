@@ -73,14 +73,23 @@ import { ClientSshKeysPage } from "./pages/client/ClientSshKeysPage";
 import { ClientMetricsPage } from "./pages/client/ClientMetricsPage";
 import { ClientIpBlockerPage } from "./pages/client/ClientIpBlockerPage";
 import { ClientPreferencesPage } from "./pages/client/ClientPreferencesPage";
-import { useAuthStore } from "./stores/auth";
+import { useAuthHydrated, useAuthStore } from "./stores/auth";
 import {
   detectPortalSync,
   homePathFor,
   roleAllowedOnPortal,
 } from "./lib/portal";
 
+function AuthBootSplash() {
+  return (
+    <div className="flex min-h-[100dvh] items-center justify-center bg-[#e8eef4] text-sm text-slate-500">
+      Chargement de la session…
+    </div>
+  );
+}
+
 function RequireAuth({ children }: { children: ReactNode }) {
+  const hydrated = useAuthHydrated();
   const token = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   const clearSession = useAuthStore((s) => s.clearSession);
@@ -88,6 +97,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
   const portal = detectPortalSync();
   const wrongPortal = Boolean(token && user && !roleAllowedOnPortal(user.role, portal));
 
+  if (!hydrated) return <AuthBootSplash />;
   if (wrongPortal) {
     clearSession();
     return <Navigate to="/login" replace />;

@@ -63,8 +63,10 @@ export function FileManagerShell() {
           </button>
         </div>
       </header>
-      <main className="min-h-0 flex-1 overflow-auto p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:p-3">
-        <Outlet />
+      <main className="flex min-h-0 flex-1 flex-col overflow-hidden p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:p-3">
+        <div className="flex min-h-0 flex-1 flex-col">
+          <Outlet />
+        </div>
       </main>
     </div>
   );
