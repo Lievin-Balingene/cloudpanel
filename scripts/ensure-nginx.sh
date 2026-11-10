@@ -268,16 +268,40 @@ if [[ -n "$PORTS_SRC" ]]; then
   else
     echo "[vzone] Ports panel en HTTP — activez: VZONE_PANEL_TLS=1 + harden-panel-security.sh"
   fi
-  # Escape for sed replacement (& and \)
+
+  # Allowlist nginx pour WHM (:9086) — plus fiable que UFW seul
+  ADMIN_ALLOW_BLOCK=""
+  CIDRS="${VZONE_ADMIN_ALLOW_CIDRS:-}"
+  if [[ -n "$CIDRS" && "$CIDRS" != "VOTRE_IP/32" ]]; then
+    ADMIN_ALLOW_BLOCK="allow 127.0.0.1; allow ::1;"
+    IFS=',' read -ra LIST <<<"$CIDRS"
+    for cidr in "${LIST[@]}"; do
+      cidr="$(echo "$cidr" | xargs)"
+      [[ -n "$cidr" ]] || continue
+      # Refuse le placeholder littéral
+      if [[ "$cidr" == *"VOTRE_IP"* ]]; then
+        echo "[vzone] ERREUR: remplacez VOTRE_IP par votre IP publique réelle" >&2
+        continue
+      fi
+      ADMIN_ALLOW_BLOCK="${ADMIN_ALLOW_BLOCK} allow ${cidr};"
+    done
+    ADMIN_ALLOW_BLOCK="${ADMIN_ALLOW_BLOCK} deny all;"
+    echo "[vzone] WHM :9086 allowlist nginx → ${CIDRS}"
+  else
+    echo "[vzone] WHM :9086 ouvert (définir VZONE_ADMIN_ALLOW_CIDRS=x.x.x.x/32)"
+  fi
+
   SSL_BLOCK_ESC="$(printf '%s' "$SSL_BLOCK" | sed -e 's/[&\\]/\\&/g')"
+  ADMIN_ALLOW_ESC="$(printf '%s' "$ADMIN_ALLOW_BLOCK" | sed -e 's/[&\\]/\\&/g')"
   sed -e "s/__VZONE_ADMIN_PORT__/${ADMIN_PORT}/g" \
       -e "s/__VZONE_CLIENT_PORT__/${CLIENT_PORT}/g" \
       -e "s/__VZONE_WEBMAIL_PORT__/${WEBMAIL_PORT}/g" \
       -e "s/__PANEL_BACKEND_HOST__/${BACKEND_HOST}/g" \
       -e "s/__LISTEN_SSL__/${LISTEN_SSL}/g" \
       -e "s|__SSL_BLOCK__|${SSL_BLOCK_ESC}|g" \
+      -e "s|__ADMIN_ALLOW_BLOCK__|${ADMIN_ALLOW_ESC}|g" \
       "$PORTS_SRC" > "$PORTS_TMP"
-  if grep -qE '__PANEL_BACKEND_HOST__|__LISTEN_SSL__|__SSL_BLOCK__' "$PORTS_TMP"; then
+  if grep -qE '__PANEL_BACKEND_HOST__|__LISTEN_SSL__|__SSL_BLOCK__|__ADMIN_ALLOW_BLOCK__' "$PORTS_TMP"; then
     echo "[vzone] ERREUR: placeholder ports non remplacé" >&2
     rm -f "$PORTS_TMP"
     exit 1

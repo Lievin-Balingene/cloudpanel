@@ -60,6 +60,15 @@ upsert_env "VZONE_FORCE_SECURE_COOKIES" "1"
 # Redirect HTTP→HTTPS sur 80/443 seulement ; ports custom sont SSL-only
 upsert_env "VZONE_SECURE_SSL_REDIRECT" "0"
 
+# Persiste allowlist WHM (refuse le placeholder VOTRE_IP)
+CIDRS_IN="${VZONE_ADMIN_ALLOW_CIDRS:-}"
+if [[ -n "$CIDRS_IN" && "$CIDRS_IN" != *"VOTRE_IP"* ]]; then
+  upsert_env "VZONE_ADMIN_ALLOW_CIDRS" "$CIDRS_IN"
+  ok "Allowlist WHM enregistrée: ${CIDRS_IN}"
+elif [[ "$CIDRS_IN" == *"VOTRE_IP"* ]]; then
+  warn "Ignorez le placeholder VOTRE_IP — utilisez votre IP publique réelle, ex. 203.0.113.10/32"
+fi
+
 if [[ -f "${REPO_DIR}/scripts/ensure-nginx.sh" ]]; then
   bash "${REPO_DIR}/scripts/ensure-nginx.sh" "${VZONE_ROOT}/deploy/nginx/vzone.conf" \
     || warn "ensure-nginx a échoué — vérifiez nginx -t"
@@ -203,27 +212,33 @@ if command -v ufw >/dev/null 2>&1; then
   ufw allow "${WEBMAIL_PORT}/tcp" comment "angapanel-webmail" >/dev/null 2>&1 || true
 
   CIDRS="${VZONE_ADMIN_ALLOW_CIDRS:-}"
-  if [[ -n "$CIDRS" ]]; then
-    # Retire les allow 9086 ouverts puis restreint
-    while ufw status numbered 2>/dev/null | grep -E "${ADMIN_PORT}/tcp" >/dev/null; do
-      NUM="$(ufw status numbered | grep -E "${ADMIN_PORT}/tcp" | head -1 | sed -n 's/^\[\s*\([0-9]\+\).*/\1/p')"
+  if [[ -n "$CIDRS" && "$CIDRS" != *"VOTRE_IP"* ]]; then
+    # Retire TOUTES les règles 9086 (ouvertes ou anciennes allowlist)
+    for _try in $(seq 1 40); do
+      NUM="$(ufw status numbered 2>/dev/null | grep -E "${ADMIN_PORT}/tcp" | head -1 | sed -n 's/^\[\s*\([0-9]\+\).*/\1/p')"
       [[ -n "$NUM" ]] || break
       yes | ufw delete "$NUM" >/dev/null 2>&1 || break
     done
+    ufw allow from 127.0.0.1 to any port "$ADMIN_PORT" proto tcp comment "angapanel-admin-local" || true
     IFS=',' read -ra LIST <<<"$CIDRS"
     for cidr in "${LIST[@]}"; do
       cidr="$(echo "$cidr" | xargs)"
       [[ -n "$cidr" ]] || continue
       ufw allow from "$cidr" to any port "$ADMIN_PORT" proto tcp comment "angapanel-admin" || true
     done
-    ok "Port admin ${ADMIN_PORT} restreint à: ${CIDRS}"
+    ok "UFW :${ADMIN_PORT} restreint à: ${CIDRS} (+ localhost)"
     echo "admin_port=restricted:${CIDRS}" >>"$REPORT"
   else
     ufw allow "${ADMIN_PORT}/tcp" comment "angapanel-admin" >/dev/null 2>&1 || ufw allow "${ADMIN_PORT}/tcp" || true
-    warn "9086 encore ouvert au monde — définissez VZONE_ADMIN_ALLOW_CIDRS=IP/32"
+    warn "9086 encore ouvert au monde — ex: VZONE_ADMIN_ALLOW_CIDRS=203.0.113.10/32 $0"
     echo "admin_port=open_world" >>"$REPORT"
   fi
   ufw --force enable >/dev/null 2>&1 || true
+fi
+
+# Recharge nginx pour appliquer allow/deny WHM (même sans CIDRS : portal client sur :80)
+if [[ -f "${REPO_DIR}/scripts/ensure-nginx.sh" ]]; then
+  bash "${REPO_DIR}/scripts/ensure-nginx.sh" "${VZONE_ROOT}/deploy/nginx/vzone.conf" || true
 fi
 
 # server_tokens off (nginx version leak)

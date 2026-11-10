@@ -17,13 +17,15 @@ def request_portal(request) -> str:  # type: ignore[no-untyped-def]
 
 def assert_role_allowed_on_portal(user: User, portal: str) -> None:
     """
-    Port Admin  → administrator | reseller (WHM).
-    Port Client → client | reseller (cPanel ; le revendeur a aussi son cPanel).
-    Sinon → 403 wrong_portal (rejette l'auth / l'accès API).
-    shared → pas de filtre rôle (hostname :80/:443, header explicite nginx).
-    vide / inconnu → refusé au niveau middleware (fail-closed).
+    Port Admin  → administrator | reseller (WHM) — uniquement :9086.
+    Port Client → client | reseller — :9082 et hostname :80/:443.
+    shared      → traité comme client (plus de contournement WHM).
+    Sinon → 403 wrong_portal.
     """
     portal = (portal or "").strip().lower()
+    # Ancien mode shared (:80/:443) = client only — WHM forcé sur :9086
+    if portal == "shared":
+        portal = "client"
     if portal not in {"admin", "client", "webmail"}:
         return
 
