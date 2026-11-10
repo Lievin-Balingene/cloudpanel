@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 from django.conf import settings
@@ -466,8 +467,41 @@ def _ensure_node_modules(app: NodeApp, app_root: Path) -> None:
     npm_install(app)
 
 
+def _normalize_entrypoint(app: NodeApp, app_root: Path) -> str:
+    """Entrypoint relatif à app_root (jamais préfixé par relative_root / home)."""
+    entry = (app.entrypoint or "server.js").strip().replace("\\", "/") or "server.js"
+    entry = entry.lstrip("/")
+    rel_root = (app.relative_root or "").replace("\\", "/").strip("/")
+    if rel_root and (entry == rel_root or entry.startswith(f"{rel_root}/")):
+        entry = entry[len(rel_root) :].lstrip("/")
+    home = user_home(app.owner)
+    try:
+        abs_candidate = Path(entry)
+        if abs_candidate.is_absolute():
+            entry = str(abs_candidate.resolve().relative_to(app_root.resolve())).replace("\\", "/")
+        else:
+            under_home = (home / entry).resolve()
+            try:
+                entry = str(under_home.relative_to(app_root.resolve())).replace("\\", "/")
+            except ValueError:
+                pass
+    except (OSError, ValueError):
+        pass
+    if not entry or entry.startswith(".."):
+        entry = "server.js"
+    return entry
+
+
+def _command_in_directory(cmd: list[str], directory: Path) -> list[str]:
+    """vzone-runas force le cwd sur $HOME — imposer un cd avant exec."""
+    import shlex
+
+    quoted = " ".join(shlex.quote(part) for part in cmd)
+    return ["bash", "-c", f"cd {shlex.quote(str(directory))} && exec {quoted}"]
+
+
 def _build_start_command(app: NodeApp, app_root: Path) -> list[str]:
-    """Préfère `npm run <script>` ; fallback `node <entrypoint>`."""
+    """Préfère `npm run <script>` ; fallback `node <entrypoint>` (cwd = app_root)."""
     pkg = app_root / "package.json"
     script = (app.start_script or "start").strip() or "start"
     if pkg.exists():
@@ -475,11 +509,11 @@ def _build_start_command(app: NodeApp, app_root: Path) -> list[str]:
             data = json.loads(pkg.read_text(encoding="utf-8"))
             scripts = data.get("scripts") or {}
             if script in scripts:
-                return [npm_binary(), "run", script]
+                return _command_in_directory([npm_binary(), "run", script], app_root)
         except (OSError, json.JSONDecodeError):
             pass
-    entry = (app.entrypoint or "server.js").strip() or "server.js"
-    return [node_binary(), entry]
+    entry = _normalize_entrypoint(app, app_root)
+    return _command_in_directory([node_binary(), entry], app_root)
 
 
 @transaction.atomic
@@ -491,12 +525,16 @@ def start_node_app(app: NodeApp) -> NodeApp:
         app.save(update_fields=["last_error", "updated_at"])
 
     _, app_root = resolve_app_root(app.owner, app.relative_root)
+    entry_name = _normalize_entrypoint(app, app_root)
+    if (app.entrypoint or "").strip().replace("\\", "/") != entry_name:
+        app.entrypoint = entry_name
+        app.save(update_fields=["entrypoint", "updated_at"])
     # Remplacer stub Hello Express si encore présent
-    entry_path = app_root / (app.entrypoint or "server.js")
+    entry_path = app_root / entry_name
     if entry_path.is_file():
         try:
             if _is_hello_scaffold(entry_path.read_text(encoding="utf-8", errors="replace")):
-                _scaffold(app_root, app.name, app.framework, app.entrypoint or "server.js")
+                _scaffold(app_root, app.name, app.framework, entry_name)
         except OSError:
             pass
 
@@ -505,6 +543,7 @@ def start_node_app(app: NodeApp) -> NodeApp:
     env = os.environ.copy()
     env["PORT"] = str(app.port)
     env["HOST"] = "127.0.0.1"
+    env["HOSTNAME"] = env.get("HOSTNAME") or "127.0.0.1"
     env["NODE_ENV"] = env.get("NODE_ENV") or "production"
     for key, value in (app.env_vars or {}).items():
         env[str(key)] = str(value)
@@ -523,13 +562,18 @@ def start_node_app(app: NodeApp) -> NodeApp:
         return app
 
     # Stop précédent + libérer le port (node orphelin)
-    if app.pid or pid_file.exists():
+    if app.pid or pid_file.exists() or pids_listening_on_port(app.port):
         try:
             stop_node_app(app)
             app.refresh_from_db()
         except Exception:  # noqa: BLE001
             logger.debug("stop node avant start ignoré", exc_info=True)
     free_listen_port(app.port)
+    # Laisser le kernel libérer le bind (évite EADDRINUSE au restart immédiat)
+    deadline = time.time() + 3.0
+    while time.time() < deadline and pids_listening_on_port(app.port):
+        free_listen_port(app.port)
+        time.sleep(0.15)
 
     try:
         _ensure_node_modules(app, app_root)
@@ -547,7 +591,7 @@ def start_node_app(app: NodeApp) -> NodeApp:
         access_f = open(access_log, "a", encoding="utf-8")  # noqa: SIM115
         error_f = open(error_log, "a", encoding="utf-8")  # noqa: SIM115
         jail = jail_username_for(app.owner)
-        spawn_cmd = build_runas_cmd(jail, cmd, env=env)
+        spawn_cmd = build_runas_cmd(jail, cmd, env=env, cwd=app_root)
         proc = subprocess.Popen(
             spawn_cmd,
             cwd=str(app_root),

@@ -56,8 +56,9 @@ def build_runas_cmd(
     cmd: list[str],
     *,
     env: Mapping[str, str] | None = None,
+    cwd: Path | str | None = None,
 ) -> list[str]:
-    """Construit ``sudo -n vzone-runas user -- [env K=V …] cmd…``.
+    """Construit ``sudo -n vzone-runas user [--cwd path] -- [env K=V …] cmd…``.
 
     Pas de ``--`` après les assignments ``env`` : sur busybox/certains env,
     ``env K=V -- cmd`` traite ``--`` comme commande → ``env: '--': No such file``.
@@ -75,7 +76,10 @@ def build_runas_cmd(
             code="runas_missing",
             status_code=500,
         )
-    out: list[str] = ["sudo", "-n", str(RUNAS), user, "--"]
+    out: list[str] = ["sudo", "-n", str(RUNAS), user]
+    if cwd:
+        out.extend(["--cwd", str(cwd)])
+    out.append("--")
     if env:
         out.append("env")
         for key, val in env.items():

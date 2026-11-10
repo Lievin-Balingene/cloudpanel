@@ -14,12 +14,26 @@ fi
 
 USERNAME="${1:-}"
 shift || true
-if [[ "${1:-}" == "--" ]]; then
-  shift
-fi
+RUNAS_CWD=""
+while [[ $# -gt 0 ]]; do
+  case "${1:-}" in
+    --cwd)
+      shift
+      RUNAS_CWD="${1:-}"
+      shift || true
+      ;;
+    --)
+      shift
+      break
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
 
 if [[ -z "$USERNAME" || $# -lt 1 ]]; then
-  echo "Usage: vzone-runas <username> -- <command> [args...]" >&2
+  echo "Usage: vzone-runas <username> [--cwd <path>] -- <command> [args...]" >&2
   exit 2
 fi
 
@@ -83,7 +97,29 @@ export PATH="/usr/local/bin:/usr/bin:/bin"
 unset SUDO_COMMAND SUDO_USER SUDO_UID SUDO_GID
 unset LD_PRELOAD LD_LIBRARY_PATH
 
-cd "$HOME_DIR" 2>/dev/null || cd /tmp
+WORK_DIR="$HOME_DIR"
+if [[ -n "${VZONE_RUNAS_CWD:-}" && -z "$RUNAS_CWD" ]]; then
+  RUNAS_CWD="$VZONE_RUNAS_CWD"
+fi
+if [[ -n "$RUNAS_CWD" ]]; then
+  CAND="$(realpath -m "$RUNAS_CWD")"
+  case "$CAND" in
+    "$HOME_DIR"|"$HOME_DIR"/*)
+      if [[ -d "$CAND" ]]; then
+        WORK_DIR="$CAND"
+      else
+        echo "cwd inexistant: ${CAND}" >&2
+        exit 2
+      fi
+      ;;
+    *)
+      echo "cwd hors home: ${CAND}" >&2
+      exit 3
+      ;;
+  esac
+fi
+
+cd "$WORK_DIR" 2>/dev/null || cd "$HOME_DIR" 2>/dev/null || cd /tmp
 
 # GID primaire réel (useradd -g vzone-clients → PAS de groupe homonyme « une »)
 # --gid="$USERNAME" provoquait: Failed to resolve group une: No such process
@@ -104,7 +140,7 @@ if [[ -n "$SYSTEMD_RUN_BIN" ]] && systemctl cat "${SLICE}" >/dev/null 2>&1; then
   if "$SYSTEMD_RUN_BIN" --quiet --collect \
     --uid="$USERNAME" --gid="$PRIMARY_GID" \
     --slice="$SLICE" \
-    --working-directory="$HOME_DIR" \
+    --working-directory="$WORK_DIR" \
     --setenv=HOME="$HOME_DIR" \
     --setenv=USER="$USERNAME" \
     --setenv=LOGNAME="$USERNAME" \
@@ -126,7 +162,7 @@ if [[ -n "$SU_BIN" ]]; then
   for _a in "$@"; do
     _cmd+="$(printf '%q' "$_a") "
   done
-  exec "$SU_BIN" -s /bin/bash "$USERNAME" -c "cd $(printf '%q' "$HOME_DIR") && exec ${_cmd}"
+  exec "$SU_BIN" -s /bin/bash "$USERNAME" -c "cd $(printf '%q' "$WORK_DIR") && exec ${_cmd}"
 fi
 
 echo "ni runuser ni su disponibles — installez util-linux (runuser)" >&2

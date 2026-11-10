@@ -459,8 +459,8 @@ export function FileManager({ title }: { title: string }) {
 
   return (
     <div
-      className={`space-y-2 animate-fade-up ${
-        standalone ? "flex h-full min-h-0 flex-col" : ""
+      className={`animate-fade-up ${
+        standalone ? "flex h-full min-h-0 flex-col gap-2" : "space-y-2"
       }`}
     >
       <div className="vz-panel flex shrink-0 flex-wrap items-center justify-between gap-2 px-3 py-2">
@@ -657,13 +657,15 @@ export function FileManager({ title }: { title: string }) {
       </div>
 
       <div
-        className={`grid gap-2 lg:grid-cols-[1fr_180px] ${
-          standalone ? "min-h-0 flex-1" : ""
+        className={`grid gap-2 ${
+          standalone
+            ? "min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] lg:grid-cols-[minmax(0,1fr)_11rem] lg:grid-rows-[minmax(0,1fr)]"
+            : "lg:grid-cols-[1fr_180px]"
         }`}
       >
         <div
-          className={`vz-panel relative overflow-auto ${
-            standalone ? "min-h-0 h-full" : "min-h-[280px] sm:min-h-[360px]"
+          className={`vz-panel relative min-h-0 overflow-auto ${
+            standalone ? "" : "min-h-[280px] sm:min-h-[360px]"
           } ${dragOver && !internalDrag ? "ring-2 ring-cp-orange" : ""}`}
           onDragEnter={(e) => {
             e.preventDefault();
@@ -901,7 +903,7 @@ export function FileManager({ title }: { title: string }) {
           )}
         </div>
 
-        <div className="space-y-2">
+        <div className={`space-y-2 ${standalone ? "min-h-0 lg:overflow-auto" : ""}`}>
           <form className="vz-panel space-y-1.5 p-2" onSubmit={onCreateFolder}>
             <p className="text-[10px] font-semibold uppercase tracking-wide text-cp-muted">Nouveau dossier</p>
             <input className="vz-input !px-2 !py-1 !text-xs" name="name" placeholder="nom" required />
