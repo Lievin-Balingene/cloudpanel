@@ -257,19 +257,34 @@ if [[ -n "$PORTS_SRC" ]]; then
     fi
   fi
   PORTS_TMP="$(mktemp)"
+  # TLS sur ports dédiés (audit : plus de HTTP clair 9082/9086)
+  PANEL_TLS="${VZONE_PANEL_TLS:-0}"
+  LISTEN_SSL=""
+  SSL_BLOCK=""
+  if [[ "$PANEL_TLS" == "1" || "$PANEL_TLS" == "true" || "$PANEL_TLS" == "yes" ]]; then
+    LISTEN_SSL=" ssl"
+    SSL_BLOCK="ssl_certificate ${CERT}; ssl_certificate_key ${KEY}; ssl_protocols TLSv1.2 TLSv1.3; ssl_prefer_server_ciphers off; ssl_session_cache shared:VzoneSSL:10m; ssl_session_timeout 1d;"
+    echo "[vzone] Ports panel en HTTPS (VZONE_PANEL_TLS=1, cert=${CERT})"
+  else
+    echo "[vzone] Ports panel en HTTP — activez: VZONE_PANEL_TLS=1 + harden-panel-security.sh"
+  fi
+  # Escape for sed replacement (& and \)
+  SSL_BLOCK_ESC="$(printf '%s' "$SSL_BLOCK" | sed -e 's/[&\\]/\\&/g')"
   sed -e "s/__VZONE_ADMIN_PORT__/${ADMIN_PORT}/g" \
       -e "s/__VZONE_CLIENT_PORT__/${CLIENT_PORT}/g" \
       -e "s/__VZONE_WEBMAIL_PORT__/${WEBMAIL_PORT}/g" \
       -e "s/__PANEL_BACKEND_HOST__/${BACKEND_HOST}/g" \
+      -e "s/__LISTEN_SSL__/${LISTEN_SSL}/g" \
+      -e "s|__SSL_BLOCK__|${SSL_BLOCK_ESC}|g" \
       "$PORTS_SRC" > "$PORTS_TMP"
-  if grep -q '__PANEL_BACKEND_HOST__' "$PORTS_TMP"; then
-    echo "[vzone] ERREUR: placeholder PANEL_BACKEND_HOST non remplacé" >&2
+  if grep -qE '__PANEL_BACKEND_HOST__|__LISTEN_SSL__|__SSL_BLOCK__' "$PORTS_TMP"; then
+    echo "[vzone] ERREUR: placeholder ports non remplacé" >&2
     rm -f "$PORTS_TMP"
     exit 1
   fi
   install -m 644 "$PORTS_TMP" /etc/nginx/conf.d/zz-vzone-ports.conf
   rm -f "$PORTS_TMP"
-  echo "[vzone] Ports installés → zz-vzone-ports.conf (backend Host=${BACKEND_HOST})"
+  echo "[vzone] Ports installés → zz-vzone-ports.conf (backend Host=${BACKEND_HOST} tls=${PANEL_TLS})"
 fi
 
 # Firewall ports panel

@@ -19,6 +19,7 @@ ALLOWED = {
     "dkim": "repair-dkim.sh",
     "roundcube": "repair-roundcube.sh",
     "mail-auth": "repair-mail-auth.sh",
+    "panel-security": "harden-panel-security.sh",
     "mail-reputation": "repair-mail-reputation.sh",
     "frontend": "repair-frontend.sh",
     "api-502": "repair-api-502.sh",

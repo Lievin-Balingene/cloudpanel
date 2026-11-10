@@ -43,6 +43,13 @@ REPAIR_CATALOG: dict[str, dict] = {
         "category": "mail",
         "risk": "safe",
     },
+    "panel-security": {
+        "script": "harden-panel-security.sh",
+        "title": "Durcissement sécurité panel",
+        "description": "HTTPS 9082/9086, cookies Secure, SSH harden, retire ubuntu NOPASSWD:ALL.",
+        "category": "security",
+        "risk": "caution",
+    },
     "mail-reputation": {
         "script": "repair-mail-reputation.sh",
         "title": "Réparer réputation mail",

@@ -15,9 +15,24 @@ SESSION_COOKIE_SECURE = _ssl
 CSRF_COOKIE_SECURE = _ssl
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
+_csrf_hosts = [h for h in ALLOWED_HOSTS if h not in {"*", "localhost", "127.0.0.1"}]  # noqa: F405
+_admin_port = env("VZONE_ADMIN_PORT", "9086")  # noqa: F405
+_client_port = env("VZONE_CLIENT_PORT", "9082")  # noqa: F405
+_default_csrf = []
+for _h in _csrf_hosts:
+    _default_csrf.extend(
+        [
+            f"https://{_h}",
+            f"http://{_h}",
+            f"https://{_h}:{_admin_port}",
+            f"https://{_h}:{_client_port}",
+            f"http://{_h}:{_admin_port}",
+            f"http://{_h}:{_client_port}",
+        ]
+    )
 CSRF_TRUSTED_ORIGINS = env_list(  # noqa: F405
     "VZONE_CSRF_TRUSTED_ORIGINS",
-    ",".join(f"http://{h}" for h in ALLOWED_HOSTS if h not in {"*", "localhost", "127.0.0.1"}),  # noqa: F405
+    ",".join(_default_csrf),
 )
 
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"

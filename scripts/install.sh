@@ -148,6 +148,8 @@ VZONE_FTP_AUTH_SECRET=${FTP_SECRET}
 VZONE_LINUX_USER_PROVISION=auto
 VZONE_TERMINAL_FALLBACK_SAME_UID=false
 VZONE_SECURE_SSL_REDIRECT=false
+VZONE_PANEL_TLS=1
+VZONE_FORCE_SECURE_COOKIES=1
 VZONE_VERSION=${VZONE_VERSION}
 VZONE_ADMIN_PORT=${VZONE_ADMIN_PORT:-9086}
 VZONE_CLIENT_PORT=${VZONE_CLIENT_PORT:-9082}
@@ -258,24 +260,42 @@ PY
   WEBMAIL_PORT="${VZONE_WEBMAIL_PORT:-9095}"
   cat > /etc/vzone/install-info.txt <<EOF
 version=${VZONE_VERSION}
-url_admin=http://${HOST_IP}:${ADMIN_PORT}/
-url_client=http://${HOST_IP}:${CLIENT_PORT}/
-url_webmail=http://${HOST_IP}:${WEBMAIL_PORT}/
+url_admin=https://${HOST_IP}:${ADMIN_PORT}/
+url_client=https://${HOST_IP}:${CLIENT_PORT}/
+url_webmail=https://${HOST_IP}:${WEBMAIL_PORT}/
 admin_user=admin
 admin_email=${ADMIN_EMAIL}
 admin_temp_password=${ADMIN_PASS}
+note=Mot de passe panel DISTINCT du root SSH — changez-le à la 1ère connexion
 installed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 bootstrap=post-install-bootstrap.sh
 EOF
   chmod 600 /etc/vzone/install-info.txt
+  # Copie credentials séparées (audit secrets)
+  install -m 600 /dev/null /etc/vzone/admin-credentials.txt 2>/dev/null || true
+  cat > /etc/vzone/admin-credentials.txt <<EOF
+username=admin
+email=${ADMIN_EMAIL}
+temp_password=${ADMIN_PASS}
+must_change_password=true
+note=Ne jamais réutiliser le mot de passe root SSH
+EOF
+  chmod 600 /etc/vzone/admin-credentials.txt
+
+  # Durcissement jour 0 (SSH, ubuntu sudo, TLS) — sans re-rotation (déjà ADMIN_PASS)
+  if [[ -f "${SCRIPT_DIR}/harden-panel-security.sh" ]]; then
+    log "Durcissement sécurité (TLS / SSH / sudo ubuntu)"
+    bash "${SCRIPT_DIR}/harden-panel-security.sh" || warn_bootstrap
+  fi
 
   echo
   echo "============================================================"
   echo " Installation terminée (modules + réparations inclus)."
   echo "============================================================"
-  echo " Admin (WHM)          : http://${HOST_IP}:${ADMIN_PORT}/"
-  echo " Client (panel)       : http://${HOST_IP}:${CLIENT_PORT}/"
-  echo " Webmail              : http://${HOST_IP}:${WEBMAIL_PORT}/"
+  echo " Admin (WHM)          : https://${HOST_IP}:${ADMIN_PORT}/"
+  echo " Client (panel)       : https://${HOST_IP}:${CLIENT_PORT}/"
+  echo " Webmail              : https://${HOST_IP}:${WEBMAIL_PORT}/"
+  echo " Credentials admin    : /etc/vzone/admin-credentials.txt"
   echo " (Le port 80 sur l'IP publique = Access Denied — normal)"
   echo " Utilisateur admin    : admin"
   echo " Mot de passe temp.   : ${ADMIN_PASS}"

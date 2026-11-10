@@ -247,11 +247,24 @@ fi
 install -m 755 "${REPO_DIR}/scripts/vzone-postgresql-ensure.sh" /usr/local/sbin/vzone-postgresql-ensure
 install -m 644 "${VZONE_ROOT}/deploy/systemd/vzone-postgresql.service" /etc/systemd/system/vzone-postgresql.service
 
+# Active TLS panel par défaut (ports 9082/9086 en HTTPS) si non défini
+if [[ -f /etc/vzone/vzone.env ]]; then
+  grep -q '^VZONE_PANEL_TLS=' /etc/vzone/vzone.env 2>/dev/null \
+    || echo "VZONE_PANEL_TLS=1" >> /etc/vzone/vzone.env
+  grep -q '^VZONE_FORCE_SECURE_COOKIES=' /etc/vzone/vzone.env 2>/dev/null \
+    || echo "VZONE_FORCE_SECURE_COOKIES=1" >> /etc/vzone/vzone.env
+fi
+
 bash "${REPO_DIR}/scripts/ensure-nginx.sh" "${VZONE_ROOT}/deploy/nginx/vzone.conf"
 
 # Appliquer vhosts SSL + ouvrir 443 + reload
 if [[ -f "${REPO_DIR}/scripts/ensure-https.sh" ]]; then
   bash "${REPO_DIR}/scripts/ensure-https.sh" || echo "[vzone] Avertissement: ensure-https.sh a échoué"
+fi
+
+# Durcissement idempotent (SSH, ubuntu sudo, redis, server_tokens) — pas de rotation MDP
+if [[ -f "${REPO_DIR}/scripts/harden-panel-security.sh" ]]; then
+  bash "${REPO_DIR}/scripts/harden-panel-security.sh" || echo "[vzone] Avertissement: harden-panel-security.sh a échoué"
 fi
 
 # Vérifier que le default_server panel est bien actif
