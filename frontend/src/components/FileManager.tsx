@@ -2,22 +2,23 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { useLocation } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Folder,
-  FileText,
-  Upload,
-  Trash2,
-  Copy,
-  ClipboardPaste,
-  Scissors,
   Archive,
-  Search,
-  RefreshCw,
   ChevronRight,
+  ClipboardPaste,
+  Copy,
+  Download,
+  Eye,
+  EyeOff,
   FilePlus2,
   FolderPlus,
-  Pencil,
-  Download,
+  PanelLeftClose,
+  PanelLeft,
+  RefreshCw,
+  Scissors,
+  Search,
   Shield,
+  Trash2,
+  Upload,
 } from "lucide-react";
 import { apiRequest, ApiClientError } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
@@ -30,34 +31,24 @@ import {
   UPLOAD_MSG,
 } from "@/lib/fileUpload";
 import { openEditTab } from "@/lib/fileEditor";
-
-interface FileEntry {
-  name: string;
-  path: string;
-  is_dir: boolean;
-  size: number;
-  modified_at: string;
-  permissions: string;
-  mode: number;
-  mime: string | null;
-  is_text: boolean;
-}
-
-interface Listing {
-  cwd: string;
-  root: string;
-  entries: FileEntry[];
-}
-
-type ClipMode = "copy" | "cut" | null;
-
-type ConfirmState = {
-  title: string;
-  message: string;
-  confirmLabel?: string;
-  danger?: boolean;
-  onConfirm: () => void | Promise<void>;
-};
+import { ContextMenu } from "@/components/file-manager/ContextMenu";
+import { DirectoryTree } from "@/components/file-manager/DirectoryTree";
+import {
+  FileTypeIcon,
+  isArchiveEntry,
+  isEditableEntry,
+  isImageEntry,
+} from "@/components/file-manager/fileIcons";
+import { PreviewModal } from "@/components/file-manager/PreviewModal";
+import type {
+  ClipMode,
+  ConfirmState,
+  ContextMenuState,
+  FileEntry,
+  Listing,
+  SortDir,
+  SortKey,
+} from "@/components/file-manager/types";
 
 function ConfirmDialog({
   state,
@@ -79,7 +70,7 @@ function ConfirmDialog({
         <h2 id="confirm-title" className="text-base font-semibold text-cp-text">
           {state.title}
         </h2>
-        <p className="mt-2 text-sm text-cp-muted whitespace-pre-wrap">{state.message}</p>
+        <p className="mt-2 whitespace-pre-wrap text-sm text-cp-muted">{state.message}</p>
         <div className="mt-4 flex justify-end gap-2">
           <button type="button" className="vz-btn-ghost" disabled={busy} onClick={onCancel}>
             Annuler
@@ -96,6 +87,20 @@ function ConfirmDialog({
       </div>
     </div>
   );
+}
+
+function sortEntries(entries: FileEntry[], key: SortKey, dir: SortDir) {
+  const mul = dir === "asc" ? 1 : -1;
+  return [...entries].sort((a, b) => {
+    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+    let cmp = 0;
+    if (key === "name") cmp = a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+    else if (key === "size") cmp = a.size - b.size;
+    else if (key === "modified")
+      cmp = new Date(a.modified_at).getTime() - new Date(b.modified_at).getTime();
+    else cmp = a.permissions.localeCompare(b.permissions);
+    return cmp * mul;
+  });
 }
 
 export function FileManager({ title }: { title: string }) {
@@ -120,12 +125,22 @@ export function FileManager({ title }: { title: string }) {
   const [renameOpen, setRenameOpen] = useState(false);
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [internalDrag, setInternalDrag] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
+  const [showTree, setShowTree] = useState(true);
+  const [sortKey, setSortKey] = useState<SortKey>("name");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [previewEntry, setPreviewEntry] = useState<FileEntry | null>(null);
+  const [createFolderOpen, setCreateFolderOpen] = useState(false);
+  const [createFileOpen, setCreateFileOpen] = useState(false);
   const dragDepth = useRef(0);
   const lastClickedRef = useRef<string | null>(null);
 
   const accessToken = useAuthStore((s) => s.accessToken);
   const authHydrated = useAuthStore((s) => s._hasHydrated);
   const tokenReady = Boolean(accessToken && authHydrated);
+  const standalone = location.pathname.includes("/fm");
+
   const { data, isLoading, isFetching, isError, error: queryError, refetch } = useQuery({
     queryKey: ["files", cwd],
     queryFn: () => apiRequest<Listing>(`/files/?path=${encodeURIComponent(cwd)}`),
@@ -134,6 +149,7 @@ export function FileManager({ title }: { title: string }) {
     staleTime: 15_000,
     retry: 2,
   });
+
   const listError =
     error ||
     (isError
@@ -142,17 +158,25 @@ export function FileManager({ title }: { title: string }) {
         : "Impossible de charger le dossier."
       : null);
 
-  const entryPaths = useMemo(
-    () => (data?.entries ?? []).map((e) => e.path),
-    [data?.entries],
-  );
+  const visibleEntries = useMemo(() => {
+    const raw = data?.entries ?? [];
+    const filtered = showHidden ? raw : raw.filter((e) => !e.name.startsWith("."));
+    return sortEntries(filtered, sortKey, sortDir);
+  }, [data?.entries, showHidden, sortKey, sortDir]);
+
+  const entryPaths = useMemo(() => visibleEntries.map((e) => e.path), [visibleEntries]);
   const allSelected =
     entryPaths.length > 0 && entryPaths.every((p) => selected.includes(p));
   const someSelected = selected.some((p) => entryPaths.includes(p));
+  const selectedEntries = useMemo(
+    () => visibleEntries.filter((e) => selected.includes(e.path)),
+    [visibleEntries, selected],
+  );
 
   useEffect(() => {
     setSelected([]);
     lastClickedRef.current = null;
+    setContextMenu(null);
   }, [cwd]);
 
   useEffect(() => {
@@ -207,6 +231,7 @@ export function FileManager({ title }: { title: string }) {
     },
     [launchUpload],
   );
+
   const crumbs = useMemo(() => {
     const parts = cwd ? cwd.split("/").filter(Boolean) : [];
     const items = [{ label: "home", path: "" }];
@@ -239,9 +264,7 @@ export function FileManager({ title }: { title: string }) {
     [qc],
   );
 
-  const askConfirm = useCallback((state: ConfirmState) => {
-    setConfirm(state);
-  }, []);
+  const askConfirm = useCallback((state: ConfirmState) => setConfirm(state), []);
 
   const handleConfirm = useCallback(async () => {
     if (!confirm) return;
@@ -250,7 +273,7 @@ export function FileManager({ title }: { title: string }) {
       await confirm.onConfirm();
       setConfirm(null);
     } catch {
-      /* erreur déjà affichée via run */
+      /* déjà affiché */
     } finally {
       setConfirmBusy(false);
     }
@@ -272,13 +295,7 @@ export function FileManager({ title }: { title: string }) {
   };
 
   function launchEditor(entry: FileEntry) {
-    if (entry.is_dir) return;
-    if (
-      !entry.is_text &&
-      !entry.name.match(
-        /\.(txt|html?|css|js|json|md|py|php|env|conf|ini|yml|yaml|xml|sh|sql|log|csv|ts|tsx|jsx|vue|rb|go|rs|toml|cfg|htaccess)$/i,
-      )
-    ) {
+    if (!isEditableEntry(entry)) {
       setError("Édition texte non disponible pour ce type de fichier.");
       return;
     }
@@ -290,9 +307,9 @@ export function FileManager({ title }: { title: string }) {
     }
   }
 
-  function requestDelete() {
-    if (!selected.length) return;
-    const names = selected.map((p) => p.split("/").pop() || p);
+  function requestDelete(paths = selected) {
+    if (!paths.length) return;
+    const names = paths.map((p) => p.split("/").pop() || p);
     const preview =
       names.length <= 5
         ? names.map((n) => `• ${n}`).join("\n")
@@ -302,24 +319,24 @@ export function FileManager({ title }: { title: string }) {
             .join("\n")}\n… et ${names.length - 5} autre(s)`;
     askConfirm({
       title: "Supprimer",
-      message: `Supprimer définitivement ${selected.length} élément(s) ?\n\n${preview}`,
+      message: `Supprimer définitivement ${paths.length} élément(s) ?\n\n${preview}`,
       confirmLabel: "Supprimer",
       danger: true,
       onConfirm: async () => {
         await run(() =>
           apiRequest("/files/delete/", {
             method: "POST",
-            body: JSON.stringify({ paths: selected }),
+            body: JSON.stringify({ paths }),
           }),
         );
       },
     });
   }
 
-  function requestRename() {
-    if (selected.length !== 1) return;
-    const current = selected[0].split("/").pop() || selected[0];
-    setRenameValue(current);
+  function requestRename(path = selected[0]) {
+    if (!path) return;
+    setSelected([path]);
+    setRenameValue(path.split("/").pop() || path);
     setRenameOpen(true);
   }
 
@@ -365,20 +382,16 @@ export function FileManager({ title }: { title: string }) {
     const multi = e.ctrlKey || e.metaKey;
     const paths = entryPaths;
     const idx = paths.indexOf(path);
-
     if (e.shiftKey && lastClickedRef.current) {
       const start = paths.indexOf(lastClickedRef.current);
       if (start >= 0 && idx >= 0) {
         const lo = Math.min(start, idx);
         const hi = Math.max(start, idx);
         const range = paths.slice(lo, hi + 1);
-        setSelected((prev) =>
-          multi ? Array.from(new Set([...prev, ...range])) : range,
-        );
+        setSelected((prev) => (multi ? Array.from(new Set([...prev, ...range])) : range));
         return;
       }
     }
-
     lastClickedRef.current = path;
     setSelected((prev) => {
       if (multi) {
@@ -403,8 +416,16 @@ export function FileManager({ title }: { title: string }) {
     setSelected((prev) => Array.from(new Set([...prev, ...entryPaths])));
   }
 
-  async function downloadSelected() {
-    const files = (data?.entries ?? []).filter((e) => selected.includes(e.path) && !e.is_dir);
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  }
+
+  async function downloadSelected(paths = selected) {
+    const files = (data?.entries ?? []).filter((e) => paths.includes(e.path) && !e.is_dir);
     for (const file of files) {
       const response = await fetch(
         `/api/v1/files/download/?path=${encodeURIComponent(file.path)}`,
@@ -439,6 +460,7 @@ export function FileManager({ title }: { title: string }) {
       }),
     );
     e.currentTarget.reset();
+    setCreateFolderOpen(false);
   }
 
   function onCreateFile(e: FormEvent<HTMLFormElement>) {
@@ -453,38 +475,118 @@ export function FileManager({ title }: { title: string }) {
       }),
     );
     e.currentTarget.reset();
+    setCreateFileOpen(false);
   }
 
-  const standalone = location.pathname.includes("/fm");
+  function openEntry(entry: FileEntry) {
+    if (entry.is_dir) {
+      setCwd(entry.path);
+      setSelected([]);
+      return;
+    }
+    if (isImageEntry(entry)) {
+      setPreviewEntry(entry);
+      return;
+    }
+    if (isEditableEntry(entry)) launchEditor(entry);
+    else void downloadSelected([entry.path]);
+  }
+
+  useEffect(() => {
+    if (!standalone) return;
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (selected.length) {
+          e.preventDefault();
+          requestDelete();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+        e.preventDefault();
+        setSelected(entryPaths);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") {
+        if (selected.length) setClipboard({ mode: "copy", paths: selected });
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "x") {
+        if (selected.length) setClipboard({ mode: "cut", paths: selected });
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") {
+        if (clipboard.mode && clipboard.paths.length) {
+          void run(async () => {
+            const endpoint = clipboard.mode === "cut" ? "/files/move/" : "/files/copy/";
+            await apiRequest(endpoint, {
+              method: "POST",
+              body: JSON.stringify({ paths: clipboard.paths, destination: cwd }),
+            });
+            setClipboard({ mode: null, paths: [] });
+          });
+        }
+      } else if (e.key === "F2" && selected.length === 1) {
+        e.preventDefault();
+        requestRename();
+      } else if (e.key === "Enter" && selected.length === 1) {
+        const entry = visibleEntries.find((x) => x.path === selected[0]);
+        if (entry) openEntry(entry);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [standalone, selected, clipboard, cwd, entryPaths, visibleEntries]);
+
+  const contextEntry =
+    contextMenu &&
+    (data?.entries.find((e) => e.path === contextMenu.path) ||
+      visibleEntries.find((e) => e.path === contextMenu.path));
+
+  const totalBytes = visibleEntries.reduce((acc, e) => acc + (e.is_dir ? 0 : e.size), 0);
 
   return (
     <div
       className={`animate-fade-up ${
-        standalone ? "flex h-full min-h-0 flex-col gap-2" : "space-y-2"
+        standalone ? "flex h-full min-h-0 flex-col gap-1.5" : "space-y-2"
       }`}
     >
       <div className="vz-panel flex shrink-0 flex-wrap items-center justify-between gap-2 px-3 py-2">
-        <div>
+        <div className="min-w-0">
           <h1 className="text-base font-semibold leading-tight">{title}</h1>
-          <p className="text-[11px] text-cp-muted">
+          <p className="truncate text-[11px] text-cp-muted">
             {data?.root ? (
               <>
                 Racine : <span className="font-mono text-cp-text">{data.root}</span>
               </>
             ) : (
-              "Envoyez, modifiez et organisez vos fichiers"
+              "Parcourir, éditer et organiser comme sur cPanel"
             )}
           </p>
         </div>
-        <button
-          type="button"
-          className="vz-btn-ghost vz-btn-sm"
-          onClick={() => void refetch()}
-          disabled={isFetching || !tokenReady}
-        >
-          <RefreshCw className={`h-3 w-3 ${isFetching ? "animate-spin" : ""}`} />
-          Actualiser
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            className="vz-btn-ghost vz-btn-sm"
+            onClick={() => setShowTree((v) => !v)}
+            title={showTree ? "Masquer l'arbre" : "Afficher l'arbre"}
+          >
+            {showTree ? <PanelLeftClose className="h-3.5 w-3.5" /> : <PanelLeft className="h-3.5 w-3.5" />}
+          </button>
+          <button
+            type="button"
+            className="vz-btn-ghost vz-btn-sm"
+            onClick={() => setShowHidden((v) => !v)}
+            title={showHidden ? "Masquer les fichiers cachés" : "Afficher les fichiers cachés"}
+          >
+            {showHidden ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+            <span className="vz-label-sm">{showHidden ? "Masquer ." : "Afficher ."}</span>
+          </button>
+          <button
+            type="button"
+            className="vz-btn-ghost vz-btn-sm"
+            onClick={() => void refetch()}
+            disabled={isFetching || !tokenReady}
+          >
+            <RefreshCw className={`h-3 w-3 ${isFetching ? "animate-spin" : ""}`} />
+            Actualiser
+          </button>
+        </div>
       </div>
 
       {listError ? (
@@ -503,7 +605,7 @@ export function FileManager({ title }: { title: string }) {
         </div>
       ) : null}
 
-      <div className="vz-panel flex flex-wrap items-center gap-0.5 px-2 py-1 text-xs">
+      <div className="vz-panel flex shrink-0 flex-wrap items-center gap-0.5 px-2 py-1 text-xs">
         {crumbs.map((c, idx) => (
           <span key={c.path || "root"} className="inline-flex items-center gap-0.5">
             {idx > 0 && <ChevronRight className="h-3 w-3 text-cp-muted" />}
@@ -518,38 +620,43 @@ export function FileManager({ title }: { title: string }) {
         ))}
       </div>
 
-      <div className="vz-panel flex flex-wrap items-center gap-1.5 px-2 py-2 sm:gap-1 sm:py-1.5">
-        <button
-          type="button"
-          className="vz-btn-primary vz-btn-sm"
-          onClick={() => launchUpload(cwd)}
-          title="Ouvre un nouvel onglet pour suivre l'upload"
-        >
-          <Upload className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
+      <div className="vz-panel flex shrink-0 flex-wrap items-center gap-1 px-2 py-1.5">
+        <button type="button" className="vz-btn-primary vz-btn-sm" onClick={() => launchUpload(cwd)}>
+          <Upload className="h-3.5 w-3.5" />
           <span className="vz-label-sm">Upload</span>
         </button>
         <button
           type="button"
           className="vz-btn-ghost vz-btn-sm"
           onClick={() => launchUpload(cwd, { preferFolder: true })}
-          title="Ouvre un nouvel onglet pour envoyer un dossier"
         >
-          <FolderPlus className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
+          <FolderPlus className="h-3.5 w-3.5" />
           <span className="vz-label-sm">Dossier</span>
         </button>
-        {selected.length > 0 && (
-          <span className="ml-0.5 mr-0.5 text-[11px] font-medium text-cp-muted">
-            {selected.length} sél.
-          </span>
-        )}
+        <button
+          type="button"
+          className="vz-btn-ghost vz-btn-sm"
+          onClick={() => setCreateFolderOpen(true)}
+        >
+          <FolderPlus className="h-3.5 w-3.5" />
+          <span className="vz-label-sm">Nouveau</span>
+        </button>
+        <button
+          type="button"
+          className="vz-btn-ghost vz-btn-sm"
+          onClick={() => setCreateFileOpen(true)}
+        >
+          <FilePlus2 className="h-3.5 w-3.5" />
+          <span className="vz-label-sm">Fichier</span>
+        </button>
+        <span className="mx-0.5 h-4 w-px bg-cp-border" />
         <button
           type="button"
           className="vz-btn-ghost vz-btn-sm"
           disabled={!selected.length}
           onClick={() => setClipboard({ mode: "copy", paths: selected })}
-          title="Copier"
         >
-          <Copy className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
+          <Copy className="h-3.5 w-3.5" />
           <span className="vz-label-sm">Copier</span>
         </button>
         <button
@@ -557,16 +664,14 @@ export function FileManager({ title }: { title: string }) {
           className="vz-btn-ghost vz-btn-sm"
           disabled={!selected.length}
           onClick={() => setClipboard({ mode: "cut", paths: selected })}
-          title="Couper"
         >
-          <Scissors className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
+          <Scissors className="h-3.5 w-3.5" />
           <span className="vz-label-sm">Couper</span>
         </button>
         <button
           type="button"
           className="vz-btn-ghost vz-btn-sm"
           disabled={!clipboard.mode || !clipboard.paths.length}
-          title="Coller"
           onClick={() =>
             void run(async () => {
               const endpoint = clipboard.mode === "cut" ? "/files/move/" : "/files/copy/";
@@ -578,24 +683,22 @@ export function FileManager({ title }: { title: string }) {
             })
           }
         >
-          <ClipboardPaste className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
+          <ClipboardPaste className="h-3.5 w-3.5" />
           <span className="vz-label-sm">Coller</span>
         </button>
         <button
           type="button"
           className="vz-btn-ghost vz-btn-sm"
           disabled={!selected.length}
-          onClick={requestDelete}
-          title="Supprimer"
+          onClick={() => requestDelete()}
         >
-          <Trash2 className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
+          <Trash2 className="h-3.5 w-3.5" />
           <span className="vz-label-sm">Supprimer</span>
         </button>
         <button
           type="button"
           className="vz-btn-ghost vz-btn-sm"
           disabled={!selected.length}
-          title="Zip"
           onClick={() =>
             void run(() =>
               apiRequest("/files/compress/", {
@@ -609,64 +712,66 @@ export function FileManager({ title }: { title: string }) {
             )
           }
         >
-          <Archive className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
+          <Archive className="h-3.5 w-3.5" />
           <span className="vz-label-sm">Zip</span>
         </button>
         <button
           type="button"
           className="vz-btn-ghost vz-btn-sm"
-          disabled={!selected.length}
+          disabled={!selectedEntries.some((e) => !e.is_dir)}
           onClick={() => void downloadSelected()}
-          title="Télécharger"
         >
-          <Download className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
+          <Download className="h-3.5 w-3.5" />
           <span className="vz-label-sm">Télécharger</span>
         </button>
         <button
           type="button"
           className="vz-btn-ghost vz-btn-sm"
           disabled={selected.length !== 1}
-          title="chmod"
           onClick={() => {
-            const path = selected[0];
-            setChmodPath(path);
-            const entry = data?.entries.find((e) => e.path === path);
-            if (entry) setChmodMode(entry.mode.toString(8).padStart(3, "0"));
+            if (selected[0]) {
+              setChmodPath(selected[0]);
+              setChmodMode("644");
+            }
           }}
         >
-          <Shield className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
+          <Shield className="h-3.5 w-3.5" />
           <span className="vz-label-sm">chmod</span>
         </button>
         <form
-          className="flex w-full gap-1 sm:ml-auto sm:w-auto"
+          className="ml-auto flex min-w-[140px] flex-1 gap-1 sm:max-w-[16rem]"
           onSubmit={(e) => {
             e.preventDefault();
             searchMutation.mutate();
           }}
         >
           <input
-            className="vz-input !px-2 !py-1.5 !text-xs w-full min-w-0 sm:w-36 sm:!py-1"
+            className="vz-input !px-2 !py-1 !text-xs w-full"
             placeholder="Rechercher…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
           <button className="vz-btn-ghost vz-btn-sm shrink-0" type="submit" title="Rechercher">
-            <Search className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
+            <Search className="h-3.5 w-3.5" />
           </button>
         </form>
       </div>
 
       <div
-        className={`grid gap-2 ${
-          standalone
-            ? "min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] lg:grid-cols-[minmax(0,1fr)_11rem] lg:grid-rows-[minmax(0,1fr)]"
-            : "lg:grid-cols-[1fr_180px]"
-        }`}
+        className={`grid min-h-0 overflow-hidden rounded-lg border border-cp-border bg-white dark:border-ink-800 dark:bg-ink-950 ${
+          standalone ? "flex-1" : "min-h-[360px]"
+        } ${showTree ? "grid-cols-1 md:grid-cols-[200px_minmax(0,1fr)]" : "grid-cols-1"}`}
       >
+        {showTree && (
+          <div className="hidden min-h-0 md:block">
+            <DirectoryTree cwd={cwd} onNavigate={setCwd} enabled={tokenReady} />
+          </div>
+        )}
+
         <div
-          className={`vz-panel relative min-h-0 overflow-auto ${
-            standalone ? "" : "min-h-[280px] sm:min-h-[360px]"
-          } ${dragOver && !internalDrag ? "ring-2 ring-cp-orange" : ""}`}
+          className={`relative min-h-0 overflow-auto ${
+            dragOver && !internalDrag ? "ring-2 ring-inset ring-cp-orange" : ""
+          }`}
           onDragEnter={(e) => {
             e.preventDefault();
             dragDepth.current += 1;
@@ -694,8 +799,7 @@ export function FileManager({ title }: { title: string }) {
             const internal = e.dataTransfer.getData("application/x-vzone-paths");
             if (internal) {
               try {
-                const paths = JSON.parse(internal) as string[];
-                void movePathsTo(paths, cwd);
+                void movePathsTo(JSON.parse(internal) as string[], cwd);
               } catch {
                 /* ignore */
               }
@@ -704,9 +808,10 @@ export function FileManager({ title }: { title: string }) {
             }
             void launchUploadJobs(cwd, () => collectDataTransferJobs(e.dataTransfer));
           }}
+          onClick={() => setContextMenu(null)}
         >
           <table className="min-w-full text-left text-xs">
-            <thead className="sticky top-0 bg-cp-canvas text-[10px] uppercase tracking-wide text-cp-muted dark:bg-ink-900">
+            <thead className="sticky top-0 z-10 bg-[#eef3f8] text-[10px] uppercase tracking-wide text-cp-muted dark:bg-ink-900">
               <tr>
                 <th className="w-8 px-1.5 py-1.5">
                   <input
@@ -717,14 +822,30 @@ export function FileManager({ title }: { title: string }) {
                       if (el) el.indeterminate = someSelected && !allSelected;
                     }}
                     onChange={toggleSelectAll}
-                    title="Tout sélectionner"
                     aria-label="Tout sélectionner"
                   />
                 </th>
-                <th className="px-2 py-1.5 font-semibold">Nom</th>
-                <th className="hidden w-20 px-2 py-1.5 font-semibold sm:table-cell">Taille</th>
-                <th className="hidden w-24 px-2 py-1.5 font-semibold md:table-cell">Perms</th>
-                <th className="hidden w-36 px-2 py-1.5 font-semibold md:table-cell">Modifié</th>
+                <th className="cursor-pointer px-2 py-1.5 font-semibold" onClick={() => toggleSort("name")}>
+                  Nom {sortKey === "name" ? (sortDir === "asc" ? "↑" : "↓") : ""}
+                </th>
+                <th
+                  className="hidden w-20 cursor-pointer px-2 py-1.5 font-semibold sm:table-cell"
+                  onClick={() => toggleSort("size")}
+                >
+                  Taille {sortKey === "size" ? (sortDir === "asc" ? "↑" : "↓") : ""}
+                </th>
+                <th
+                  className="hidden w-24 cursor-pointer px-2 py-1.5 font-semibold md:table-cell"
+                  onClick={() => toggleSort("perms")}
+                >
+                  Perms {sortKey === "perms" ? (sortDir === "asc" ? "↑" : "↓") : ""}
+                </th>
+                <th
+                  className="hidden w-36 cursor-pointer px-2 py-1.5 font-semibold md:table-cell"
+                  onClick={() => toggleSort("modified")}
+                >
+                  Modifié {sortKey === "modified" ? (sortDir === "asc" ? "↑" : "↓") : ""}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -733,13 +854,9 @@ export function FileManager({ title }: { title: string }) {
                   className={`cursor-pointer border-t border-cp-border/80 hover:bg-cp-orange-soft/40 dark:border-ink-800 ${
                     dropTargetPath === ".." ? "bg-cp-orange-soft/70 ring-1 ring-inset ring-cp-orange" : ""
                   }`}
-                  onDoubleClick={() => {
-                    const parent = cwd.split("/").slice(0, -1).join("/");
-                    setCwd(parent);
-                  }}
+                  onDoubleClick={() => setCwd(cwd.split("/").slice(0, -1).join("/"))}
                   onDragOver={(e) => {
                     e.preventDefault();
-                    e.stopPropagation();
                     setDropTargetPath("..");
                   }}
                   onDragLeave={() => setDropTargetPath((p) => (p === ".." ? null : p))}
@@ -755,24 +872,25 @@ export function FileManager({ title }: { title: string }) {
                       } catch {
                         /* ignore */
                       }
-                      return;
                     }
-                    void launchUploadJobs(parent, () => collectDataTransferJobs(e.dataTransfer));
                   }}
                 >
-                  <td className="px-2 py-1 font-medium" colSpan={5}>
+                  <td className="px-1.5 py-1" />
+                  <td className="px-2 py-1.5 font-medium text-cp-muted" colSpan={4}>
                     ..
                   </td>
                 </tr>
               )}
-              {(!tokenReady || (isLoading && !data)) && (
+
+              {tokenReady && isLoading && !data && (
                 <tr>
-                  <td className="px-2 py-6 text-center text-cp-muted" colSpan={5}>
+                  <td colSpan={5} className="px-3 py-8 text-center text-cp-muted">
                     Chargement du dossier…
                   </td>
                 </tr>
               )}
-              {tokenReady && !isLoading && !isError && (data?.entries ?? []).map((entry) => {
+
+              {visibleEntries.map((entry) => {
                 const active = selected.includes(entry.path);
                 const isDropTarget = dropTargetPath === entry.path && entry.is_dir;
                 return (
@@ -787,13 +905,11 @@ export function FileManager({ title }: { title: string }) {
                           : "hover:bg-cp-canvas dark:hover:bg-ink-900"
                     }`}
                     onClick={(e) => toggleSelect(entry.path, e)}
-                    onDoubleClick={() => {
-                      if (entry.is_dir) {
-                        setCwd(entry.path);
-                        setSelected([]);
-                      } else {
-                        launchEditor(entry);
-                      }
+                    onDoubleClick={() => openEntry(entry)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      if (!selected.includes(entry.path)) setSelected([entry.path]);
+                      setContextMenu({ x: e.clientX, y: e.clientY, path: entry.path });
                     }}
                     onDragStart={(e) => {
                       setInternalDrag(true);
@@ -857,13 +973,9 @@ export function FileManager({ title }: { title: string }) {
                         aria-label={`Sélectionner ${entry.name}`}
                       />
                     </td>
-                    <td className="max-w-[1px] truncate px-2 py-2 sm:py-1">
+                    <td className="max-w-[1px] truncate px-2 py-1.5">
                       <span className="inline-flex min-w-0 items-center gap-1.5">
-                        {entry.is_dir ? (
-                          <Folder className="h-3.5 w-3.5 shrink-0 text-cp-orange" />
-                        ) : (
-                          <FileText className="h-3.5 w-3.5 shrink-0 text-cp-link" />
-                        )}
+                        <FileTypeIcon entry={entry} />
                         <span className="truncate font-medium">{entry.name}</span>
                       </span>
                     </td>
@@ -887,85 +999,34 @@ export function FileManager({ title }: { title: string }) {
               })}
             </tbody>
           </table>
+
           {dragOver && !internalDrag && (
             <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-cp-orange/15 text-sm font-semibold text-cp-orange-dark">
               Déposez fichiers ou dossiers ici
             </div>
           )}
-          {tokenReady && !isLoading && !isError && data && !(data.entries?.length) && (
+          {tokenReady && !isLoading && !isError && data && visibleEntries.length === 0 && (
             <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center">
-              <Folder className="h-10 w-10 text-cp-orange/50" />
+              <FolderPlus className="h-10 w-10 text-cp-orange/50" />
               <p className="text-sm font-medium text-cp-text">Dossier vide</p>
               <p className="max-w-sm text-[12px] text-cp-muted">
-                Glissez-déposez des fichiers ici, ou utilisez Upload / Dossier.
+                Glissez-déposez des fichiers ici, ou utilisez Upload / Nouveau.
               </p>
             </div>
           )}
         </div>
+      </div>
 
-        <div className={`space-y-2 ${standalone ? "min-h-0 lg:overflow-auto" : ""}`}>
-          <form className="vz-panel space-y-1.5 p-2" onSubmit={onCreateFolder}>
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-cp-muted">Nouveau dossier</p>
-            <input className="vz-input !px-2 !py-1 !text-xs" name="name" placeholder="nom" required />
-            <button className="vz-btn-ghost vz-btn-sm w-full" type="submit">
-              <FolderPlus className="h-3 w-3" />
-              Créer
-            </button>
-          </form>
-          <form className="vz-panel space-y-1.5 p-2" onSubmit={onCreateFile}>
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-cp-muted">Nouveau fichier</p>
-            <input className="vz-input !px-2 !py-1 !text-xs" name="name" placeholder="index.html" required />
-            <button className="vz-btn-ghost vz-btn-sm w-full" type="submit">
-              <FilePlus2 className="h-3 w-3" />
-              Créer
-            </button>
-          </form>
-          {selected.length === 1 && (
-            <div className="vz-panel space-y-1 p-2">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-cp-muted">Actions</p>
-              <button
-                type="button"
-                className="vz-btn-ghost vz-btn-sm w-full"
-                onClick={() => {
-                  const entry = data?.entries.find((e) => e.path === selected[0]);
-                  if (entry && !entry.is_dir) launchEditor(entry);
-                }}
-              >
-                <Pencil className="h-3 w-3" />
-                Éditer
-              </button>
-              <button
-                type="button"
-                className="vz-btn-ghost vz-btn-sm w-full"
-                onClick={() => {
-                  const entry = data?.entries.find((e) => e.path === selected[0]);
-                  if (!entry) return;
-                  if (entry.name.match(/\.(zip|tar\.gz|tgz|tar)$/i)) {
-                    askConfirm({
-                      title: "Décompresser",
-                      message: `Décompresser « ${entry.name} » dans le dossier courant ?`,
-                      confirmLabel: "Décompresser",
-                      onConfirm: async () => {
-                        await run(() =>
-                          apiRequest("/files/decompress/", {
-                            method: "POST",
-                            body: JSON.stringify({ archive: entry.path, destination: cwd }),
-                          }),
-                        );
-                      },
-                    });
-                  }
-                }}
-              >
-                <Archive className="h-3 w-3" />
-                Décompresser
-              </button>
-              <button type="button" className="vz-btn-ghost vz-btn-sm w-full" onClick={requestRename}>
-                Renommer
-              </button>
-            </div>
-          )}
-        </div>
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-md border border-cp-border bg-[#f3f6fa] px-2 py-1 text-[10px] text-cp-muted dark:border-ink-800 dark:bg-ink-950">
+        <span>
+          {visibleEntries.length} élément(s)
+          {selected.length ? ` · ${selected.length} sélectionné(s)` : ""}
+          {clipboard.mode ? ` · presse-papiers (${clipboard.mode})` : ""}
+        </span>
+        <span>
+          Fichiers : {formatBytes(totalBytes)}
+          {standalone ? " · Raccourcis : Del · F2 · Ctrl+A/C/X/V" : ""}
+        </span>
       </div>
 
       {searchMutation.data && (
@@ -994,17 +1055,82 @@ export function FileManager({ title }: { title: string }) {
         </div>
       )}
 
+      {createFolderOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <form
+            className="w-full max-w-sm space-y-3 rounded border border-cp-border bg-white p-4 shadow-xl dark:border-ink-700 dark:bg-ink-950"
+            onSubmit={onCreateFolder}
+          >
+            <p className="font-semibold">Nouveau dossier</p>
+            <input className="vz-input" name="name" placeholder="nom" required autoFocus />
+            <div className="flex justify-end gap-2">
+              <button type="button" className="vz-btn-ghost" onClick={() => setCreateFolderOpen(false)}>
+                Annuler
+              </button>
+              <button className="vz-btn-primary" type="submit">
+                Créer
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {createFileOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <form
+            className="w-full max-w-sm space-y-3 rounded border border-cp-border bg-white p-4 shadow-xl dark:border-ink-700 dark:bg-ink-950"
+            onSubmit={onCreateFile}
+          >
+            <p className="font-semibold">Nouveau fichier</p>
+            <input className="vz-input" name="name" placeholder="index.html" required autoFocus />
+            <div className="flex justify-end gap-2">
+              <button type="button" className="vz-btn-ghost" onClick={() => setCreateFileOpen(false)}>
+                Annuler
+              </button>
+              <button className="vz-btn-primary" type="submit">
+                Créer
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {renameOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded border border-cp-border bg-white p-4 shadow-xl dark:border-ink-700 dark:bg-ink-950">
+            <p className="mb-3 font-semibold">Renommer</p>
+            <input
+              className="vz-input"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") confirmRename();
+              }}
+            />
+            <div className="mt-3 flex justify-end gap-2">
+              <button type="button" className="vz-btn-ghost" onClick={() => setRenameOpen(false)}>
+                Annuler
+              </button>
+              <button type="button" className="vz-btn-primary" onClick={confirmRename}>
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {chmodPath && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-sm rounded border border-cp-border bg-white p-4 shadow-xl dark:border-ink-700 dark:bg-ink-950">
             <p className="mb-3 font-semibold">Permissions — {chmodPath}</p>
             <input
-              className="vz-input mb-3"
+              className="vz-input font-mono"
               value={chmodMode}
               onChange={(e) => setChmodMode(e.target.value)}
-              placeholder="755"
+              placeholder="644"
             />
-            <div className="flex justify-end gap-2">
+            <div className="mt-3 flex justify-end gap-2">
               <button type="button" className="vz-btn-ghost" onClick={() => setChmodPath(null)}>
                 Annuler
               </button>
@@ -1016,42 +1142,56 @@ export function FileManager({ title }: { title: string }) {
         </div>
       )}
 
-      {renameOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-sm rounded border border-cp-border bg-white p-4 shadow-xl dark:border-ink-700 dark:bg-ink-950">
-            <p className="mb-3 font-semibold">Renommer</p>
-            <input
-              className="vz-input mb-3"
-              value={renameValue}
-              onChange={(e) => setRenameValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") confirmRename();
-              }}
-              autoFocus
-            />
-            <div className="flex justify-end gap-2">
-              <button type="button" className="vz-btn-ghost" onClick={() => setRenameOpen(false)}>
-                Annuler
-              </button>
-              <button
-                type="button"
-                className="vz-btn-primary"
-                disabled={!renameValue.trim()}
-                onClick={confirmRename}
-              >
-                Continuer
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {confirm && (
         <ConfirmDialog
           state={{ ...confirm, onConfirm: handleConfirm }}
           busy={confirmBusy}
-          onCancel={() => {
-            if (!confirmBusy) setConfirm(null);
+          onCancel={() => !confirmBusy && setConfirm(null)}
+        />
+      )}
+
+      {previewEntry && (
+        <PreviewModal
+          entry={previewEntry}
+          token={token}
+          onClose={() => setPreviewEntry(null)}
+          onDownload={() => void downloadSelected([previewEntry.path])}
+        />
+      )}
+
+      {contextMenu && contextEntry && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          entry={contextEntry}
+          onClose={() => setContextMenu(null)}
+          onAction={(action) => {
+            const entry = contextEntry;
+            if (action === "open") openEntry(entry);
+            else if (action === "edit") launchEditor(entry);
+            else if (action === "preview") setPreviewEntry(entry);
+            else if (action === "download") void downloadSelected([entry.path]);
+            else if (action === "copy") setClipboard({ mode: "copy", paths: [entry.path] });
+            else if (action === "cut") setClipboard({ mode: "cut", paths: [entry.path] });
+            else if (action === "rename") requestRename(entry.path);
+            else if (action === "chmod") {
+              setChmodPath(entry.path);
+              setChmodMode(entry.is_dir ? "755" : "644");
+            } else if (action === "extract" && isArchiveEntry(entry)) {
+              askConfirm({
+                title: "Décompresser",
+                message: `Décompresser « ${entry.name} » dans le dossier courant ?`,
+                confirmLabel: "Décompresser",
+                onConfirm: async () => {
+                  await run(() =>
+                    apiRequest("/files/decompress/", {
+                      method: "POST",
+                      body: JSON.stringify({ archive: entry.path, destination: cwd }),
+                    }),
+                  );
+                },
+              });
+            } else if (action === "delete") requestDelete([entry.path]);
           }}
         />
       )}

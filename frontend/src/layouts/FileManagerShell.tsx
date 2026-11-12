@@ -10,9 +10,18 @@ export function FileManagerShell() {
   const panelBase = resolvePanelBase(location.pathname);
   const panelHome = panelBase === "/whm" ? "/whm" : "/panel";
 
+  const isEditor = location.pathname.includes("/fm/edit");
+  const isUpload = location.pathname.includes("/fm/upload");
+  const shellTitle = isEditor
+    ? "Éditeur de code"
+    : isUpload
+      ? "Upload de fichiers"
+      : "Gestionnaire de fichiers";
+
   useEffect(() => {
-    document.title = `Gestionnaire de fichiers · ${BRAND}`;
-  }, []);
+    if (isEditor) return; // FileEditorPage gère le titre avec le nom du fichier
+    document.title = `${shellTitle} · ${BRAND}`;
+  }, [shellTitle, isEditor]);
 
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden bg-[#e8eef4] dark:bg-surface-dark">
@@ -29,9 +38,7 @@ export function FileManagerShell() {
             height={32}
           />
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold tracking-wide">
-              Gestionnaire de fichiers
-            </p>
+            <p className="truncate text-sm font-semibold tracking-wide">{shellTitle}</p>
             <p className="truncate text-[10px] uppercase tracking-[0.14em] text-white/60">
               {BRAND}
             </p>
