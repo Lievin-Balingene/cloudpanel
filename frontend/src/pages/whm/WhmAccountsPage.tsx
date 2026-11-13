@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -18,6 +18,7 @@ import {
   UserPlus,
 } from "lucide-react";
 import { apiRequest, apiRequestPaginated } from "@/lib/api";
+import { closeOpenedTab, navigateOpenedTab, openBlankTab } from "@/lib/openTab";
 import { cpanelPortalUrl } from "@/lib/portal";
 import { canCreateResellerAccount } from "@/lib/resellerAcl";
 import { useAuthStore } from "@/stores/auth";
@@ -125,6 +126,7 @@ export function WhmAccountsPage() {
   const [resetResult, setResetResult] = useState<ResetPasswordResult | null>(null);
   const [copiedPwd, setCopiedPwd] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const loginAsWinRef = useRef<Window | null>(null);
 
   useEffect(() => {
     const t = window.setTimeout(() => setQDebounced(q.trim()), 280);
@@ -265,13 +267,37 @@ export function WhmAccountsPage() {
     onSuccess: (data) => {
       setError(null);
       const url = cpanelPortalUrl(`/panel/sso?handoff=${encodeURIComponent(data.handoff)}`);
-      const win = window.open(url, "_blank", "noopener,noreferrer");
-      if (!win) {
-        setError("Autorisez les pop-ups pour ouvrir le panneau client (Login as).");
-      }
+      // Onglet déjà ouvert au clic (geste user) → pas de bloqueur de pop-ups
+      navigateOpenedTab(loginAsWinRef.current, url);
+      loginAsWinRef.current = null;
     },
-    onError: (err: Error) => setError(err.message || "Login as impossible."),
+    onError: (err: Error) => {
+      closeOpenedTab(loginAsWinRef.current);
+      loginAsWinRef.current = null;
+      setError(err.message || "Login as impossible.");
+    },
   });
+
+  function startLoginAs(userId: number) {
+    setError(null);
+    // Doit être synchrone dans le handler click
+    const win = openBlankTab();
+    if (!win) {
+      setError("Autorisez les pop-ups pour ouvrir le panneau client (Login as).");
+      return;
+    }
+    try {
+      win.document.write(
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Login as…</title></head>" +
+          "<body style=\"font:14px system-ui;padding:24px;color:#334\">Opening cPanel…</body></html>",
+      );
+      win.document.close();
+    } catch {
+      /* cross-origin / about:blank — ok */
+    }
+    loginAsWinRef.current = win;
+    loginAs.mutate(userId);
+  }
 
   const resetPassword = useMutation({
     mutationFn: ({ id, confirm_username }: { id: number; confirm_username: string }) =>
@@ -590,7 +616,7 @@ export function WhmAccountsPage() {
                             tone="accent"
                             size="sm"
                             disabled={loginAs.isPending}
-                            onClick={() => loginAs.mutate(u.id)}
+                            onClick={() => startLoginAs(u.id)}
                           >
                             <LogIn className="h-3.5 w-3.5" />
                           </IconAction>
