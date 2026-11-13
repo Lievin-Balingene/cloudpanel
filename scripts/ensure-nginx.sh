@@ -50,6 +50,8 @@ fi
 
 # www-data doit lire les clés SSL (sinon HTTPS → 500 nginx)
 usermod -aG ssl-cert www-data 2>/dev/null || true
+# API vzone lit /var/log/nginx/*.log (640 www-data:adm)
+usermod -aG adm "${VZONE_USER:-vzone}" 2>/dev/null || true
 chmod 644 /etc/ssl/certs/ssl-cert-snakeoil.pem 2>/dev/null || true
 chmod 640 /etc/ssl/private/ssl-cert-snakeoil.key 2>/dev/null || true
 chown root:ssl-cert /etc/ssl/private/ssl-cert-snakeoil.key 2>/dev/null || true

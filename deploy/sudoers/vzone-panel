@@ -55,3 +55,6 @@ vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-resourcectl *
 
 # Contrôle services WHM (start/stop/restart — allowlist dans le helper)
 vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-svcctl, /usr/local/sbin/vzone-svcctl *
+
+# Lecture journaux web (nginx 640 www-data:adm / OLS) — allowlist chemins dans le helper
+vzone ALL=(root) NOPASSWD: /usr/local/sbin/vzone-read-web-log, /usr/local/sbin/vzone-read-web-log *

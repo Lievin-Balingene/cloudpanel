@@ -38,6 +38,7 @@ install -m 755 "${REPO_DIR}/scripts/vzone-kill-port.sh" /usr/local/sbin/vzone-ki
 install -m 755 "${REPO_DIR}/scripts/vzone-smtp-restrictions.sh" /usr/local/sbin/vzone-smtp-restrictions
 install -m 755 "${REPO_DIR}/scripts/vzone-resourcectl.sh" /usr/local/sbin/vzone-resourcectl
 install -m 755 "${REPO_DIR}/scripts/vzone-svcctl.sh" /usr/local/sbin/vzone-svcctl
+install -m 755 "${REPO_DIR}/scripts/vzone-read-web-log.sh" /usr/local/sbin/vzone-read-web-log
 
 mkdir -p /var/lib/vzone/smtp-restrictions /var/lib/vzone/pulse/meta
 chmod 755 /var/lib/vzone/smtp-restrictions /var/lib/vzone/pulse /var/lib/vzone/pulse/meta
@@ -136,4 +137,7 @@ if id -u "${VZONE_USER}" >/dev/null 2>&1; then
   fi
 fi
 
-echo "[vzone] jail OK → mkhome + jailterm + rootterm + runas + fix-app-perms + kill-port + /etc/sudoers.d/vzone-panel"
+# vzone lit les access/error logs nginx (640 www-data:adm)
+usermod -aG adm "${VZONE_USER}" 2>/dev/null || true
+
+echo "[vzone] jail OK → mkhome + jailterm + rootterm + runas + fix-app-perms + kill-port + read-web-log + /etc/sudoers.d/vzone-panel"
