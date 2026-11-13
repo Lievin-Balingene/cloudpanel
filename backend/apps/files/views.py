@@ -12,7 +12,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework_simplejwt.authentication import JWTAuthentication
+from apps.accounts.authentication import VZoneJWTAuthentication
 
 from apps.files import services
 from apps.files.serializers import (
@@ -48,7 +48,7 @@ class CsrfExemptSessionAuthentication(SessionAuthentication):
 
 
 # JWT + session sans CSRF : évite 403 CSRF qui coupe parfois la connexion XHR.
-_UPLOAD_AUTH_WITH_SESSION = [JWTAuthentication, CsrfExemptSessionAuthentication]
+_UPLOAD_AUTH_WITH_SESSION = [VZoneJWTAuthentication, CsrfExemptSessionAuthentication]
 
 
 class FileListView(APIView):

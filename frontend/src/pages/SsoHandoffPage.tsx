@@ -1,19 +1,50 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
 import type { User } from "@/types";
 
+/** Lit le handoff depuis le fragment (#handoff=) — jamais envoyé au serveur HTTP. */
+function readHandoffFromHash(): string {
+  const raw = (window.location.hash || "").replace(/^#/, "");
+  if (!raw) return "";
+  const params = new URLSearchParams(raw.includes("=") ? raw : `handoff=${raw}`);
+  return (params.get("handoff") || params.get("token") || "").trim();
+}
+
+function clearHash() {
+  try {
+    const url = `${window.location.pathname}${window.location.search}`;
+    window.history.replaceState(null, "", url);
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Échange one-shot WHM Login as → session panneau client. */
 export function SsoHandoffPage() {
-  const [params] = useSearchParams();
   const navigate = useNavigate();
   const setSession = useAuthStore((s) => s.setSession);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const handoff = params.get("handoff") || params.get("token") || "";
+    // Compat query string (anciens liens) puis fragment
+    const qs = new URLSearchParams(window.location.search);
+    const fromQuery = (qs.get("handoff") || qs.get("token") || "").trim();
+    const handoff = readHandoffFromHash() || fromQuery;
+    clearHash();
+    if (fromQuery) {
+      try {
+        const clean = new URL(window.location.href);
+        clean.searchParams.delete("handoff");
+        clean.searchParams.delete("token");
+        clean.searchParams.delete("_");
+        window.history.replaceState(null, "", clean.pathname + clean.search + clean.hash);
+      } catch {
+        /* ignore */
+      }
+    }
     if (!handoff) {
       setError("Lien de connexion invalide.");
       return;
@@ -41,7 +72,7 @@ export function SsoHandoffPage() {
     return () => {
       cancelled = true;
     };
-  }, [params, setSession, navigate]);
+  }, [setSession, navigate]);
 
   return (
     <div className="flex min-h-[100dvh] items-center justify-center bg-[#e8eef4] p-6 dark:bg-surface-dark">

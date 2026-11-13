@@ -277,7 +277,8 @@ export function WhmAccountsPage() {
       }),
     onSuccess: (data) => {
       setError(null);
-      const url = cpanelPortalUrl(`/panel/sso?handoff=${encodeURIComponent(data.handoff)}`);
+      // Fragment (#handoff=) : non envoyé aux logs HTTP / Referer
+      const url = cpanelPortalUrl(`/panel/sso#handoff=${encodeURIComponent(data.handoff)}`);
       // Onglet déjà ouvert au clic (geste user) → pas de bloqueur de pop-ups
       navigateOpenedTab(loginAsWinRef.current, url);
       loginAsWinRef.current = null;

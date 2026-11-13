@@ -201,14 +201,23 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         password = validated_data.pop("password", None) or None
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
+        password_changed = False
         if password:
             instance.set_password(password)
             # Admin/reseller qui fixe un MDP → forcer le changement au prochain login
             instance.must_change_password = True
+            password_changed = True
         # Cohérence suspension
         if instance.is_suspended:
             instance.is_active = False
         instance.save()
+        if password_changed:
+            try:
+                from apps.accounts.password_reset import revoke_all_user_sessions
+
+                revoke_all_user_sessions(instance)
+            except Exception:  # noqa: BLE001
+                pass
         if quota_data is not None and hasattr(instance, "quota"):
             for key, value in quota_data.items():
                 setattr(instance.quota, key, value)

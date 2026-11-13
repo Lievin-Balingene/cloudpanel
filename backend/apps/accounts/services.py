@@ -293,8 +293,14 @@ def delete_account(user: User) -> None:
 
 def issue_tokens(user: User, request=None) -> dict:  # type: ignore[no-untyped-def]
     """Émet access + refresh JWT et enregistre la session."""
+    from apps.accounts.authentication import password_fingerprint
+
     refresh = RefreshToken.for_user(user)
     access = refresh.access_token
+    # Empreinte MDP — invalide automatiquement les JWT après reset / change
+    pv = password_fingerprint(user)
+    refresh["pv"] = pv
+    access["pv"] = pv
     jti = str(refresh["jti"])
     expires_at = timezone.now() + timedelta(
         seconds=int(refresh.access_token.lifetime.total_seconds())

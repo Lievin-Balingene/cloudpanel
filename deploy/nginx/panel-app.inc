@@ -9,17 +9,29 @@ client_body_timeout 3600s;
 root /opt/vzone/frontend/dist;
 index index.html;
 
+# Headers sécurité panel (SPA + API)
+# HSTS : les UA ignorent l'en-tête reçu en clair HTTP ; utile sur :443/:908x TLS.
+add_header X-Frame-Options "SAMEORIGIN" always;
+add_header X-Content-Type-Options "nosniff" always;
+add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+add_header Cross-Origin-Opener-Policy "same-origin-allow-popups" always;
+add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
 # Indique au SPA quel portail est actif (admin / client / shared)
 location = /portal.json {
     default_type application/json;
-    add_header Cache-Control "no-store";
+    add_header Cache-Control "no-store" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
     return 200 '{"portal":"$vzone_portal"}';
 }
 
 location /assets/ {
     try_files $uri =404;
     expires 30d;
-    add_header Cache-Control "public, immutable";
+    add_header Cache-Control "public, immutable" always;
+    add_header X-Content-Type-Options "nosniff" always;
     access_log off;
 }
 
@@ -99,8 +111,15 @@ include /etc/nginx/snippets/vzone-phpmyadmin.inc;
 
 location / {
     try_files $uri $uri/ /index.html;
+    add_header Cache-Control "no-store" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 }
 
 location = /index.html {
-    add_header Cache-Control "no-store";
+    add_header Cache-Control "no-store" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 }

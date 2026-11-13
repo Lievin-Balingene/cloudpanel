@@ -28,8 +28,27 @@ PANEL_HOSTS="${PANEL_HOSTS//,/ }"
 HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
 PANEL_NAMES="localhost 127.0.0.1"
 [[ -n "$PANEL_HOSTS" ]] && PANEL_NAMES="${PANEL_NAMES} ${PANEL_HOSTS}"
-PANEL_NAMES="$(echo "$PANEL_NAMES" | xargs)"
+# IP publique NE doit PAS être server_name panel (:80 IP → Access Denied)
+PANEL_NAMES_CLEAN=""
+for _h in ${PANEL_NAMES}; do
+  if [[ "${_h}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && [[ "${_h}" != "127.0.0.1" ]]; then
+    echo "[vzone] Ignore IP ${_h} dans panel hostnames (Access Denied sur IP:80)"
+    continue
+  fi
+  PANEL_NAMES_CLEAN="${PANEL_NAMES_CLEAN} ${_h}"
+done
+PANEL_NAMES="$(echo "${PANEL_NAMES_CLEAN}" | xargs)"
 PANEL_PRIMARY="$(echo "$PANEL_HOSTS" | awk '{print $1}')"
+# Si le « primary » est une IP, prendre le premier hostname non-IP
+if [[ "${PANEL_PRIMARY}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  PANEL_PRIMARY=""
+  for _h in ${PANEL_HOSTS}; do
+    if [[ ! "${_h}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      PANEL_PRIMARY="${_h}"
+      break
+    fi
+  done
+fi
 
 ADMIN_PORT="${VZONE_ADMIN_PORT:-9086}"
 CLIENT_PORT="${VZONE_CLIENT_PORT:-9082}"

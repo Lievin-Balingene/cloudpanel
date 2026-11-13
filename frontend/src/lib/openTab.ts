@@ -27,9 +27,12 @@ export function navigateOpenedTab(win: Window | null, rawUrl: string): void {
 
   if (win && !win.closed) {
     try {
-      // Empêche un éventuel prefetch / historique de rejouer le GET SSO
-      const sep = url.includes("?") ? "&" : "?";
-      const once = `${url}${sep}_=${Date.now().toString(36)}`;
+      // Ne pas ajouter de query sur les URLs à fragment SSO (#handoff=)
+      let once = url;
+      if (!url.includes("#")) {
+        const sep = url.includes("?") ? "&" : "?";
+        once = `${url}${sep}_=${Date.now().toString(36)}`;
+      }
       win.location.replace(once);
       try {
         win.focus();

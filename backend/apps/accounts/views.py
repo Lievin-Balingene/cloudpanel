@@ -53,11 +53,24 @@ class ResetPasswordView(APIView):
 class LoginAsView(APIView):
     """WHM → Login as (cPanel) : jeton SSO one-shot vers le panneau client."""
 
-    permission_classes = [IsAuthenticated, CanManageUsers]
+    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
 
     def post(self, request: Request, pk: int) -> Response:
         from apps.accounts.sso import create_login_as_handoff
 
+        if request.user.role == User.Role.RESELLER and not request.user.has_reseller_priv(
+            "login-as"
+        ):
+            return Response(
+                {
+                    "success": False,
+                    "error": {
+                        "code": "reseller_privilege_denied",
+                        "message": "Privilege login-as requis.",
+                    },
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
         qs = User.objects.all()
         if request.user.role == User.Role.RESELLER:
             qs = qs.filter(parent=request.user)
@@ -105,12 +118,13 @@ class AccountLogsListView(APIView):
     permission_classes = [IsAuthenticated, CanManageUsers]
 
     def get(self, request: Request, pk: int) -> Response:
-        from apps.accounts.account_logs import list_account_logs
+        from apps.accounts.account_logs import list_account_logs, sanitize_logs_for_actor
 
         target = _managed_user_or_404(request, pk)
         if isinstance(target, Response):
             return target
-        return Response({"success": True, "data": list_account_logs(target)})
+        data = sanitize_logs_for_actor(list_account_logs(target), request.user)
+        return Response({"success": True, "data": data})
 
 
 class AccountLogsTailView(APIView):
@@ -119,7 +133,7 @@ class AccountLogsTailView(APIView):
     permission_classes = [IsAuthenticated, CanManageUsers]
 
     def get(self, request: Request, pk: int) -> Response:
-        from apps.accounts.account_logs import tail_account_log
+        from apps.accounts.account_logs import sanitize_log_tail_for_actor, tail_account_log
 
         target = _managed_user_or_404(request, pk)
         if isinstance(target, Response):
@@ -130,7 +144,10 @@ class AccountLogsTailView(APIView):
             lines = int(request.query_params.get("lines") or 200)
         except (TypeError, ValueError):
             lines = 200
-        data = tail_account_log(target, domain_name=domain, kind=kind, lines=lines)
+        data = sanitize_log_tail_for_actor(
+            tail_account_log(target, domain_name=domain, kind=kind, lines=lines),
+            request.user,
+        )
         return Response({"success": True, "data": data})
 
 
@@ -196,6 +213,12 @@ class ChangePasswordView(APIView):
         user.set_password(serializer.validated_data["new_password"])
         user.must_change_password = False
         user.save(update_fields=["password", "must_change_password"])
+        try:
+            from apps.accounts.password_reset import revoke_all_user_sessions
+
+            revoke_all_user_sessions(user)
+        except Exception:  # noqa: BLE001
+            pass
         return Response({"success": True, "data": {"detail": "Mot de passe mis à jour."}})
 
 

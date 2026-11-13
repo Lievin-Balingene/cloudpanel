@@ -92,6 +92,33 @@ def list_account_logs(owner: User) -> dict[str, Any]:
     }
 
 
+def sanitize_logs_for_actor(data: dict[str, Any], actor: User) -> dict[str, Any]:
+    """Masque les chemins absolus sauf pour root admin."""
+    if getattr(actor, "role", None) == User.Role.ADMINISTRATOR:
+        return data
+    out = dict(data)
+    domains = []
+    for d in data.get("domains") or []:
+        row = dict(d)
+        logs = []
+        for L in d.get("logs") or []:
+            item = dict(L)
+            item.pop("path", None)
+            logs.append(item)
+        row["logs"] = logs
+        domains.append(row)
+    out["domains"] = domains
+    return out
+
+
+def sanitize_log_tail_for_actor(data: dict[str, Any], actor: User) -> dict[str, Any]:
+    if getattr(actor, "role", None) == User.Role.ADMINISTRATOR:
+        return data
+    out = dict(data)
+    out.pop("path", None)
+    return out
+
+
 def _resolve_log_path(owner: User, domain_name: str, kind: str) -> Path:
     from apps.domains.models import Domain
 

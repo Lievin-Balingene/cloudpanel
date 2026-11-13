@@ -237,21 +237,52 @@ class SslStatusView(APIView):
         return Response({"success": True, "data": SslCertificateSerializer(domain.ssl).data})
 
 
+def _assert_can_read_domain_logs(actor, owner) -> None:  # type: ignore[no-untyped-def]
+    """Client = ses logs ; WHM admin OK ; reseller = list-accts + parent."""
+    from apps.accounts.models import User
+    from apps.core.exceptions import VZoneAPIException
+
+    if actor.pk == owner.pk:
+        return
+    if getattr(actor, "role", None) == User.Role.ADMINISTRATOR:
+        return
+    if getattr(actor, "role", None) == User.Role.RESELLER:
+        if owner.parent_id != actor.id:
+            raise VZoneAPIException(
+                detail="Domaine hors de votre périmètre reseller.",
+                code="forbidden",
+                status_code=403,
+            )
+        if not actor.has_reseller_priv("list-accts"):
+            raise VZoneAPIException(
+                detail="Privilege list-accts requis pour les journaux.",
+                code="reseller_privilege_denied",
+                status_code=403,
+            )
+        return
+    raise VZoneAPIException(
+        detail="Accès journaux refusé.",
+        code="forbidden",
+        status_code=403,
+    )
+
+
 class DomainLogsListView(APIView):
     """Index des journaux d'un domaine (client + WHM)."""
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request: Request, domain_id: int) -> Response:
-        from apps.accounts.account_logs import list_account_logs
+        from apps.accounts.account_logs import list_account_logs, sanitize_logs_for_actor
 
         domain = get_object_or_404(domains_queryset_for(request.user), pk=domain_id)
+        _assert_can_read_domain_logs(request.user, domain.owner)
         data = list_account_logs(domain.owner)
         # Restreindre à ce domaine
         data["domains"] = [d for d in data["domains"] if d["id"] == domain.id]
         data["total_available"] = sum(d["available_count"] for d in data["domains"])
         data["focus_domain"] = domain.name
-        return Response({"success": True, "data": data})
+        return Response({"success": True, "data": sanitize_logs_for_actor(data, request.user)})
 
 
 class DomainLogsTailView(APIView):
@@ -260,9 +291,10 @@ class DomainLogsTailView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request: Request, domain_id: int) -> Response:
-        from apps.accounts.account_logs import tail_account_log
+        from apps.accounts.account_logs import sanitize_log_tail_for_actor, tail_account_log
 
         domain = get_object_or_404(domains_queryset_for(request.user), pk=domain_id)
+        _assert_can_read_domain_logs(request.user, domain.owner)
         kind = (request.query_params.get("kind") or "access").strip()
         try:
             lines = int(request.query_params.get("lines") or 200)
@@ -274,4 +306,4 @@ class DomainLogsTailView(APIView):
             kind=kind,
             lines=lines,
         )
-        return Response({"success": True, "data": data})
+        return Response({"success": True, "data": sanitize_log_tail_for_actor(data, request.user)})

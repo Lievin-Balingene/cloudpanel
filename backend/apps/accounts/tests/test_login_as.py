@@ -43,3 +43,18 @@ def test_login_as_cannot_target_admin(api: APIClient):
     api.force_authenticate(user=admin)
     res = api.post(reverse("user-login-as", kwargs={"pk": other.pk}))
     assert res.status_code == 403
+
+
+@pytest.mark.django_db
+def test_login_as_rejects_suspended(api: APIClient):
+    admin = AdminFactory()
+    client_user = UserFactory(
+        username="suspended1",
+        role=User.Role.CLIENT,
+        is_suspended=True,
+        is_active=False,
+    )
+    api.force_authenticate(user=admin)
+    res = api.post(reverse("user-login-as", kwargs={"pk": client_user.pk}))
+    assert res.status_code == 400
+    assert res.json()["error"]["code"] == "login_as_unavailable"

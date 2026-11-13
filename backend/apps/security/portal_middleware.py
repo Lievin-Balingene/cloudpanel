@@ -88,9 +88,9 @@ class PortalIsolationMiddleware(MiddlewareMixin):
         if user is not None and getattr(user, "is_authenticated", False):
             return user
         try:
-            from rest_framework_simplejwt.authentication import JWTAuthentication
+            from apps.accounts.authentication import VZoneJWTAuthentication
 
-            result = JWTAuthentication().authenticate(request)
+            result = VZoneJWTAuthentication().authenticate(request)
             if result:
                 return result[0]
         except Exception:
