@@ -235,14 +235,22 @@ export function ServerSetupManager({ title }: { title: string }) {
             </label>
           </div>
           <label className="block space-y-1">
-            <span className="text-xs font-medium text-cp-muted">Email contact (SOA / admin)</span>
+            <span className="text-xs font-medium text-cp-muted">
+              Contact email (WHM Contact Manager)
+            </span>
             <input
               className="vz-input"
               type="email"
               value={form.contact_email}
               onChange={(e) => setForm({ ...form, contact_email: e.target.value })}
               placeholder="admin@example.com"
+              required
             />
+            <p className="text-[11px] text-cp-muted">
+              Comme cPanel : cet email reçoit les alertes WHM (création / suspension / suppression
+              de comptes, monitoring, échecs de backup). Activez ou désactivez chaque type dans{" "}
+              <span className="font-medium text-cp-text">Tweak Settings → Notifications</span>.
+            </p>
           </label>
         </section>
 

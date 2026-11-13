@@ -1,10 +1,25 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Search, UserPlus } from "lucide-react";
-import { apiRequest } from "@/lib/api";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  FileText,
+  LogIn,
+  PauseCircle,
+  Pencil,
+  PlayCircle,
+  Search,
+  Trash2,
+  UserPlus,
+} from "lucide-react";
+import { apiRequest, apiRequestPaginated } from "@/lib/api";
+import { cpanelPortalUrl } from "@/lib/portal";
 import { canCreateResellerAccount } from "@/lib/resellerAcl";
 import { useAuthStore } from "@/stores/auth";
+import { AccountLogsModal } from "@/components/AccountLogsModal";
+import { IconAction } from "@/components/ui/IconAction";
 import type { HostingPackage, User } from "@/types";
 
 type EditForm = {
@@ -17,27 +32,133 @@ type EditForm = {
   is_active: boolean;
 };
 
+type AccountRow = User & {
+  date_joined?: string;
+  package_name?: string;
+  disk_used_mb?: number | null;
+  disk_limit_mb?: number | null;
+};
+
+function formatDate(iso?: string) {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleString("fr-FR", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "—";
+  }
+}
+
+function formatDisk(u: AccountRow) {
+  const used = u.disk_used_mb;
+  const limit = u.disk_limit_mb;
+  const unlimited = u.quota?.unlimited_disk || limit == null;
+  const usedLabel = used == null ? "…" : used < 1024 ? `${Math.round(used)} MB` : `${(used / 1024).toFixed(1)} GB`;
+  if (unlimited) return `${usedLabel} / ∞`;
+  const limLabel = limit < 1024 ? `${limit} MB` : `${(limit / 1024).toFixed(1)} GB`;
+  return `${usedLabel} / ${limLabel}`;
+}
+
+function diskPct(u: AccountRow): number | null {
+  if (u.disk_used_mb == null || u.disk_limit_mb == null || u.disk_limit_mb <= 0) return null;
+  if (u.quota?.unlimited_disk) return null;
+  return Math.min(100, Math.round((u.disk_used_mb / u.disk_limit_mb) * 100));
+}
+
+function SkeletonRows({ rows = 8 }: { rows?: number }) {
+  return (
+    <>
+      {Array.from({ length: rows }).map((_, i) => (
+        <tr key={i} className="border-t border-cp-border/60 dark:border-ink-800">
+          {Array.from({ length: 9 }).map((__, j) => (
+            <td key={j} className="px-3 py-3">
+              <div
+                className="h-3.5 animate-pulse rounded bg-cp-canvas dark:bg-ink-800"
+                style={{ width: `${55 + ((i + j) % 5) * 8}%` }}
+              />
+            </td>
+          ))}
+        </tr>
+      ))}
+    </>
+  );
+}
+
 export function WhmAccountsPage() {
   const qc = useQueryClient();
   const me = useAuthStore((s) => s.user);
   const allowResellerType = canCreateResellerAccount(me?.role, me?.reseller_privileges);
   const isAdmin = me?.role === "administrator";
-  const { data: users = [], isLoading } = useQuery({
-    queryKey: ["users"],
-    queryFn: async () => {
-      const raw = await apiRequest<User[] | { results: User[] }>("/auth/users/");
-      return Array.isArray(raw) ? raw : raw.results;
-    },
+
+  const [q, setQ] = useState("");
+  const [qDebounced, setQDebounced] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "suspended">("all");
+  const [roleFilter, setRoleFilter] = useState<"all" | "client" | "reseller">("all");
+  /** "" = tous · "root" = comptes root · id = comptes d'un reseller */
+  const [resellerFilter, setResellerFilter] = useState("");
+  const [editing, setEditing] = useState<AccountRow | null>(null);
+  const [editForm, setEditForm] = useState<EditForm | null>(null);
+  const [logsFor, setLogsFor] = useState<AccountRow | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setQDebounced(q.trim()), 280);
+    return () => window.clearTimeout(t);
+  }, [q]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [qDebounced, statusFilter, pageSize, roleFilter, resellerFilter]);
+
+  // Liste légère des revendeurs pour le filtre (admin only)
+  const { data: resellersPage } = useQuery({
+    queryKey: ["users", "resellers-options"],
+    queryFn: () =>
+      apiRequestPaginated<AccountRow>("/auth/users/?role=reseller&page_size=200&page=1"),
+    enabled: isAdmin,
+    staleTime: 60_000,
   });
+  const resellers = resellersPage?.results ?? [];
+
+  const listPath = useMemo(() => {
+    const params = new URLSearchParams();
+    params.set("page", String(page));
+    params.set("page_size", String(pageSize));
+    if (qDebounced) params.set("q", qDebounced);
+    if (statusFilter !== "all") params.set("status", statusFilter);
+    if (roleFilter !== "all") params.set("role", roleFilter);
+    // Filtre reseller : si on choisit un reseller précis, on liste ses clients
+    // (sauf si role=reseller — alors on ignore parent pour éviter une liste vide)
+    if (isAdmin && resellerFilter && roleFilter !== "reseller") {
+      params.set("parent", resellerFilter);
+      if (resellerFilter !== "root") params.set("include_reseller", "1");
+    }
+    return `/auth/users/?${params.toString()}`;
+  }, [page, pageSize, qDebounced, statusFilter, roleFilter, resellerFilter, isAdmin]);
+
+  const { data, isLoading, isFetching } = useQuery({
+    queryKey: ["users", listPath],
+    queryFn: () => apiRequestPaginated<AccountRow>(listPath),
+    placeholderData: keepPreviousData,
+    staleTime: 15_000,
+  });
+
+  const users = data?.results ?? [];
+  const total = data?.count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
   const { data: packages = [] } = useQuery({
     queryKey: ["packages", "client"],
     queryFn: () => apiRequest<HostingPackage[]>("/packages/?type=client"),
+    staleTime: 60_000,
   });
-
-  const [q, setQ] = useState("");
-  const [editing, setEditing] = useState<User | null>(null);
-  const [editForm, setEditForm] = useState<EditForm | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!editing) {
@@ -117,14 +238,21 @@ export function WhmAccountsPage() {
     onError: (err: Error) => setError(err.message || "Suppression impossible."),
   });
 
-  const filtered = users.filter((u) => {
-    const s = q.trim().toLowerCase();
-    if (!s) return true;
-    return (
-      u.username.toLowerCase().includes(s) ||
-      u.email.toLowerCase().includes(s) ||
-      (u.primary_domain || "").toLowerCase().includes(s)
-    );
+  const loginAs = useMutation({
+    mutationFn: (id: number) =>
+      apiRequest<{ handoff: string; username: string }>("/auth/users/" + id + "/login-as/", {
+        method: "POST",
+        body: "{}",
+      }),
+    onSuccess: (data) => {
+      setError(null);
+      const url = cpanelPortalUrl(`/panel/sso?handoff=${encodeURIComponent(data.handoff)}`);
+      const win = window.open(url, "_blank", "noopener,noreferrer");
+      if (!win) {
+        setError("Autorisez les pop-ups pour ouvrir le panneau client (Login as).");
+      }
+    },
+    onError: (err: Error) => setError(err.message || "Login as impossible."),
   });
 
   function onSaveEdit(e: FormEvent) {
@@ -137,27 +265,77 @@ export function WhmAccountsPage() {
     <div className="space-y-4 animate-fade-up">
       <div className="whm-page-head">
         <div className="whm-page-head-bar flex flex-wrap items-center justify-between gap-2">
-          <h1 className="text-sm font-semibold uppercase tracking-wide">List Accounts</h1>
+          <div>
+            <h1 className="text-sm font-semibold uppercase tracking-wide">List Accounts</h1>
+            <p className="text-[11px] text-white/70">
+              {isFetching && !isLoading ? "Actualisation…" : `${total.toLocaleString("fr-FR")} compte(s)`}
+            </p>
+          </div>
           <Link to="/whm/accounts/create" className="whm-btn-create !py-1.5 text-xs">
             <UserPlus className="h-3.5 w-3.5" />
             Create a New Account
           </Link>
         </div>
-        <div className="flex flex-wrap items-center gap-3 px-4 py-3">
-          <div className="relative min-w-[220px] flex-1">
+        <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+          <div className="relative min-w-[200px] flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-cp-muted" />
             <input
               className="vz-input pl-9"
-              placeholder="Search by user, domain, email…"
+              placeholder="Search user, domain, email…"
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
           </div>
-          <p className="text-xs text-cp-muted">
-            {isLoading
-              ? "Chargement…"
-              : `${filtered.length} compte${filtered.length === 1 ? "" : "s"}`}
-          </p>
+          <select
+            className="vz-input !w-auto !py-1.5 text-xs"
+            value={roleFilter}
+            onChange={(e) => {
+              const next = e.target.value as typeof roleFilter;
+              setRoleFilter(next);
+              // Afficher uniquement les resellers → reset filtre propriétaire
+              if (next === "reseller") setResellerFilter("");
+            }}
+          >
+            <option value="all">All types</option>
+            <option value="client">Clients only</option>
+            <option value="reseller">Resellers only</option>
+          </select>
+          {isAdmin && roleFilter !== "reseller" && (
+            <select
+              className="vz-input !w-auto max-w-[14rem] !py-1.5 text-xs"
+              value={resellerFilter}
+              onChange={(e) => setResellerFilter(e.target.value)}
+              title="Filtrer par propriétaire / revendeur"
+            >
+              <option value="">All owners</option>
+              <option value="root">Root (no reseller)</option>
+              {resellers.map((r) => (
+                <option key={r.id} value={String(r.id)}>
+                  Reseller: {r.username}
+                  {r.is_suspended ? " (suspended)" : ""}
+                </option>
+              ))}
+            </select>
+          )}
+          <select
+            className="vz-input !w-auto !py-1.5 text-xs"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+          >
+            <option value="all">All statuses</option>
+            <option value="active">Active</option>
+            <option value="suspended">Suspended</option>
+          </select>
+          <select
+            className="vz-input !w-auto !py-1.5 text-xs"
+            value={pageSize}
+            onChange={(e) => setPageSize(Number(e.target.value))}
+          >
+            <option value={25}>25 / page</option>
+            <option value={50}>50 / page</option>
+            <option value={100}>100 / page</option>
+            <option value={200}>200 / page</option>
+          </select>
         </div>
       </div>
 
@@ -245,109 +423,163 @@ export function WhmAccountsPage() {
       )}
 
       <div className="vz-table-wrap overflow-hidden rounded-lg border border-cp-border bg-white shadow-panel dark:border-ink-800 dark:bg-ink-950">
-        <table className="min-w-[40rem] w-full text-left text-sm">
-          <thead className="bg-cp-canvas text-[11px] uppercase tracking-wide text-cp-muted dark:bg-ink-900">
+        <table className="min-w-[56rem] w-full text-left text-sm">
+          <thead className="sticky top-0 z-[1] bg-cp-canvas text-[11px] uppercase tracking-wide text-cp-muted dark:bg-ink-900">
             <tr>
               <th className="px-3 py-2.5">Domain</th>
               <th className="px-3 py-2.5">User</th>
-              <th className="px-3 py-2.5">Email</th>
-              <th className="px-3 py-2.5">Role</th>
+              <th className="px-3 py-2.5">Contact</th>
+              <th className="px-3 py-2.5">Package</th>
               <th className="px-3 py-2.5">Owner</th>
+              <th className="px-3 py-2.5">Created</th>
+              <th className="px-3 py-2.5">Disk used</th>
               <th className="px-3 py-2.5">Status</th>
-              <th className="px-3 py-2.5">Disk</th>
-              <th className="px-3 py-2.5">Actions</th>
+              <th className="px-3 py-2.5 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {isLoading && (
-              <tr>
-                <td className="px-3 py-6 text-cp-muted" colSpan={8}>
-                  Loading…
-                </td>
-              </tr>
-            )}
-            {filtered.map((u) => (
-              <tr key={u.id} className="border-t border-cp-border/80 hover:bg-cp-orange-soft/40 dark:border-ink-800 dark:hover:bg-ink-900/50">
-                <td className="px-3 py-2.5">
-                  {u.primary_domain ? (
-                    <a
-                      href={`http://${u.primary_domain}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 font-mono text-xs text-cp-link hover:underline"
-                    >
-                      {u.primary_domain}
-                      <ExternalLink className="h-3 w-3" />
-                    </a>
-                  ) : (
-                    <span className="text-cp-muted">—</span>
-                  )}
-                </td>
-                <td className="px-3 py-2.5 font-medium">{u.username}</td>
-                <td className="px-3 py-2.5 text-cp-muted">{u.email}</td>
-                <td className="px-3 py-2.5 capitalize">{u.role}</td>
-                <td className="px-3 py-2.5 font-mono text-xs text-cp-muted">
-                  {u.owner_label || u.parent_username || "root"}
-                  {isAdmin && u.role === "reseller" && (
-                    <Link
-                      to={`/whm/resellers?user=${u.id}`}
-                      className="ml-2 text-cp-link hover:underline"
-                      title="Edit Reseller Privileges"
-                    >
-                      ACL
-                    </Link>
-                  )}
-                </td>
-                <td className="px-3 py-2.5">
-                  <span
-                    className={
-                      u.is_suspended
-                        ? "text-cp-danger"
-                        : u.is_active
-                          ? "text-cp-success"
-                          : "text-cp-muted"
-                    }
+            {isLoading && <SkeletonRows rows={Math.min(pageSize, 10)} />}
+            {!isLoading &&
+              users.map((u) => {
+                const suspended = Boolean(u.is_suspended);
+                const pct = diskPct(u);
+                return (
+                  <tr
+                    key={u.id}
+                    className={`border-t transition dark:border-ink-800 ${
+                      suspended
+                        ? "border-red-200/80 bg-red-50/90 text-red-950 hover:bg-red-100/90 dark:border-red-900/50 dark:bg-red-950/35 dark:text-red-100 dark:hover:bg-red-950/50"
+                        : "border-cp-border/80 hover:bg-cp-orange-soft/35 dark:hover:bg-ink-900/50"
+                    }`}
                   >
-                    {u.is_suspended ? "suspended" : u.is_active ? "active" : "inactive"}
-                  </span>
-                </td>
-                <td className="px-3 py-2.5">
-                  {u.quota?.unlimited_disk ? "∞" : `${u.quota?.disk_mb ?? "—"} MB`}
-                </td>
-                <td className="px-3 py-2.5">
-                  <div className="flex flex-wrap gap-2 text-xs">
-                    <button type="button" className="text-cp-link hover:underline" onClick={() => setEditing(u)}>
-                      Modify
-                    </button>
-                    <button
-                      type="button"
-                      className="text-cp-muted hover:underline"
-                      onClick={() => suspendUser.mutate({ id: u.id, suspended: !u.is_suspended })}
-                    >
-                      {u.is_suspended ? "Unsuspend" : "Suspend"}
-                    </button>
-                    <button
-                      type="button"
-                      className="text-cp-danger hover:underline"
-                      onClick={() => {
-                        if (
-                          window.confirm(
-                            `Delete account « ${u.username} » and its home directory? This cannot be undone.`,
-                          )
-                        ) {
-                          deleteUser.mutate(u.id);
-                        }
-                      }}
-                    >
-                      Terminate
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {!isLoading && filtered.length === 0 && (
+                    <td className="px-3 py-2">
+                      {u.primary_domain ? (
+                        <a
+                          href={`http://${u.primary_domain}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className={`inline-flex max-w-[12rem] items-center gap-1 truncate font-mono text-xs hover:underline ${
+                            suspended ? "text-red-700 dark:text-red-300" : "text-cp-link"
+                          }`}
+                        >
+                          {u.primary_domain}
+                          <ExternalLink className="h-3 w-3 shrink-0 opacity-70" />
+                        </a>
+                      ) : (
+                        <span className="text-cp-muted">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="font-medium">{u.username}</div>
+                      <div className="text-[10px] capitalize text-cp-muted">{u.role}</div>
+                    </td>
+                    <td className="max-w-[10rem] truncate px-3 py-2 text-xs text-cp-muted" title={u.email}>
+                      {u.email}
+                    </td>
+                    <td className="px-3 py-2 text-xs">{u.package_name || "—"}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-cp-muted">
+                      {u.owner_label || u.parent_username || "root"}
+                      {isAdmin && u.role === "reseller" && (
+                        <Link
+                          to={`/whm/resellers?user=${u.id}`}
+                          className="ml-1.5 text-cp-link hover:underline"
+                          title="Edit Reseller Privileges"
+                        >
+                          ACL
+                        </Link>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 text-[11px] text-cp-muted">
+                      {formatDate(u.date_joined)}
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="text-[11px] font-medium tabular-nums">{formatDisk(u)}</div>
+                      {pct != null && (
+                        <div className="mt-1 h-1 w-20 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+                          <div
+                            className={`h-full rounded-full ${
+                              pct >= 90 ? "bg-cp-danger" : pct >= 75 ? "bg-amber-500" : "bg-emerald-500"
+                            }`}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      <span
+                        className={`inline-flex rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                          suspended
+                            ? "bg-red-600 text-white"
+                            : u.is_active
+                              ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+                              : "bg-cp-canvas text-cp-muted"
+                        }`}
+                      >
+                        {suspended ? "suspended" : u.is_active ? "active" : "inactive"}
+                      </span>
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <div className="flex flex-wrap items-center justify-end gap-0.5">
+                        {u.role !== "administrator" && (
+                          <IconAction
+                            label="Login to cPanel / AngaPanel"
+                            tone="accent"
+                            size="sm"
+                            disabled={loginAs.isPending}
+                            onClick={() => loginAs.mutate(u.id)}
+                          >
+                            <LogIn className="h-3.5 w-3.5" />
+                          </IconAction>
+                        )}
+                        {u.role !== "administrator" && (
+                          <IconAction
+                            label="View domain logs"
+                            tone="info"
+                            size="sm"
+                            onClick={() => setLogsFor(u)}
+                          >
+                            <FileText className="h-3.5 w-3.5" />
+                          </IconAction>
+                        )}
+                        <IconAction label="Modify" tone="info" size="sm" onClick={() => setEditing(u)}>
+                          <Pencil className="h-3.5 w-3.5" />
+                        </IconAction>
+                        <IconAction
+                          label={suspended ? "Unsuspend" : "Suspend"}
+                          tone={suspended ? "success" : "warning"}
+                          size="sm"
+                          onClick={() => suspendUser.mutate({ id: u.id, suspended: !suspended })}
+                        >
+                          {suspended ? (
+                            <PlayCircle className="h-3.5 w-3.5" />
+                          ) : (
+                            <PauseCircle className="h-3.5 w-3.5" />
+                          )}
+                        </IconAction>
+                        <IconAction
+                          label="Terminate"
+                          danger
+                          size="sm"
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                `Delete account « ${u.username} » and its home directory? This cannot be undone.`,
+                              )
+                            ) {
+                              deleteUser.mutate(u.id);
+                            }
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </IconAction>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            {!isLoading && users.length === 0 && (
               <tr>
-                <td className="px-3 py-8 text-center text-cp-muted" colSpan={8}>
+                <td className="px-3 py-10 text-center text-cp-muted" colSpan={9}>
                   No accounts.{" "}
                   <Link to="/whm/accounts/create" className="text-cp-link hover:underline">
                     Create a New Account
@@ -357,7 +589,44 @@ export function WhmAccountsPage() {
             )}
           </tbody>
         </table>
+
+        {totalPages > 1 && (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-cp-border px-3 py-2 text-xs dark:border-ink-800">
+            <span className="text-cp-muted">
+              Page {page} / {totalPages} · {(page - 1) * pageSize + 1}–
+              {Math.min(page * pageSize, total)} of {total.toLocaleString("fr-FR")}
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                className="vz-btn-ghost vz-btn-sm"
+                disabled={page <= 1 || isFetching}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+                Prev
+              </button>
+              <button
+                type="button"
+                className="vz-btn-ghost vz-btn-sm"
+                disabled={page >= totalPages || isFetching}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                Next
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
+
+      {logsFor && (
+        <AccountLogsModal
+          userId={logsFor.id}
+          username={logsFor.username}
+          onClose={() => setLogsFor(null)}
+        />
+      )}
     </div>
   );
 }

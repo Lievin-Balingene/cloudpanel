@@ -1,10 +1,16 @@
-"""Contexte déploiement utilisateur (sans secrets)."""
+"""Contexte déploiement utilisateur (sans secrets) — scope compte strict."""
 from __future__ import annotations
 
 from typing import Any
 
 from apps.accounts.models import User
 from apps.ai_assistant.services.redaction import redact_text
+from apps.ai_assistant.tools.helpers import (
+    ai_domains_qs,
+    ai_git_repos_qs,
+    ai_node_apps_qs,
+    ai_python_apps_qs,
+)
 
 
 def build_user_context(user: User) -> dict[str, Any]:
@@ -28,9 +34,7 @@ def build_user_context(user: User) -> dict[str, Any]:
         ],
     }
     try:
-        from apps.python_apps.services import apps_qs
-
-        for a in apps_qs(user)[:20]:
+        for a in ai_python_apps_qs(user)[:20]:
             ctx["python_apps"].append(
                 {
                     "id": a.pk,
@@ -45,9 +49,7 @@ def build_user_context(user: User) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
     try:
-        from apps.node_apps.services import apps_qs
-
-        for a in apps_qs(user)[:20]:
+        for a in ai_node_apps_qs(user)[:20]:
             ctx["node_apps"].append(
                 {
                     "id": a.pk,
@@ -61,9 +63,7 @@ def build_user_context(user: User) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
     try:
-        from apps.git_deploy.services import repos_qs
-
-        for r in repos_qs(user)[:20]:
+        for r in ai_git_repos_qs(user)[:20]:
             ctx["git_repos"].append(
                 {
                     "id": r.pk,
@@ -78,14 +78,7 @@ def build_user_context(user: User) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
     try:
-        from apps.domains.models import Domain
-
-        qs = Domain.objects.all()
-        if user.role == User.Role.CLIENT:
-            qs = qs.filter(owner=user)
-        elif user.role == User.Role.RESELLER:
-            qs = qs.filter(owner__parent=user) | qs.filter(owner=user)
-        for d in qs.order_by("name")[:30]:
+        for d in ai_domains_qs(user).order_by("name")[:30]:
             ctx["domains"].append({"id": d.pk, "name": d.name})
     except Exception:  # noqa: BLE001
         pass

@@ -98,6 +98,15 @@ def get_setup_payload() -> dict:
         setup.hostname = os_host
         setup.save(update_fields=["hostname", "updated_at"])
     public_ip = (getattr(settings, "VZONE_PUBLIC_IP", "") or "").strip()
+    # Contact Manager : si vide, hériter de l'email admin panel
+    contact = (setup.contact_email or "").strip()
+    if not contact:
+        try:
+            from apps.server_setup.contact_notify import get_contact_email
+
+            contact = get_contact_email() or ""
+        except Exception:  # noqa: BLE001
+            contact = ""
     return {
         "hostname": setup.hostname,
         "os_hostname": os_host,
@@ -107,7 +116,7 @@ def get_setup_payload() -> dict:
         "nameserver4": setup.nameserver4,
         "resolver1": setup.resolver1,
         "resolver2": setup.resolver2,
-        "contact_email": setup.contact_email,
+        "contact_email": contact,
         "apply_hostname_to_mail": setup.apply_hostname_to_mail,
         "public_ip": public_ip,
         "hostname_applied_at": setup.hostname_applied_at.isoformat() if setup.hostname_applied_at else None,

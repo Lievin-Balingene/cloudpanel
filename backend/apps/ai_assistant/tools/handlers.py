@@ -24,18 +24,18 @@ def _err(message: str, code: str = "tool_error") -> dict[str, Any]:
 
 
 def _owned_python(user: User, app_id: int | None):
-    from apps.python_apps.services import apps_qs
+    from apps.ai_assistant.tools.helpers import ai_python_apps_qs
 
-    qs = apps_qs(user)
+    qs = ai_python_apps_qs(user)
     if app_id:
         return qs.filter(pk=app_id).first()
     return qs.order_by("-updated_at").first()
 
 
 def _owned_node(user: User, app_id: int | None):
-    from apps.node_apps.services import apps_qs
+    from apps.ai_assistant.tools.helpers import ai_node_apps_qs
 
-    qs = apps_qs(user)
+    qs = ai_node_apps_qs(user)
     if app_id:
         return qs.filter(pk=app_id).first()
     return qs.order_by("-updated_at").first()
@@ -290,15 +290,9 @@ def analyze_deployment_error(user: User, params: dict[str, Any]) -> dict[str, An
 def check_domain_configuration(user: User, params: dict[str, Any]) -> dict[str, Any]:
     del params
     try:
-        from apps.domains.models import Domain
+        from apps.ai_assistant.tools.helpers import ai_domains_qs
 
-        qs = Domain.objects.all()
-        if user.role == User.Role.CLIENT:
-            qs = qs.filter(owner=user)
-        elif user.role == User.Role.RESELLER:
-            from django.db.models import Q
-
-            qs = qs.filter(Q(owner=user) | Q(owner__parent=user))
+        qs = ai_domains_qs(user)
         items = []
         for d in qs.order_by("name")[:50]:
             has_ssl = False
@@ -347,7 +341,7 @@ def check_application_status(user: User, params: dict[str, Any]) -> dict[str, An
 
     py_apps = []
     try:
-        from apps.python_apps.services import apps_qs
+        from apps.ai_assistant.tools.helpers import ai_python_apps_qs as apps_qs
 
         for a in apps_qs(user)[:30]:
             py_apps.append(
@@ -364,7 +358,7 @@ def check_application_status(user: User, params: dict[str, Any]) -> dict[str, An
         pass
     node_apps = []
     try:
-        from apps.node_apps.services import apps_qs
+        from apps.ai_assistant.tools.helpers import ai_node_apps_qs as apps_qs
 
         for a in apps_qs(user)[:30]:
             node_apps.append(
@@ -569,7 +563,8 @@ def install_dependencies(user: User, params: dict[str, Any]) -> dict[str, Any]:
 def deploy_application(user: User, params: dict[str, Any]) -> dict[str, Any]:
     repo_id = int(params.get("repository_id") or 0)
     try:
-        from apps.git_deploy.services import pull_repository, repos_qs
+        from apps.git_deploy.services import pull_repository
+        from apps.ai_assistant.tools.helpers import ai_git_repos_qs as repos_qs
 
         repo = repos_qs(user).filter(pk=repo_id).first()
         if not repo:
@@ -805,8 +800,8 @@ def list_jail_commands(user: User, params: dict[str, Any]) -> dict[str, Any]:
 def get_page_logs(user: User, params: dict[str, Any]) -> dict[str, Any]:
     runtime = str(params.get("runtime") or "auto").lower()
     if runtime == "auto":
-        from apps.node_apps.services import apps_qs as node_qs
-        from apps.python_apps.services import apps_qs as py_qs
+        from apps.ai_assistant.tools.helpers import ai_node_apps_qs as node_qs
+        from apps.ai_assistant.tools.helpers import ai_python_apps_qs as py_qs
 
         if py_qs(user).exists():
             runtime = "python"

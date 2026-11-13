@@ -5,6 +5,8 @@ from django.urls import path
 from apps.domains.views import (
     DomainDetailView,
     DomainListCreateView,
+    DomainLogsListView,
+    DomainLogsTailView,
     DomainRedirectDetailView,
     DomainRedirectListCreateView,
     SslInstallCustomView,
@@ -17,6 +19,8 @@ urlpatterns = [
     path("", DomainListCreateView.as_view(), name="domain-list"),
     path("subdomains/", SubdomainCreateView.as_view(), name="domain-subdomain-create"),
     path("<int:pk>/", DomainDetailView.as_view(), name="domain-detail"),
+    path("<int:domain_id>/logs/", DomainLogsListView.as_view(), name="domain-logs-list"),
+    path("<int:domain_id>/logs/tail/", DomainLogsTailView.as_view(), name="domain-logs-tail"),
     path(
         "<int:domain_id>/redirects/",
         DomainRedirectListCreateView.as_view(),

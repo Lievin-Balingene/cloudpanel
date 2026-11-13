@@ -9,7 +9,7 @@ from apps.ai_assistant.tools.helpers import err, ok, require_int, require_str, r
 
 
 def _owned_domain(user: User, domain_id: int | None = None, name: str = ""):
-    from apps.domains.services import domains_queryset_for
+    from apps.ai_assistant.tools.helpers import ai_domains_qs as domains_queryset_for
 
     qs = domains_queryset_for(user)
     if domain_id:
@@ -26,7 +26,7 @@ def _owned_domain(user: User, domain_id: int | None = None, name: str = ""):
 )
 def list_domains(user: User, params: dict[str, Any]) -> dict[str, Any]:
     del params
-    from apps.domains.services import domains_queryset_for
+    from apps.ai_assistant.tools.helpers import ai_domains_qs as domains_queryset_for
     from apps.domains.ssl_services import has_active_cert_files
 
     items = []
@@ -70,7 +70,7 @@ def get_ssl_status(user: User, params: dict[str, Any]) -> dict[str, Any]:
 def _resolve_parent_domain(user: User, name: str, *, parent_id: int | None = None, parent_name: str = ""):
     """Trouve le domaine parent pour un hostname (ex: nature.7une.info → 7une.info)."""
     from apps.domains.models import Domain
-    from apps.domains.services import domains_queryset_for
+    from apps.ai_assistant.tools.helpers import ai_domains_qs as domains_queryset_for
 
     if parent_id:
         found = _owned_domain(user, parent_id)

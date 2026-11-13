@@ -235,3 +235,43 @@ class SslStatusView(APIView):
         if not hasattr(domain, "ssl"):
             return Response({"success": True, "data": None})
         return Response({"success": True, "data": SslCertificateSerializer(domain.ssl).data})
+
+
+class DomainLogsListView(APIView):
+    """Index des journaux d'un domaine (client + WHM)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request, domain_id: int) -> Response:
+        from apps.accounts.account_logs import list_account_logs
+
+        domain = get_object_or_404(domains_queryset_for(request.user), pk=domain_id)
+        data = list_account_logs(domain.owner)
+        # Restreindre à ce domaine
+        data["domains"] = [d for d in data["domains"] if d["id"] == domain.id]
+        data["total_available"] = sum(d["available_count"] for d in data["domains"])
+        data["focus_domain"] = domain.name
+        return Response({"success": True, "data": data})
+
+
+class DomainLogsTailView(APIView):
+    """Tail journal pour un domaine accessible à l'utilisateur."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request, domain_id: int) -> Response:
+        from apps.accounts.account_logs import tail_account_log
+
+        domain = get_object_or_404(domains_queryset_for(request.user), pk=domain_id)
+        kind = (request.query_params.get("kind") or "access").strip()
+        try:
+            lines = int(request.query_params.get("lines") or 200)
+        except (TypeError, ValueError):
+            lines = 200
+        data = tail_account_log(
+            domain.owner,
+            domain_name=domain.name,
+            kind=kind,
+            lines=lines,
+        )
+        return Response({"success": True, "data": data})

@@ -29,7 +29,7 @@ def _mailbox_summary(box) -> dict[str, Any]:
 )
 def list_mailboxes(user: User, params: dict[str, Any]) -> dict[str, Any]:
     del params
-    from apps.email.services import mail_domains_qs, mailboxes_qs
+    from apps.ai_assistant.tools.helpers import ai_mail_domains_qs as mail_domains_qs, ai_mailboxes_qs as mailboxes_qs
 
     domains = [
         {
@@ -64,7 +64,8 @@ def list_mailboxes(user: User, params: dict[str, Any]) -> dict[str, Any]:
     dangerous=True,
 )
 def create_mailbox(user: User, params: dict[str, Any]) -> dict[str, Any]:
-    from apps.email.services import create_mailbox as svc, mail_domains_qs
+    from apps.email.services import create_mailbox as svc
+    from apps.ai_assistant.tools.helpers import ai_mail_domains_qs as mail_domains_qs
 
     md = mail_domains_qs(user).filter(pk=require_int(params, "mail_domain_id")).first()
     if not md:
@@ -107,7 +108,8 @@ def create_mailbox(user: User, params: dict[str, Any]) -> dict[str, Any]:
     dangerous=True,
 )
 def update_mailbox(user: User, params: dict[str, Any]) -> dict[str, Any]:
-    from apps.email.services import mailboxes_qs, update_mailbox as svc
+    from apps.ai_assistant.tools.helpers import ai_mailboxes_qs as mailboxes_qs
+    from apps.email.services import update_mailbox as svc
 
     box = mailboxes_qs(user).select_related("mail_domain").filter(pk=require_int(params, "mailbox_id")).first()
     if not box:
@@ -148,7 +150,8 @@ def update_mailbox(user: User, params: dict[str, Any]) -> dict[str, Any]:
     dangerous=True,
 )
 def suspend_mailbox(user: User, params: dict[str, Any]) -> dict[str, Any]:
-    from apps.email.services import mailboxes_qs, suspend_mailbox as svc
+    from apps.ai_assistant.tools.helpers import ai_mailboxes_qs as mailboxes_qs
+    from apps.email.services import suspend_mailbox as svc
 
     box = mailboxes_qs(user).select_related("mail_domain").filter(pk=require_int(params, "mailbox_id")).first()
     if not box:
@@ -173,7 +176,8 @@ def suspend_mailbox(user: User, params: dict[str, Any]) -> dict[str, Any]:
     dangerous=True,
 )
 def delete_mailbox(user: User, params: dict[str, Any]) -> dict[str, Any]:
-    from apps.email.services import delete_mailbox as svc, mailboxes_qs
+    from apps.email.services import delete_mailbox as svc
+    from apps.ai_assistant.tools.helpers import ai_mailboxes_qs as mailboxes_qs
 
     box = mailboxes_qs(user).select_related("mail_domain").filter(pk=require_int(params, "mailbox_id")).first()
     if not box:
@@ -204,7 +208,8 @@ def delete_mailbox(user: User, params: dict[str, Any]) -> dict[str, Any]:
     dangerous=True,
 )
 def create_mail_forwarder(user: User, params: dict[str, Any]) -> dict[str, Any]:
-    from apps.email.services import create_forwarder, mail_domains_qs
+    from apps.email.services import create_forwarder
+    from apps.ai_assistant.tools.helpers import ai_mail_domains_qs as mail_domains_qs
 
     md = mail_domains_qs(user).filter(pk=require_int(params, "mail_domain_id")).first()
     if not md:
@@ -247,7 +252,8 @@ def create_mail_forwarder(user: User, params: dict[str, Any]) -> dict[str, Any]:
     dangerous=True,
 )
 def enable_dkim(user: User, params: dict[str, Any]) -> dict[str, Any]:
-    from apps.email.services import enable_dkim as svc, mail_domains_qs
+    from apps.email.services import enable_dkim as svc
+    from apps.ai_assistant.tools.helpers import ai_mail_domains_qs as mail_domains_qs
 
     md = mail_domains_qs(user).filter(pk=require_int(params, "mail_domain_id")).first()
     if not md:
@@ -279,7 +285,8 @@ def enable_dkim(user: User, params: dict[str, Any]) -> dict[str, Any]:
     dangerous=True,
 )
 def sync_mail_dns(user: User, params: dict[str, Any]) -> dict[str, Any]:
-    from apps.email.services import mail_domains_qs, sync_mail_dns as svc
+    from apps.ai_assistant.tools.helpers import ai_mail_domains_qs as mail_domains_qs
+    from apps.email.services import sync_mail_dns as svc
 
     md = mail_domains_qs(user).filter(pk=require_int(params, "mail_domain_id")).first()
     if not md:

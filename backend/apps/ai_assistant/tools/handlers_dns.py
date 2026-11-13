@@ -32,7 +32,7 @@ def _record_summary(rec) -> dict[str, Any]:
 )
 def list_dns_zones(user: User, params: dict[str, Any]) -> dict[str, Any]:
     del params
-    from apps.dns.services import zones_queryset_for
+    from apps.ai_assistant.tools.helpers import ai_dns_zones_qs as zones_queryset_for
 
     zones = []
     for z in zones_queryset_for(user)[:80]:
@@ -97,7 +97,7 @@ def create_dns_zone(user: User, params: dict[str, Any]) -> dict[str, Any]:
 )
 def list_dns_records(user: User, params: dict[str, Any]) -> dict[str, Any]:
     from apps.dns.models import DnsRecord
-    from apps.dns.services import zones_queryset_for
+    from apps.ai_assistant.tools.helpers import ai_dns_zones_qs as zones_queryset_for
 
     zone = zones_queryset_for(user).filter(pk=require_int(params, "zone_id")).first()
     if not zone:
@@ -133,7 +133,7 @@ def list_dns_records(user: User, params: dict[str, Any]) -> dict[str, Any]:
 def upsert_dns_record(user: User, params: dict[str, Any]) -> dict[str, Any]:
     from apps.core.exceptions import VZoneAPIException
     from apps.dns.models import DnsRecord
-    from apps.dns.services import zones_queryset_for
+    from apps.ai_assistant.tools.helpers import ai_dns_zones_qs as zones_queryset_for
 
     zone = zones_queryset_for(user).filter(pk=require_int(params, "zone_id")).first()
     if not zone:
@@ -210,7 +210,7 @@ def upsert_dns_record(user: User, params: dict[str, Any]) -> dict[str, Any]:
 )
 def delete_dns_record(user: User, params: dict[str, Any]) -> dict[str, Any]:
     from apps.dns.models import DnsRecord
-    from apps.dns.services import zones_queryset_for
+    from apps.ai_assistant.tools.helpers import ai_dns_zones_qs as zones_queryset_for
 
     zone = zones_queryset_for(user).filter(pk=require_int(params, "zone_id")).first()
     if not zone:
@@ -250,7 +250,7 @@ def delete_dns_record(user: User, params: dict[str, Any]) -> dict[str, Any]:
     dangerous=True,
 )
 def toggle_dnssec(user: User, params: dict[str, Any]) -> dict[str, Any]:
-    from apps.dns.services import zones_queryset_for
+    from apps.ai_assistant.tools.helpers import ai_dns_zones_qs as zones_queryset_for
 
     zone = zones_queryset_for(user).filter(pk=require_int(params, "zone_id")).first()
     if not zone:

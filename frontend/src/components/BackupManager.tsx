@@ -102,6 +102,11 @@ export function BackupManager({ title }: { title: string }) {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"archives" | "schedules">("archives");
   const [createKind, setCreateKind] = useState<"backup" | "schedule" | null>(null);
+  const [confirm, setConfirm] = useState<
+    | { kind: "restore" | "delete"; archive: BackupArchiveItem }
+    | { kind: "delete-schedule"; schedule: BackupScheduleItem }
+    | null
+  >(null);
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["backup-overview"] });
@@ -298,17 +303,136 @@ export function BackupManager({ title }: { title: string }) {
                 </td>
                 <td className="px-3 py-2">{formatBytes(a.size_bytes)}</td>
                 <td className="px-3 py-2">
-                  <div className="flex flex-wrap gap-0.5"><IconAction label="Restaurer" onClick={() => restore.mutate(a.id)}><RotateCcw className="h-4 w-4" /></IconAction><IconAction label="Afficher les informations de téléchargement" onClick={() => download.mutate(a.id)}><Download className="h-4 w-4" /></IconAction><IconAction label="Supprimer" danger onClick={() => remove.mutate(a.id)}><Trash2 className="h-4 w-4" /></IconAction></div>
+                  <div className="flex flex-wrap gap-0.5">
+                    <IconAction
+                      label="Restaurer"
+                      onClick={() => setConfirm({ kind: "restore", archive: a })}
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                    </IconAction>
+                    <IconAction
+                      label="Afficher les informations de téléchargement"
+                      onClick={() => download.mutate(a.id)}
+                    >
+                      <Download className="h-4 w-4" />
+                    </IconAction>
+                    <IconAction
+                      label="Supprimer"
+                      danger
+                      onClick={() => setConfirm({ kind: "delete", archive: a })}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </IconAction>
+                  </div>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
         </div>}
-        {tab === "schedules" && <div>{schedules.length === 0 ? <EmptyState icon={<CalendarClock className="h-8 w-8" />} message="Aucune planification automatique." action={<button type="button" className="vz-btn-primary" onClick={() => setCreateKind("schedule")}><Plus className="h-4 w-4" />Créer un planning</button>} /> : <div className="divide-y divide-cp-border dark:divide-ink-800">{schedules.map((schedule) => <div key={schedule.id} className="flex items-center justify-between gap-3 px-4 py-3"><div><p className="font-medium">{schedule.frequency} à {schedule.hour} h</p><div className="mt-1 flex items-center gap-2 text-xs text-cp-muted"><StatusDot status={schedule.is_active ? "active" : "inactive"} /><span>{schedule.last_run_at ? `Dernière exécution : ${new Date(schedule.last_run_at).toLocaleString("fr-FR")}` : "Jamais exécutée"}</span></div></div><IconAction label="Supprimer la planification" danger onClick={() => deleteSchedule.mutate(schedule.id)}><Trash2 className="h-4 w-4" /></IconAction></div>)}</div>}</div>}
+        {tab === "schedules" && <div>{schedules.length === 0 ? <EmptyState icon={<CalendarClock className="h-8 w-8" />} message="Aucune planification automatique." action={<button type="button" className="vz-btn-primary" onClick={() => setCreateKind("schedule")}><Plus className="h-4 w-4" />Créer un planning</button>} /> : <div className="divide-y divide-cp-border dark:divide-ink-800">{schedules.map((schedule) => <div key={schedule.id} className="flex items-center justify-between gap-3 px-4 py-3"><div><p className="font-medium">{schedule.frequency} à {schedule.hour} h</p><div className="mt-1 flex items-center gap-2 text-xs text-cp-muted"><StatusDot status={schedule.is_active ? "active" : "inactive"} /><span>{schedule.last_run_at ? `Dernière exécution : ${new Date(schedule.last_run_at).toLocaleString("fr-FR")}` : "Jamais exécutée"}</span></div></div><IconAction label="Supprimer la planification" danger onClick={() => setConfirm({ kind: "delete-schedule", schedule })}><Trash2 className="h-4 w-4" /></IconAction></div>)}</div>}</div>}
       </div>
       {createKind === "backup" && <Modal title="Nouvelle sauvegarde" onClose={() => setCreateKind(null)}><form className="space-y-3" onSubmit={onCreate}><div><label className="mb-1 block text-xs font-medium text-cp-muted">Type</label><select className="vz-input" value={form.backup_type} onChange={(e) => setForm((f) => ({ ...f, backup_type: e.target.value }))}><option value="full">Complète</option><option value="incremental">Incrémentale (Restic)</option><option value="home">Fichiers</option><option value="databases">Bases</option><option value="email">Email</option><option value="custom">Personnalisée</option></select></div><div><label className="mb-1 block text-xs font-medium text-cp-muted">Libellé</label><input className="vz-input" value={form.label} onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))} placeholder="Optionnel" /></div>{form.backup_type === "custom" && <div className="flex flex-wrap gap-4 text-sm">{[["includes_home", "Fichiers (home)"], ["includes_databases", "Bases"], ["includes_email", "Email"]].map(([key, label]) => <label key={key} className="inline-flex items-center gap-2"><input type="checkbox" checked={Boolean(form[key as keyof typeof form])} onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.checked }))} />{label}</label>)}</div>}<div className="flex justify-end gap-2"><button type="button" className="vz-btn-ghost" onClick={() => setCreateKind(null)}>Annuler</button><button className="vz-btn-primary" type="submit" disabled={create.isPending}>{create.isPending ? "Création…" : "Créer"}</button></div></form></Modal>}
       {createKind === "schedule" && <Modal title="Nouvelle planification" onClose={() => setCreateKind(null)}><form className="space-y-3" onSubmit={onSchedule}><div><label className="mb-1 block text-xs font-medium text-cp-muted">Fréquence</label><select className="vz-input" value={scheduleForm.frequency} onChange={(e) => setScheduleForm((f) => ({ ...f, frequency: e.target.value }))}><option value="hourly">Horaire</option><option value="daily">Quotidien</option><option value="weekly">Hebdomadaire</option><option value="monthly">Mensuel</option></select></div><div className="grid grid-cols-2 gap-3"><div><label className="mb-1 block text-xs font-medium text-cp-muted">Heure</label><input className="vz-input" type="number" min={0} max={23} value={scheduleForm.hour} onChange={(e) => setScheduleForm((f) => ({ ...f, hour: Number(e.target.value) }))} /></div><div><label className="mb-1 block text-xs font-medium text-cp-muted">Jour (0 = lundi)</label><input className="vz-input" type="number" min={0} max={6} value={scheduleForm.weekday} onChange={(e) => setScheduleForm((f) => ({ ...f, weekday: Number(e.target.value) }))} /></div></div><div className="grid grid-cols-3 gap-2"><div><label className="mb-1 block text-xs font-medium text-cp-muted">Keep daily</label><input className="vz-input" type="number" min={0} value={scheduleForm.keep_daily} onChange={(e) => setScheduleForm((f) => ({ ...f, keep_daily: Number(e.target.value) }))} /></div><div><label className="mb-1 block text-xs font-medium text-cp-muted">Keep weekly</label><input className="vz-input" type="number" min={0} value={scheduleForm.keep_weekly} onChange={(e) => setScheduleForm((f) => ({ ...f, keep_weekly: Number(e.target.value) }))} /></div><div><label className="mb-1 block text-xs font-medium text-cp-muted">Keep monthly</label><input className="vz-input" type="number" min={0} value={scheduleForm.keep_monthly} onChange={(e) => setScheduleForm((f) => ({ ...f, keep_monthly: Number(e.target.value) }))} /></div></div><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={scheduleForm.is_active} onChange={(e) => setScheduleForm((f) => ({ ...f, is_active: e.target.checked }))} />Actif</label><div className="flex justify-end gap-2"><button type="button" className="vz-btn-ghost" onClick={() => setCreateKind(null)}>Annuler</button><button className="vz-btn-primary" type="submit" disabled={saveSchedule.isPending}>{saveSchedule.isPending ? "Enregistrement…" : "Créer"}</button></div></form></Modal>}
+
+      {confirm?.kind === "restore" && (
+        <Modal
+          title="Confirmer la restauration"
+          subtitle={confirm.archive.label || confirm.archive.name}
+          onClose={() => setConfirm(null)}
+        >
+          <div className="space-y-3 text-sm">
+            <p>
+              Restaurer cette sauvegarde remplacera les fichiers / bases / e-mails concernés par
+              le contenu de l&apos;archive. Cette action est irréversible.
+            </p>
+            <p className="text-xs text-cp-muted">
+              Type : {confirm.archive.backup_type}
+              {confirm.archive.includes?.length
+                ? ` · ${confirm.archive.includes.join(", ")}`
+                : ""}
+            </p>
+            <div className="flex justify-end gap-2">
+              <button type="button" className="vz-btn-ghost" onClick={() => setConfirm(null)}>
+                Annuler
+              </button>
+              <button
+                type="button"
+                className="vz-btn-primary"
+                disabled={restore.isPending}
+                onClick={() => {
+                  const id = confirm.archive.id;
+                  setConfirm(null);
+                  restore.mutate(id);
+                }}
+              >
+                {restore.isPending ? "Restauration…" : "Restaurer"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {confirm?.kind === "delete" && (
+        <Modal
+          title="Confirmer la suppression"
+          subtitle={confirm.archive.label || confirm.archive.name}
+          onClose={() => setConfirm(null)}
+        >
+          <div className="space-y-3 text-sm">
+            <p>
+              Supprimer définitivement cette archive ? Vous ne pourrez plus la restaurer ni la
+              télécharger.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button type="button" className="vz-btn-ghost" onClick={() => setConfirm(null)}>
+                Annuler
+              </button>
+              <button
+                type="button"
+                className="vz-btn-primary bg-cp-danger hover:opacity-90"
+                disabled={remove.isPending}
+                onClick={() => {
+                  const id = confirm.archive.id;
+                  setConfirm(null);
+                  remove.mutate(id);
+                }}
+              >
+                {remove.isPending ? "Suppression…" : "Supprimer"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {confirm?.kind === "delete-schedule" && (
+        <Modal
+          title="Supprimer la planification"
+          subtitle={`${confirm.schedule.frequency} à ${confirm.schedule.hour} h`}
+          onClose={() => setConfirm(null)}
+        >
+          <div className="space-y-3 text-sm">
+            <p>Supprimer cette planification automatique ?</p>
+            <div className="flex justify-end gap-2">
+              <button type="button" className="vz-btn-ghost" onClick={() => setConfirm(null)}>
+                Annuler
+              </button>
+              <button
+                type="button"
+                className="vz-btn-primary bg-cp-danger hover:opacity-90"
+                disabled={deleteSchedule.isPending}
+                onClick={() => {
+                  const id = confirm.schedule.id;
+                  setConfirm(null);
+                  deleteSchedule.mutate(id);
+                }}
+              >
+                Supprimer
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

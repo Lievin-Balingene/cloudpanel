@@ -34,6 +34,11 @@ export interface User {
   system_username?: string;
   home_directory?: string;
   primary_domain?: string;
+  package_name?: string;
+  disk_used_mb?: number | null;
+  disk_limit_mb?: number | null;
+  date_joined?: string;
+  last_login?: string | null;
   quota?: ResourceQuota;
   reseller_privileges?: string[];
   reseller_privilege_catalog?: {

@@ -163,3 +163,51 @@ async function apiRequestOnce<T>(
 
   return body as T;
 }
+
+/** Réponse paginée (WHM List Accounts, etc.) — conserve count / next / previous. */
+export type Paginated<T> = {
+  results: T[];
+  count: number;
+  next: string | null;
+  previous: string | null;
+  page: number;
+  page_size: number;
+};
+
+export async function apiRequestPaginated<T>(
+  path: string,
+  options: RequestInit = {},
+): Promise<Paginated<T>> {
+  const headers = new Headers(options.headers ?? {});
+  if (!headers.has("Content-Type") && options.body && !(options.body instanceof FormData)) {
+    headers.set("Content-Type", "application/json");
+  }
+  const token = getAccessToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
+  const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  if (response.status === 401 && token) clearAuth();
+  const body = await parseJson<Record<string, unknown>>(response);
+  if (!response.ok) {
+    const err = body as unknown as ApiError;
+    throw new ApiClientError(
+      err?.error?.message || `Erreur HTTP ${response.status}`,
+      response.status,
+      err?.success === false ? err : null,
+    );
+  }
+
+  const results = (body.results as T[]) || (body.data as T[]) || [];
+  const count = typeof body.count === "number" ? body.count : results.length;
+  const url = new URL(path, "http://local");
+  const page = Number(url.searchParams.get("page") || "1") || 1;
+  const page_size = Number(url.searchParams.get("page_size") || "50") || 50;
+  return {
+    results: Array.isArray(results) ? results : [],
+    count,
+    next: (body.next as string | null) ?? null,
+    previous: (body.previous as string | null) ?? null,
+    page,
+    page_size,
+  };
+}

@@ -269,8 +269,27 @@ TWEAK_CATALOG: list[dict[str, Any]] = [
     },
     {
         "id": "notifications",
-        "label": "Notifications",
+        "label": "Notifications (Contact Manager)",
         "settings": [
+            {
+                "key": "notify_account_creation",
+                "label": "Account Creation — email à l'admin WHM",
+                "type": "bool",
+                "default": True,
+                "help": "Comme cPanel : envoie un résumé à l'email Contact (Basic Setup) à chaque création de compte.",
+            },
+            {
+                "key": "notify_account_suspend",
+                "label": "Account Suspension / Unsuspension",
+                "type": "bool",
+                "default": True,
+            },
+            {
+                "key": "notify_account_termination",
+                "label": "Account Termination",
+                "type": "bool",
+                "default": True,
+            },
             {
                 "key": "notify_disk_warn_pct",
                 "label": "Alerte disque à (%)",

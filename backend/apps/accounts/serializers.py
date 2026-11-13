@@ -34,6 +34,9 @@ class UserSerializer(serializers.ModelSerializer):
     primary_domain = serializers.SerializerMethodField()
     parent_username = serializers.SerializerMethodField()
     owner_label = serializers.SerializerMethodField()
+    package_name = serializers.SerializerMethodField()
+    disk_used_mb = serializers.SerializerMethodField()
+    disk_limit_mb = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -55,6 +58,9 @@ class UserSerializer(serializers.ModelSerializer):
             "system_username",
             "home_directory",
             "primary_domain",
+            "package_name",
+            "disk_used_mb",
+            "disk_limit_mb",
             "last_login",
             "last_login_ip",
             "date_joined",
@@ -68,12 +74,18 @@ class UserSerializer(serializers.ModelSerializer):
             "system_username",
             "home_directory",
             "primary_domain",
+            "package_name",
+            "disk_used_mb",
+            "disk_limit_mb",
             "two_factor_enabled",
             "parent_username",
             "owner_label",
         )
 
     def get_primary_domain(self, obj: User) -> str:
+        annotated = getattr(obj, "primary_domain_name", None)
+        if annotated is not None:
+            return annotated or ""
         try:
             from apps.domains.models import Domain
 
@@ -102,6 +114,31 @@ class UserSerializer(serializers.ModelSerializer):
         if obj.parent_id and obj.parent:
             return obj.parent.username
         return "root"
+
+    def get_package_name(self, obj: User) -> str:
+        try:
+            from django.core.exceptions import ObjectDoesNotExist
+
+            asg = obj.package_assignment
+            return asg.package.name if asg and asg.package_id else ""
+        except ObjectDoesNotExist:
+            return ""
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def get_disk_used_mb(self, obj: User) -> float | None:
+        disk_map = self.context.get("disk_used_map") or {}
+        if obj.pk in disk_map:
+            return disk_map[obj.pk]
+        return None
+
+    def get_disk_limit_mb(self, obj: User) -> int | None:
+        quota = getattr(obj, "quota", None)
+        if quota and getattr(quota, "unlimited_disk", False):
+            return None
+        if quota and (quota.disk_mb or 0) > 0:
+            return int(quota.disk_mb)
+        return None
 
 
 class UserUpdateSerializer(serializers.ModelSerializer):
@@ -375,6 +412,30 @@ class UserCreateSerializer(serializers.ModelSerializer):
             )
 
         user.refresh_from_db()
+
+        # Notice WHM Contact Manager (style cPanel Account Creation)
+        try:
+            from apps.server_setup.contact_notify import notify_account_creation
+
+            pkg_name = None
+            if package_id:
+                try:
+                    from apps.packages.models import HostingPackage
+
+                    pkg_name = HostingPackage.objects.filter(pk=package_id).values_list(
+                        "name", flat=True
+                    ).first()
+                except Exception:  # noqa: BLE001
+                    pkg_name = None
+            notify_account_creation(
+                user,
+                actor=actor,
+                request=request,
+                package_name=pkg_name,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
         return user
 
 

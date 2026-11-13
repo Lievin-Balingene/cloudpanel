@@ -34,7 +34,8 @@ def _repo_summary(repo, *, include_public_key: bool = False) -> dict[str, Any]:
 )
 def list_git_repos(user: User, params: dict[str, Any]) -> dict[str, Any]:
     del params
-    from apps.git_deploy.services import overview_for, repos_qs
+    from apps.git_deploy.services import overview_for
+    from apps.ai_assistant.tools.helpers import ai_git_repos_qs as repos_qs
 
     repos = [_repo_summary(r) for r in repos_qs(user)[:80]]
     return ok(overview=overview_for(user), repositories=repos)
@@ -65,7 +66,8 @@ def list_git_repos(user: User, params: dict[str, Any]) -> dict[str, Any]:
     dangerous=True,
 )
 def clone_git_repository(user: User, params: dict[str, Any]) -> dict[str, Any]:
-    from apps.git_deploy.services import clone_repository, create_repository, repos_qs
+    from apps.git_deploy.services import clone_repository, create_repository
+    from apps.ai_assistant.tools.helpers import ai_git_repos_qs as repos_qs
 
     repo_id = require_int(params, "repo_id")
     if repo_id:
@@ -114,7 +116,8 @@ def clone_git_repository(user: User, params: dict[str, Any]) -> dict[str, Any]:
     dangerous=True,
 )
 def run_git_deploy_script(user: User, params: dict[str, Any]) -> dict[str, Any]:
-    from apps.git_deploy.services import repos_qs, run_deploy_script
+    from apps.git_deploy.services import run_deploy_script
+    from apps.ai_assistant.tools.helpers import ai_git_repos_qs as repos_qs
 
     repo = repos_qs(user).filter(pk=require_int(params, "repo_id")).first()
     if not repo:
@@ -142,7 +145,8 @@ def run_git_deploy_script(user: User, params: dict[str, Any]) -> dict[str, Any]:
     dangerous=True,
 )
 def generate_git_deploy_key(user: User, params: dict[str, Any]) -> dict[str, Any]:
-    from apps.git_deploy.services import generate_deploy_key, repos_qs
+    from apps.git_deploy.services import generate_deploy_key
+    from apps.ai_assistant.tools.helpers import ai_git_repos_qs as repos_qs
 
     repo = repos_qs(user).filter(pk=require_int(params, "repo_id")).first()
     if not repo:
@@ -175,7 +179,8 @@ def generate_git_deploy_key(user: User, params: dict[str, Any]) -> dict[str, Any
     dangerous=True,
 )
 def delete_git_repository(user: User, params: dict[str, Any]) -> dict[str, Any]:
-    from apps.git_deploy.services import delete_repository, repos_qs
+    from apps.git_deploy.services import delete_repository
+    from apps.ai_assistant.tools.helpers import ai_git_repos_qs as repos_qs
 
     repo = repos_qs(user).filter(pk=require_int(params, "repo_id")).first()
     if not repo:

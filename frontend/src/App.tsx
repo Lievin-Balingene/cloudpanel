@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { LoginPage } from "./pages/LoginPage";
 import { ChangePasswordPage } from "./pages/ChangePasswordPage";
+import { SsoHandoffPage } from "./pages/SsoHandoffPage";
 import { WhmShell } from "./layouts/WhmShell";
 import { ClientShell } from "./layouts/ClientShell";
 import { FileManagerShell } from "./layouts/FileManagerShell";
@@ -140,6 +141,8 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/change-password" element={<ChangePasswordPage />} />
+      {/* WHM Login as → panneau client (sans session préalable) */}
+      <Route path="/panel/sso" element={<SsoHandoffPage />} />
       <Route
         path="/"
         element={

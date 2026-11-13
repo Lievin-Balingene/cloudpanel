@@ -59,10 +59,14 @@ def send_message(
     ip_address: str | None = None,
     ui_context: dict | None = None,
 ) -> dict:
-    if conversation.owner_id != user.pk and getattr(user, "role", None) != User.Role.ADMINISTRATOR:
+    if conversation.owner_id != user.pk:
         from apps.core.exceptions import VZoneAPIException
 
-        raise VZoneAPIException(detail="Conversation interdite.", code="forbidden", status_code=403)
+        raise VZoneAPIException(
+            detail="Conversation interdite.",
+            code="forbidden",
+            status_code=403,
+        )
     assert_ai_rate_limit(int(user.pk))
     refresh_context(conversation)
     return run_assistant_turn(

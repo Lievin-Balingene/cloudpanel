@@ -57,10 +57,11 @@ def list_ai_capabilities(user: User, params: dict[str, Any]) -> dict[str, Any]:
         count=len(rows),
         role=user.role,
         note=(
-            "WHM/revendeur : passez username=compte_client ou utilisez set_working_account "
-            "pour agir dans un compte client."
+            "WHM/revendeur : utilisez set_working_account (username=client) avant "
+            "de lire/modifier les données d'un client. Sans cela, seul votre compte "
+            "est visible (pas d'accès transversal)."
             if user.role in {User.Role.ADMINISTRATOR, User.Role.RESELLER}
-            else "Toutes les actions portent sur votre compte."
+            else "Toutes les actions portent sur votre compte uniquement."
         ),
         tools=rows,
     )
@@ -485,7 +486,7 @@ def list_redirects(user: User, params: dict[str, Any]) -> dict[str, Any]:
 
     def _run():
         from apps.domains.models import DomainRedirect
-        from apps.domains.services import domains_queryset_for
+        from apps.ai_assistant.tools.helpers import ai_domains_qs as domains_queryset_for
 
         qs = domains_queryset_for(owner)
         domain_id = require_int(params, "domain_id")
@@ -536,7 +537,7 @@ def delete_redirect(user: User, params: dict[str, Any]) -> dict[str, Any]:
 
     def _run():
         from apps.domains.models import DomainRedirect
-        from apps.domains.services import domains_queryset_for
+        from apps.ai_assistant.tools.helpers import ai_domains_qs as domains_queryset_for
 
         allowed = domains_queryset_for(owner)
         r = DomainRedirect.objects.filter(pk=redirect_id, domain__in=allowed).first()
@@ -563,7 +564,7 @@ def list_mail_forwarders(user: User, params: dict[str, Any]) -> dict[str, Any]:
 
     def _run():
         from apps.email.models import MailForwarder
-        from apps.email.services import mail_domains_qs
+        from apps.ai_assistant.tools.helpers import ai_mail_domains_qs as mail_domains_qs
 
         domains = mail_domains_qs(owner)
         rows = []
@@ -603,7 +604,7 @@ def delete_mail_forwarder(user: User, params: dict[str, Any]) -> dict[str, Any]:
 
     def _run():
         from apps.email.models import MailForwarder
-        from apps.email.services import mail_domains_qs
+        from apps.ai_assistant.tools.helpers import ai_mail_domains_qs as mail_domains_qs
 
         domains = mail_domains_qs(owner)
         f = MailForwarder.objects.filter(pk=forwarder_id, mail_domain__in=domains).first()

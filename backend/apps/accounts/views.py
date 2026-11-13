@@ -29,6 +29,90 @@ class AuthRateThrottle(AnonRateThrottle):
     scope = "auth"
 
 
+class LoginAsView(APIView):
+    """WHM → Login as (cPanel) : jeton SSO one-shot vers le panneau client."""
+
+    permission_classes = [IsAuthenticated, CanManageUsers]
+
+    def post(self, request: Request, pk: int) -> Response:
+        from apps.accounts.sso import create_login_as_handoff
+
+        qs = User.objects.all()
+        if request.user.role == User.Role.RESELLER:
+            qs = qs.filter(parent=request.user)
+        elif request.user.role != User.Role.ADMINISTRATOR:
+            return Response(status=status.HTTP_403_FORBIDDEN)
+        try:
+            target = qs.get(pk=pk)
+        except User.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+
+        data = create_login_as_handoff(actor=request.user, target=target, request=request)
+        return Response({"success": True, "data": data})
+
+
+class SsoExchangeView(APIView):
+    """Échange le handoff SSO (public, one-shot) contre une session JWT client."""
+
+    permission_classes = [AllowAny]
+    authentication_classes: list = []
+    throttle_classes = [AuthRateThrottle]
+
+    def post(self, request: Request) -> Response:
+        from apps.accounts.sso import consume_login_as_handoff
+
+        token = request.data.get("handoff") or request.data.get("token") or ""
+        data = consume_login_as_handoff(str(token))
+        return Response({"success": True, "data": data})
+
+
+def _managed_user_or_404(request: Request, pk: int) -> User | Response:
+    qs = User.objects.all()
+    if request.user.role == User.Role.RESELLER:
+        qs = qs.filter(parent=request.user)
+    elif request.user.role != User.Role.ADMINISTRATOR:
+        return Response(status=status.HTTP_403_FORBIDDEN)
+    try:
+        return qs.get(pk=pk)
+    except User.DoesNotExist:
+        return Response(status=status.HTTP_404_NOT_FOUND)
+
+
+class AccountLogsListView(APIView):
+    """Liste les journaux web (par domaine) d'un compte — WHM Raw Access / Error Log."""
+
+    permission_classes = [IsAuthenticated, CanManageUsers]
+
+    def get(self, request: Request, pk: int) -> Response:
+        from apps.accounts.account_logs import list_account_logs
+
+        target = _managed_user_or_404(request, pk)
+        if isinstance(target, Response):
+            return target
+        return Response({"success": True, "data": list_account_logs(target)})
+
+
+class AccountLogsTailView(APIView):
+    """Tail d'un journal (domain + kind) pour un compte."""
+
+    permission_classes = [IsAuthenticated, CanManageUsers]
+
+    def get(self, request: Request, pk: int) -> Response:
+        from apps.accounts.account_logs import tail_account_log
+
+        target = _managed_user_or_404(request, pk)
+        if isinstance(target, Response):
+            return target
+        domain = (request.query_params.get("domain") or "").strip()
+        kind = (request.query_params.get("kind") or "access").strip()
+        try:
+            lines = int(request.query_params.get("lines") or 200)
+        except (TypeError, ValueError):
+            lines = 200
+        data = tail_account_log(target, domain_name=domain, kind=kind, lines=lines)
+        return Response({"success": True, "data": data})
+
+
 class LoginView(APIView):
     permission_classes = [AllowAny]
     authentication_classes: list = []
@@ -152,6 +236,7 @@ class TwoFactorSetupView(APIView):
 
 class UserListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated, CanManageUsers]
+    pagination_class = None  # overriden in list() for scalable paging
 
     def get_serializer_class(self):
         if self.request.method == "POST":
@@ -159,19 +244,100 @@ class UserListCreateView(generics.ListCreateAPIView):
         return UserSerializer
 
     def get_queryset(self):
+        from django.db.models import OuterRef, Subquery
+
+        from apps.domains.models import Domain
+
         user = self.request.user
-        qs = User.objects.select_related("quota", "parent")
+        primary = (
+            Domain.objects.filter(
+                owner_id=OuterRef("pk"),
+                domain_type=Domain.DomainType.PRIMARY,
+                is_active=True,
+            )
+            .order_by("created_at")
+            .values("name")[:1]
+        )
+        qs = (
+            User.objects.select_related("quota", "parent", "package_assignment__package")
+            .annotate(primary_domain_name=Subquery(primary))
+            .order_by("-date_joined", "username")
+        )
         if user.role == User.Role.ADMINISTRATOR:
-            return qs
-        if user.role == User.Role.RESELLER:
-            return qs.filter(parent=user)
-        return qs.none()
+            pass
+        elif user.role == User.Role.RESELLER:
+            qs = qs.filter(parent=user)
+        else:
+            return qs.none()
+
+        q = (self.request.query_params.get("q") or "").strip()
+        if q:
+            from django.db.models import Q
+
+            qs = qs.filter(
+                Q(username__icontains=q)
+                | Q(email__icontains=q)
+                | Q(primary_domain_name__icontains=q)
+                | Q(first_name__icontains=q)
+                | Q(last_name__icontains=q)
+            )
+
+        role = (self.request.query_params.get("role") or "").strip()
+        if role in {User.Role.CLIENT, User.Role.RESELLER, User.Role.ADMINISTRATOR}:
+            qs = qs.filter(role=role)
+
+        status_f = (self.request.query_params.get("status") or "").strip().lower()
+        if status_f == "suspended":
+            qs = qs.filter(is_suspended=True)
+        elif status_f == "active":
+            qs = qs.filter(is_suspended=False, is_active=True)
+
+        # Filtre propriétaire / revendeur (admin only — un reseller est déjà scopé)
+        parent_raw = (self.request.query_params.get("parent") or "").strip().lower()
+        if user.role == User.Role.ADMINISTRATOR and parent_raw:
+            if parent_raw in {"root", "0", "none"}:
+                qs = qs.filter(parent__isnull=True).exclude(role=User.Role.ADMINISTRATOR)
+            else:
+                try:
+                    parent_id = int(parent_raw)
+                except ValueError:
+                    parent_id = None
+                if parent_id is not None:
+                    # Comptes du reseller (+ optionnellement le reseller lui-même via include_reseller=1)
+                    include_self = (self.request.query_params.get("include_reseller") or "").strip() in {
+                        "1",
+                        "true",
+                        "yes",
+                    }
+                    if include_self:
+                        from django.db.models import Q
+
+                        qs = qs.filter(Q(parent_id=parent_id) | Q(pk=parent_id))
+                    else:
+                        qs = qs.filter(parent_id=parent_id)
+
+        return qs
 
     def list(self, request: Request, *args, **kwargs) -> Response:
-        response = super().list(request, *args, **kwargs)
-        if isinstance(response.data, dict) and "results" in response.data:
-            return response
-        return Response({"success": True, "data": response.data})
+        from apps.accounts.disk_usage_list import batch_disk_used_mb
+        from apps.core.pagination import StandardPagination
+
+        queryset = self.filter_queryset(self.get_queryset())
+        paginator = StandardPagination()
+        # List Accounts : pages plus larges pour WHM (toujours plafonné)
+        paginator.page_size = 50
+        paginator.max_page_size = 200
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        rows = page if page is not None else list(queryset[:200])
+        disk_map = batch_disk_used_mb(rows, refresh_missing=True)
+        serializer = self.get_serializer(
+            rows,
+            many=True,
+            context={**self.get_serializer_context(), "disk_used_map": disk_map},
+        )
+        if page is not None:
+            return paginator.get_paginated_response(serializer.data)
+        return Response({"success": True, "data": serializer.data})
 
     def create(self, request: Request, *args, **kwargs) -> Response:
         serializer = self.get_serializer(data=request.data)
@@ -245,6 +411,12 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
             request, self
         ):
             return Response(status=status.HTTP_403_FORBIDDEN)
+        try:
+            from apps.server_setup.contact_notify import notify_account_termination
+
+            notify_account_termination(instance, actor=request.user, request=request)
+        except Exception:  # noqa: BLE001
+            pass
         delete_account(instance)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -304,6 +476,17 @@ class SuspendUserView(APIView):
             from apps.domains.vhosts import sync_owner_domain_vhosts
 
             sync_owner_domain_vhosts(target)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from apps.server_setup.contact_notify import notify_account_suspend
+
+            notify_account_suspend(
+                target,
+                actor=request.user,
+                request=request,
+                suspended=bool(suspended),
+            )
         except Exception:  # noqa: BLE001
             pass
         return Response({"success": True, "data": UserSerializer(target).data})

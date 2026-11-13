@@ -31,7 +31,20 @@ rollback_smtp() {
   echo "SMTP rétabli. DKIM NON actif. Voir /tmp/repair-smtp-rollback.log"
 }
 
-echo "=== repair-dkim (0.39.14) — safe + AUTH test + rollback ==="
+echo "=== repair-dkim (0.40.40) — safe + AUTH test + rollback (sans spam boîte) ==="
+
+purge_dkim_probes() {
+  # Retire les mails de test des boîtes (update.sh / repair relancent souvent ce probe).
+  local maps="${MAPS_DIR}/dovecot-users"
+  command -v doveadm >/dev/null 2>&1 || return 0
+  if [[ -f "$maps" ]]; then
+    while IFS=: read -r user _rest || [[ -n "${user:-}" ]]; do
+      [[ -z "${user:-}" || "$user" =~ ^# ]] && continue
+      doveadm expunge -u "$user" mailbox INBOX SUBJECT "vzone-dkim-probe" >/dev/null 2>&1 || true
+      doveadm expunge -u "$user" mailbox 'INBOX/*' SUBJECT "vzone-dkim-probe" >/dev/null 2>&1 || true
+    done < "$maps"
+  fi
+}
 
 # 0) Sauvegarde master actuel
 cp -a /etc/postfix/master.cf "$MASTER_BAK" 2>/dev/null || true
@@ -177,6 +190,8 @@ msg = EmailMessage()
 msg["From"] = user
 msg["To"] = user
 msg["Subject"] = "vzone-dkim-probe"
+msg["Auto-Submitted"] = "auto-generated"
+msg["X-VZone-Probe"] = "dkim"
 msg.set_content("dkim probe — safe to ignore")
 
 try:
@@ -189,6 +204,20 @@ try:
         s.ehlo()
         s.login(user, password)
         s.send_message(msg)
+    # Ne laisse pas le mail de test dans la boîte de réception.
+    import subprocess, time
+    time.sleep(1.5)
+    for _ in range(3):
+        r = subprocess.run(
+            ["doveadm", "expunge", "-u", user, "mailbox", "INBOX", "SUBJECT", "vzone-dkim-probe"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if r.returncode == 0:
+            break
+        time.sleep(1)
     print("AUTH_DATA_OK", user)
 except smtplib.SMTPDataError as e:
     print("SMTP_DATA_FAIL", e.smtp_code, e.smtp_error)
@@ -213,8 +242,12 @@ elif [[ "$auth_rc" -eq 2 ]]; then
   echo "AVERTISSEMENT: pas de boîte/mot de passe pour test AUTH"
   echo "Milter actif avec On-InternalError=accept. Si Roundcube fail → repair-smtp (timer auto)."
 else
-  echo "AUTH_DATA_OK — milter n'a pas cassé l'envoi"
+  echo "AUTH_DATA_OK — milter n'a pas cassé l'envoi (probe retiré de l'INBOX)"
 fi
+
+# Nettoie aussi d'anciens probes restés dans les boîtes
+purge_dkim_probes
+echo "Probes DKIM purgés des boîtes (sujet vzone-dkim-probe)"
 
 # 4) Timer garde SMTP
 if [[ -f "${REPO_DIR}/deploy/systemd/vzone-smtp-guard.timer" ]]; then

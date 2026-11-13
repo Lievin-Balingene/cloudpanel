@@ -100,6 +100,15 @@ def resolve_recipients(rule: AlertRule) -> list[str]:
     emails = rule.recipient_list()
     if emails:
         return emails
+    # Contact Manager WHM (comme cPanel) — email admin serveur
+    try:
+        from apps.server_setup.contact_notify import get_contact_email
+
+        contact = get_contact_email()
+        if contact:
+            return [contact]
+    except Exception:  # noqa: BLE001
+        pass
     default = getattr(settings, "VZONE_ALERT_DEFAULT_RECIPIENTS", "") or ""
     emails = [e.strip() for e in default.split(",") if e.strip()]
     if emails:

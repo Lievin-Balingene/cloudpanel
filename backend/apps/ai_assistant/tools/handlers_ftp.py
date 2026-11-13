@@ -29,7 +29,7 @@ def _ftp_summary(account) -> dict[str, Any]:
 )
 def list_ftp_accounts(user: User, params: dict[str, Any]) -> dict[str, Any]:
     del params
-    from apps.ftp.services import accounts_queryset_for
+    from apps.ai_assistant.tools.helpers import ai_ftp_accounts_qs as accounts_queryset_for
 
     accounts = [_ftp_summary(a) for a in accounts_queryset_for(user)[:80]]
     return ok(accounts=accounts, count=len(accounts))
@@ -102,7 +102,8 @@ def create_ftp_account(user: User, params: dict[str, Any]) -> dict[str, Any]:
     dangerous=True,
 )
 def update_ftp_account(user: User, params: dict[str, Any]) -> dict[str, Any]:
-    from apps.ftp.services import accounts_queryset_for, update_ftp_account as svc
+    from apps.ai_assistant.tools.helpers import ai_ftp_accounts_qs as accounts_queryset_for
+    from apps.ftp.services import update_ftp_account as svc
 
     account = accounts_queryset_for(user).filter(pk=require_int(params, "account_id")).first()
     if not account:
@@ -149,7 +150,8 @@ def update_ftp_account(user: User, params: dict[str, Any]) -> dict[str, Any]:
     dangerous=True,
 )
 def suspend_ftp_account(user: User, params: dict[str, Any]) -> dict[str, Any]:
-    from apps.ftp.services import accounts_queryset_for, suspend_ftp_account as svc
+    from apps.ai_assistant.tools.helpers import ai_ftp_accounts_qs as accounts_queryset_for
+    from apps.ftp.services import suspend_ftp_account as svc
 
     account = accounts_queryset_for(user).filter(pk=require_int(params, "account_id")).first()
     if not account:
@@ -177,7 +179,8 @@ def suspend_ftp_account(user: User, params: dict[str, Any]) -> dict[str, Any]:
     dangerous=True,
 )
 def delete_ftp_account(user: User, params: dict[str, Any]) -> dict[str, Any]:
-    from apps.ftp.services import accounts_queryset_for, delete_ftp_account as svc
+    from apps.ai_assistant.tools.helpers import ai_ftp_accounts_qs as accounts_queryset_for
+    from apps.ftp.services import delete_ftp_account as svc
 
     account = accounts_queryset_for(user).filter(pk=require_int(params, "account_id")).first()
     if not account:

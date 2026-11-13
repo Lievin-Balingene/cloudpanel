@@ -1,21 +1,25 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Plus, Shield, Trash2 } from "lucide-react";
+import { ExternalLink, FileText, Plus, Shield, Trash2 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
 import { runWithProgress } from "@/stores/operations";
 import type { Domain } from "@/types";
+import { AccountLogsModal } from "@/components/AccountLogsModal";
 import { IconAction } from "@/components/ui/IconAction";
 import { Modal } from "@/components/ui/Modal";
 import { EmptyState, PageHeader, StatusDot } from "@/components/ui/PageChrome";
+import { useAuthStore } from "@/stores/auth";
 
 export function DomainsManager({ title }: { title: string }) {
   const qc = useQueryClient();
+  const me = useAuthStore((s) => s.user);
   const { data: domains = [], isLoading, isError: domainsLoadError, error: domainsError } = useQuery({
     queryKey: ["domains"],
     queryFn: () => apiRequest<Domain[]>("/domains/"),
   });
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [logsOpen, setLogsOpen] = useState(false);
   const { data: olsInfo } = useQuery({
     queryKey: ["ols-overview"],
     queryFn: () =>
@@ -339,6 +343,12 @@ export function DomainsManager({ title }: { title: string }) {
                   ) : null}
                 </div>
                 <div className="flex gap-1">
+                  <IconAction
+                    label="Voir les logs (access / error)"
+                    onClick={() => setLogsOpen(true)}
+                  >
+                    <FileText className="h-4 w-4" />
+                  </IconAction>
                   <IconAction label="Émettre le certificat Let’s Encrypt" onClick={() => issueSsl.mutate()} disabled={issueSsl.isPending}><Shield className="h-4 w-4" /></IconAction>
                   <IconAction label="Supprimer le domaine" danger onClick={() => removeDomain.mutate(selected.id)}><Trash2 className="h-4 w-4" /></IconAction>
                 </div>
@@ -380,6 +390,14 @@ export function DomainsManager({ title }: { title: string }) {
       </div>
       {subdomainOpen && selected && <Modal title="Créer un sous-domaine" onClose={() => setSubdomainOpen(false)}><form className="space-y-3" onSubmit={(e) => { e.preventDefault(); createSub.mutate(); }}><p className="text-sm text-cp-muted">Le sous-domaine pointera vers son propre répertoire.</p><div className="flex items-center gap-2"><input className="vz-input" value={subLabel} onChange={(e) => setSubLabel(e.target.value)} placeholder="blog" required /><span className="text-sm text-cp-muted">.{selected.name}</span></div>{createSub.isError && <p className="text-sm text-cp-danger">{(createSub.error as Error)?.message}</p>}<div className="flex justify-end gap-2"><button type="button" className="vz-btn-ghost" onClick={() => setSubdomainOpen(false)}>Annuler</button><button className="vz-btn-primary" disabled={createSub.isPending}>Créer</button></div></form></Modal>}
       {redirectOpen && selected && <Modal title="Ajouter une redirection" onClose={() => setRedirectOpen(false)}><form className="space-y-3" onSubmit={(e) => { e.preventDefault(); createRedirect.mutate(); }}><input className="vz-input w-full" value={redirect.source_path} onChange={(e) => setRedirect({ ...redirect, source_path: e.target.value })} placeholder="/chemin" /><input className="vz-input w-full" value={redirect.destination_url} onChange={(e) => setRedirect({ ...redirect, destination_url: e.target.value })} placeholder="https://destination" required />{createRedirect.isError && <p className="text-sm text-cp-danger">{(createRedirect.error as Error)?.message}</p>}<div className="flex justify-end gap-2"><button type="button" className="vz-btn-ghost" onClick={() => setRedirectOpen(false)}>Annuler</button><button className="vz-btn-primary" disabled={createRedirect.isPending}>Ajouter</button></div></form></Modal>}
+      {logsOpen && selected && (
+        <AccountLogsModal
+          domainId={selected.id}
+          username={selected.owner_username || me?.username || selected.name}
+          initialDomain={selected.name}
+          onClose={() => setLogsOpen(false)}
+        />
+      )}
     </div>
   );
 }
