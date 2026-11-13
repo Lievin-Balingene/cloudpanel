@@ -37,6 +37,12 @@ type ResetPasswordResult = {
   message: string;
 };
 
+type ConfirmAction =
+  | { kind: "suspend"; user: AccountRow }
+  | { kind: "unsuspend"; user: AccountRow }
+  | { kind: "terminate"; user: AccountRow }
+  | { kind: "login-as"; user: AccountRow };
+
 type EditForm = {
   email: string;
   first_name: string;
@@ -125,6 +131,8 @@ export function WhmAccountsPage() {
   const [resetConfirm, setResetConfirm] = useState("");
   const [resetResult, setResetResult] = useState<ResetPasswordResult | null>(null);
   const [copiedPwd, setCopiedPwd] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
+  const [terminateConfirm, setTerminateConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
   const loginAsWinRef = useRef<Window | null>(null);
 
@@ -243,6 +251,7 @@ export function WhmAccountsPage() {
       }),
     onSuccess: () => {
       setError(null);
+      setConfirmAction(null);
       invalidate();
     },
     onError: (err: Error) => setError(err.message || "Action impossible."),
@@ -252,6 +261,8 @@ export function WhmAccountsPage() {
     mutationFn: (id: number) => apiRequest(`/auth/users/${id}/`, { method: "DELETE" }),
     onSuccess: () => {
       setError(null);
+      setConfirmAction(null);
+      setTerminateConfirm("");
       if (editing) setEditing(null);
       invalidate();
     },
@@ -280,7 +291,8 @@ export function WhmAccountsPage() {
 
   function startLoginAs(userId: number) {
     setError(null);
-    // Doit être synchrone dans le handler click
+    setConfirmAction(null);
+    // Doit être synchrone dans le handler click (après Confirm de la modale)
     const win = openBlankTab();
     if (!win) {
       setError("Autorisez les pop-ups pour ouvrir le panneau client (Login as).");
@@ -297,6 +309,33 @@ export function WhmAccountsPage() {
     }
     loginAsWinRef.current = win;
     loginAs.mutate(userId);
+  }
+
+  function closeConfirm() {
+    setConfirmAction(null);
+    setTerminateConfirm("");
+  }
+
+  function runConfirmedAction() {
+    if (!confirmAction) return;
+    const { kind, user } = confirmAction;
+    setError(null);
+    if (kind === "suspend") {
+      suspendUser.mutate({ id: user.id, suspended: true });
+      return;
+    }
+    if (kind === "unsuspend") {
+      suspendUser.mutate({ id: user.id, suspended: false });
+      return;
+    }
+    if (kind === "terminate") {
+      if (terminateConfirm.trim() !== user.username) return;
+      deleteUser.mutate(user.id);
+      return;
+    }
+    if (kind === "login-as") {
+      startLoginAs(user.id);
+    }
   }
 
   const resetPassword = useMutation({
@@ -616,7 +655,7 @@ export function WhmAccountsPage() {
                             tone="accent"
                             size="sm"
                             disabled={loginAs.isPending}
-                            onClick={() => startLoginAs(u.id)}
+                            onClick={() => setConfirmAction({ kind: "login-as", user: u })}
                           >
                             <LogIn className="h-3.5 w-3.5" />
                           </IconAction>
@@ -648,7 +687,13 @@ export function WhmAccountsPage() {
                           label={suspended ? "Unsuspend" : "Suspend"}
                           tone={suspended ? "success" : "warning"}
                           size="sm"
-                          onClick={() => suspendUser.mutate({ id: u.id, suspended: !suspended })}
+                          disabled={suspendUser.isPending}
+                          onClick={() =>
+                            setConfirmAction({
+                              kind: suspended ? "unsuspend" : "suspend",
+                              user: u,
+                            })
+                          }
                         >
                           {suspended ? (
                             <PlayCircle className="h-3.5 w-3.5" />
@@ -660,14 +705,10 @@ export function WhmAccountsPage() {
                           label="Terminate"
                           danger
                           size="sm"
+                          disabled={deleteUser.isPending}
                           onClick={() => {
-                            if (
-                              window.confirm(
-                                `Delete account « ${u.username} » and its home directory? This cannot be undone.`,
-                              )
-                            ) {
-                              deleteUser.mutate(u.id);
-                            }
+                            setTerminateConfirm("");
+                            setConfirmAction({ kind: "terminate", user: u });
                           }}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
@@ -818,6 +859,96 @@ export function WhmAccountsPage() {
               </div>
             </div>
           )}
+        </Modal>
+      )}
+
+      {confirmAction && (
+        <Modal
+          title={
+            confirmAction.kind === "suspend"
+              ? "Suspend account"
+              : confirmAction.kind === "unsuspend"
+                ? "Unsuspend account"
+                : confirmAction.kind === "terminate"
+                  ? "Terminate account"
+                  : "Login as account"
+          }
+          subtitle={`« ${confirmAction.user.username} »${
+            confirmAction.user.primary_domain ? ` · ${confirmAction.user.primary_domain}` : ""
+          }`}
+          onClose={closeConfirm}
+        >
+          <div className="space-y-3 text-sm">
+            {confirmAction.kind === "suspend" && (
+              <p>
+                Suspend this account? Sites will show the suspension page and the user will not be able
+                to log in until unsuspended.
+              </p>
+            )}
+            {confirmAction.kind === "unsuspend" && (
+              <p>Restore this account? Sites and panel access will become available again.</p>
+            )}
+            {confirmAction.kind === "login-as" && (
+              <p>
+                Open the client panel as <span className="font-mono font-medium">{confirmAction.user.username}</span>?
+                A new tab will start an SSO session for this account.
+              </p>
+            )}
+            {confirmAction.kind === "terminate" && (
+              <>
+                <p className="rounded-md border border-red-300/80 bg-red-50 px-3 py-2 text-xs text-red-950 dark:border-red-800 dark:bg-red-950/40 dark:text-red-100">
+                  This permanently deletes the account and its home directory. This cannot be undone.
+                </p>
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-cp-muted">
+                    Type username to confirm{" "}
+                    <span className="font-mono text-cp-text">{confirmAction.user.username}</span>
+                  </span>
+                  <input
+                    className="vz-input w-full font-mono"
+                    autoComplete="off"
+                    autoFocus
+                    spellCheck={false}
+                    value={terminateConfirm}
+                    onChange={(e) => setTerminateConfirm(e.target.value)}
+                    placeholder={confirmAction.user.username}
+                  />
+                </label>
+              </>
+            )}
+            {error && <p className="text-sm text-cp-danger">{error}</p>}
+            <div className="flex justify-end gap-2 pt-1">
+              <button type="button" className="vz-btn-ghost" onClick={closeConfirm}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className={
+                  confirmAction.kind === "terminate"
+                    ? "vz-btn-primary bg-cp-danger hover:opacity-90"
+                    : "vz-btn-primary"
+                }
+                disabled={
+                  suspendUser.isPending ||
+                  deleteUser.isPending ||
+                  loginAs.isPending ||
+                  (confirmAction.kind === "terminate" &&
+                    terminateConfirm.trim() !== confirmAction.user.username)
+                }
+                onClick={() => runConfirmedAction()}
+              >
+                {suspendUser.isPending || deleteUser.isPending || loginAs.isPending
+                  ? "Working…"
+                  : confirmAction.kind === "suspend"
+                    ? "Suspend"
+                    : confirmAction.kind === "unsuspend"
+                      ? "Unsuspend"
+                      : confirmAction.kind === "terminate"
+                        ? "Terminate"
+                        : "Login as"}
+              </button>
+            </div>
+          </div>
         </Modal>
       )}
     </div>
