@@ -203,7 +203,8 @@ class UserUpdateSerializer(serializers.ModelSerializer):
             setattr(instance, attr, value)
         if password:
             instance.set_password(password)
-            instance.must_change_password = False
+            # Admin/reseller qui fixe un MDP → forcer le changement au prochain login
+            instance.must_change_password = True
         # Cohérence suspension
         if instance.is_suspended:
             instance.is_active = False

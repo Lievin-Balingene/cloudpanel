@@ -2,10 +2,13 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Check,
   ChevronLeft,
   ChevronRight,
+  Copy,
   ExternalLink,
   FileText,
+  KeyRound,
   LogIn,
   PauseCircle,
   Pencil,
@@ -20,7 +23,18 @@ import { canCreateResellerAccount } from "@/lib/resellerAcl";
 import { useAuthStore } from "@/stores/auth";
 import { AccountLogsModal } from "@/components/AccountLogsModal";
 import { IconAction } from "@/components/ui/IconAction";
+import { Modal } from "@/components/ui/Modal";
 import type { HostingPackage, User } from "@/types";
+
+type ResetPasswordResult = {
+  user_id: number;
+  username: string;
+  temporary_password: string;
+  must_change_password: boolean;
+  sessions_revoked: number;
+  shown_once: boolean;
+  message: string;
+};
 
 type EditForm = {
   email: string;
@@ -106,6 +120,10 @@ export function WhmAccountsPage() {
   const [editing, setEditing] = useState<AccountRow | null>(null);
   const [editForm, setEditForm] = useState<EditForm | null>(null);
   const [logsFor, setLogsFor] = useState<AccountRow | null>(null);
+  const [resetFor, setResetFor] = useState<AccountRow | null>(null);
+  const [resetConfirm, setResetConfirm] = useState("");
+  const [resetResult, setResetResult] = useState<ResetPasswordResult | null>(null);
+  const [copiedPwd, setCopiedPwd] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -255,6 +273,47 @@ export function WhmAccountsPage() {
     onError: (err: Error) => setError(err.message || "Login as impossible."),
   });
 
+  const resetPassword = useMutation({
+    mutationFn: ({ id, confirm_username }: { id: number; confirm_username: string }) =>
+      apiRequest<ResetPasswordResult>(`/auth/users/${id}/reset-password/`, {
+        method: "POST",
+        body: JSON.stringify({ confirm_username }),
+      }),
+    onSuccess: (data) => {
+      setError(null);
+      setResetResult(data);
+      setResetConfirm("");
+      setCopiedPwd(false);
+    },
+    onError: (err: Error) => setError(err.message || "Réinitialisation impossible."),
+  });
+
+  function openReset(u: AccountRow) {
+    setError(null);
+    setResetResult(null);
+    setResetConfirm("");
+    setCopiedPwd(false);
+    setResetFor(u);
+  }
+
+  function closeReset() {
+    setResetFor(null);
+    setResetResult(null);
+    setResetConfirm("");
+    setCopiedPwd(false);
+  }
+
+  async function copyTemporaryPassword() {
+    if (!resetResult?.temporary_password) return;
+    try {
+      await navigator.clipboard.writeText(resetResult.temporary_password);
+      setCopiedPwd(true);
+      window.setTimeout(() => setCopiedPwd(false), 2000);
+    } catch {
+      setError("Copie presse-papiers impossible — sélectionnez le mot de passe manuellement.");
+    }
+  }
+
   function onSaveEdit(e: FormEvent) {
     e.preventDefault();
     setError(null);
@@ -381,14 +440,19 @@ export function WhmAccountsPage() {
               value={editForm.last_name}
               onChange={(e) => setEditForm({ ...editForm, last_name: e.target.value })}
             />
-            <input
-              className="vz-input"
-              type="password"
-              minLength={10}
-              placeholder="New password (optional)"
-              value={editForm.password}
-              onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
-            />
+            <div className="space-y-1">
+              <input
+                className="vz-input"
+                type="password"
+                minLength={10}
+                placeholder="New password (optional)"
+                value={editForm.password}
+                onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
+              />
+              <p className="text-[10px] text-cp-muted">
+                Prefer the secure Reset password action (key icon). Setting a password here also forces change at next login.
+              </p>
+            </div>
             <select
               className="vz-input"
               value={editForm.package_id}
@@ -541,6 +605,16 @@ export function WhmAccountsPage() {
                             <FileText className="h-3.5 w-3.5" />
                           </IconAction>
                         )}
+                        {u.role !== "administrator" && (
+                          <IconAction
+                            label="Reset password (secure)"
+                            tone="warning"
+                            size="sm"
+                            onClick={() => openReset(u)}
+                          >
+                            <KeyRound className="h-3.5 w-3.5" />
+                          </IconAction>
+                        )}
                         <IconAction label="Modify" tone="info" size="sm" onClick={() => setEditing(u)}>
                           <Pencil className="h-3.5 w-3.5" />
                         </IconAction>
@@ -626,6 +700,99 @@ export function WhmAccountsPage() {
           username={logsFor.username}
           onClose={() => setLogsFor(null)}
         />
+      )}
+
+      {resetFor && (
+        <Modal
+          title="Reset password"
+          subtitle={`Secure reset for « ${resetFor.username} »`}
+          onClose={closeReset}
+        >
+          {!resetResult ? (
+            <div className="space-y-3">
+              <p className="text-sm text-cp-text">
+                A strong temporary password will be generated server-side. All active sessions for this
+                account will be revoked, and the user must change the password at next login.
+              </p>
+              <ul className="list-inside list-disc text-xs text-cp-muted space-y-1">
+                <li>Password never emailed (shown once here only)</li>
+                <li>Contact Manager notified without the secret</li>
+                <li>Type the username below to confirm</li>
+              </ul>
+              <label className="block space-y-1">
+                <span className="text-xs font-medium text-cp-muted">
+                  Confirm username <span className="font-mono text-cp-text">{resetFor.username}</span>
+                </span>
+                <input
+                  className="vz-input w-full font-mono"
+                  autoComplete="off"
+                  autoFocus
+                  spellCheck={false}
+                  value={resetConfirm}
+                  onChange={(e) => setResetConfirm(e.target.value)}
+                  placeholder={resetFor.username}
+                />
+              </label>
+              {error && <p className="text-sm text-cp-danger">{error}</p>}
+              <div className="flex justify-end gap-2 pt-1">
+                <button type="button" className="vz-btn-ghost" onClick={closeReset}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="vz-btn-primary"
+                  disabled={
+                    resetPassword.isPending ||
+                    resetConfirm.trim() !== resetFor.username
+                  }
+                  onClick={() => {
+                    setError(null);
+                    resetPassword.mutate({
+                      id: resetFor.id,
+                      confirm_username: resetConfirm.trim(),
+                    });
+                  }}
+                >
+                  {resetPassword.isPending ? "Resetting…" : "Reset password"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <p className="rounded-md border border-amber-300/80 bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
+                Shown once — copy now and give it to the account owner out-of-band. It will not be
+                displayed again.
+              </p>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-cp-muted">
+                  Temporary password
+                </p>
+                <div className="mt-1 flex items-stretch gap-1">
+                  <code className="flex-1 break-all rounded-md border border-cp-border bg-cp-canvas px-3 py-2 font-mono text-sm dark:border-ink-700 dark:bg-ink-900">
+                    {resetResult.temporary_password}
+                  </code>
+                  <button
+                    type="button"
+                    className="vz-btn-ghost shrink-0 px-2"
+                    onClick={() => void copyTemporaryPassword()}
+                    title="Copy"
+                  >
+                    {copiedPwd ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+              <p className="text-xs text-cp-muted">
+                Sessions revoked: {resetResult.sessions_revoked}. Force password change:{" "}
+                {resetResult.must_change_password ? "yes" : "no"}.
+              </p>
+              <div className="flex justify-end">
+                <button type="button" className="vz-btn-primary" onClick={closeReset}>
+                  Done
+                </button>
+              </div>
+            </div>
+          )}
+        </Modal>
       )}
     </div>
   );

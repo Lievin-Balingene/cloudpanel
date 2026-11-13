@@ -16,12 +16,14 @@ logger = logging.getLogger(__name__)
 EVENT_ACCOUNT_CREATION = "notify_account_creation"
 EVENT_ACCOUNT_SUSPEND = "notify_account_suspend"
 EVENT_ACCOUNT_TERMINATION = "notify_account_termination"
+EVENT_PASSWORD_RESET = "notify_password_reset"
 EVENT_BACKUP_FAILURE = "backup_notify_email"
 
 DEFAULT_EVENTS = {
     EVENT_ACCOUNT_CREATION: True,
     EVENT_ACCOUNT_SUSPEND: True,
     EVENT_ACCOUNT_TERMINATION: True,
+    EVENT_PASSWORD_RESET: True,
     EVENT_BACKUP_FAILURE: True,
 }
 
@@ -304,6 +306,29 @@ def notify_account_suspend(user, *, actor=None, request=None, suspended: bool = 
     )
 
 
+def notify_password_reset(user, *, actor=None, request=None) -> bool:
+    """Email admin — reset MDP (jamais le mot de passe en clair)."""
+    meta = request_meta(request) if request is not None else {"ip": "—", "rdns": "—"}
+    actor_name = getattr(actor, "username", None) or "system"
+    body = (
+        f"Username:\t{user.username}\n"
+        f"Domain:\t{_account_domain(user)}\n"
+        f"Contact Email:\t{user.email}\n"
+        f"Password:\t***HIDDEN*** (temporary; must change on next login)\n"
+        f"Sessions:\tall panel sessions revoked\n"
+        f"“{actor_name}” reset the account password.\n"
+        f"\n"
+        f"Request IP: {meta['ip']} (rDNS: {meta['rdns']})\n"
+        f"Service: WHM\n"
+    )
+    return send_whm_notice(
+        event_key=EVENT_PASSWORD_RESET,
+        subject=f"Password Reset — {user.username}@{panel_hostname()}",
+        body=body,
+        importance="Medium",
+    )
+
+
 def notify_account_termination(user, *, actor=None, request=None) -> bool:
     meta = request_meta(request) if request is not None else {"ip": "—", "rdns": "—"}
     actor_name = getattr(actor, "username", None) or "system"
@@ -341,6 +366,7 @@ def contact_status() -> dict[str, Any]:
                 EVENT_ACCOUNT_CREATION,
                 EVENT_ACCOUNT_SUSPEND,
                 EVENT_ACCOUNT_TERMINATION,
+                EVENT_PASSWORD_RESET,
                 EVENT_BACKUP_FAILURE,
             )
         },

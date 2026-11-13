@@ -291,6 +291,13 @@ TWEAK_CATALOG: list[dict[str, Any]] = [
                 "default": True,
             },
             {
+                "key": "notify_password_reset",
+                "label": "Password Reset — email à l'admin WHM",
+                "type": "bool",
+                "default": True,
+                "help": "Alerte Contact Manager quand un MDP compte est réinitialisé (sans envoyer le mot de passe).",
+            },
+            {
                 "key": "notify_disk_warn_pct",
                 "label": "Alerte disque à (%)",
                 "type": "int",

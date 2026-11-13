@@ -29,6 +29,27 @@ class AuthRateThrottle(AnonRateThrottle):
     scope = "auth"
 
 
+class ResetPasswordView(APIView):
+    """WHM → reset MDP sécurisé (généré serveur, force change, sessions révoquées)."""
+
+    permission_classes = [IsAuthenticated, IsResellerOrAdmin]
+
+    def post(self, request: Request, pk: int) -> Response:
+        from apps.accounts.password_reset import reset_account_password
+
+        target = _managed_user_or_404(request, pk)
+        if isinstance(target, Response):
+            return target
+        confirm = request.data.get("confirm_username") or request.data.get("username") or ""
+        data = reset_account_password(
+            actor=request.user,
+            target=target,
+            confirm_username=str(confirm),
+            request=request,
+        )
+        return Response({"success": True, "data": data})
+
+
 class LoginAsView(APIView):
     """WHM → Login as (cPanel) : jeton SSO one-shot vers le panneau client."""
 
