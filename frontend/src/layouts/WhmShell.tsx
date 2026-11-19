@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   LayoutDashboard,
   Users,
@@ -34,6 +34,7 @@ import {
   Search,
   X,
   Zap,
+  PlugZap,
   Wrench,
   Bot,
   SlidersHorizontal,
@@ -48,10 +49,14 @@ import {
 import { useAuthStore } from "@/stores/auth";
 import { useThemeStore } from "@/stores/theme";
 import { OperationProgressHost } from "@/components/OperationProgressHost";
+import { ConnectivityBanner } from "@/components/ConnectivityBanner";
 import { AiDeploymentAssistant } from "@/components/AiDeploymentAssistant";
 import { usePanelSessionEffects, usePanelI18n, usePanelTweaks } from "@/lib/panelTweaks";
 import { apiRequest } from "@/lib/api";
 import { canAccessWhmRoute } from "@/lib/resellerAcl";
+import { useLiveHostMetrics } from "@/lib/liveMetrics";
+import { prefetchWhmRoute } from "@/lib/whmPrefetch";
+import { useLitePanel } from "@/lib/localContext";
 import { cpanelPortalUrl } from "@/lib/portal";
 import type { DashboardOverview } from "@/types";
 
@@ -82,6 +87,12 @@ const navSections: NavSection[] = [
         keywords: ["créer", "compte", "account"],
       },
       { to: "/whm/accounts", end: true, label: "List Accounts", icon: Users, keywords: ["comptes", "users"] },
+      {
+        to: "/whm/local",
+        label: "Contexte local",
+        icon: PlugZap,
+        keywords: ["afrique", "coupure", "3g", "whatsapp", "données", "fuseau", "vps"],
+      },
       {
         to: "/whm/server-setup",
         label: "Basic WebHost Manager Setup",
@@ -154,6 +165,12 @@ const navSections: NavSection[] = [
     id: "account-info",
     title: "Account Information",
     items: [
+      {
+        to: "/whm/account-security",
+        label: "Change Password",
+        icon: KeyRound,
+        keywords: ["password", "mot de passe", "admin", "root", "réinitialiser"],
+      },
       { to: "/whm/accounts", end: true, label: "List Accounts", icon: Users, keywords: ["comptes", "list"] },
       { to: "/whm/domains", label: "List Domains", icon: AppWindow, keywords: ["domaine", "parked", "subdomain"] },
       { to: "/whm/resources", label: "Monitoring serveur", icon: Activity, keywords: ["cpu", "ram", "bandwidth", "monitoring", "load"] },
@@ -198,9 +215,9 @@ const navSections: NavSection[] = [
       },
       {
         to: "/whm/pulse",
-        label: "AngaPanel Pulse",
+        label: "Limites des comptes",
         icon: Zap,
-        keywords: ["cgroups", "lve", "cpu", "ram", "resource", "governor"],
+        keywords: ["pulse", "cgroups", "lve", "cpu", "ram", "package", "plan", "quota"],
       },
     ],
   },
@@ -279,7 +296,12 @@ const navSections: NavSection[] = [
         keywords: ["smtp", "spam", "mail", "mta", "port 25"],
       },
       { to: "/whm/firewall", label: "Firewall & Fail2Ban", icon: Shield, keywords: ["fail2ban", "cphulk"] },
-      { to: "/whm/account-security", label: "Two-Factor Authentication", icon: KeyRound, keywords: ["2fa"] },
+      {
+        to: "/whm/account-security",
+        label: "Change Password / 2FA",
+        icon: KeyRound,
+        keywords: ["2fa", "password", "mot de passe", "reset", "réinitialiser", "security"],
+      },
       { to: "/whm/domains", label: "SSL/TLS & AutoSSL", icon: AppWindow, keywords: ["ssl", "letsencrypt"] },
     ],
   },
@@ -297,6 +319,7 @@ const navSections: NavSection[] = [
     items: [
       { to: "/whm/files", label: "Browse Account Files", icon: FolderOpen },
       { to: "/whm/terminal", label: "Terminal / API Ops", icon: Terminal },
+      { to: "/whm/api", label: "Manage API Tokens", icon: KeyRound, keywords: ["api", "uapi", "jeton", "token"] },
       { to: "/whm/docker", label: "Containers", icon: Box },
     ],
   },
@@ -407,6 +430,7 @@ function WhmSearchField({
 }
 
 export function WhmShell() {
+  const qc = useQueryClient();
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const theme = useThemeStore((s) => s.theme);
@@ -415,6 +439,7 @@ export function WhmShell() {
   const location = useLocation();
   const { tweaks } = usePanelTweaks();
   const t = usePanelI18n();
+  const litePanel = useLitePanel();
   usePanelSessionEffects();
 
   const visibleSections = useMemo(() => {
@@ -425,6 +450,7 @@ export function WhmShell() {
         ...section,
         items: section.items.filter((item) => {
           if (!tweaks.show_ai_assistant && item.to.startsWith("/whm/ai-ops")) return false;
+          if (litePanel && (item.to === "/whm/docker" || item.to === "/whm/kubernetes")) return false;
           return canAccessWhmRoute(role, privs, item.to);
         }),
       }))
@@ -432,7 +458,7 @@ export function WhmShell() {
         if (!tweaks.show_ai_assistant && section.id === "ai-ops") return false;
         return section.items.length > 0;
       });
-  }, [user?.role, user?.reseller_privileges, tweaks.show_ai_assistant]);
+  }, [user?.role, user?.reseller_privileges, tweaks.show_ai_assistant, litePanel]);
 
   const visibleTools = useMemo(
     () =>
@@ -455,6 +481,7 @@ export function WhmShell() {
     staleTime: 30_000,
     refetchInterval: 60_000,
   });
+  const { data: live } = useLiveHostMetrics();
 
   const { data: setup } = useQuery({
     queryKey: ["server-setup-shell"],
@@ -592,7 +619,7 @@ export function WhmShell() {
     if (first) goTo(first.to);
   }
 
-  const load = overview?.metrics?.load_average;
+  const load = live?.load_average ?? overview?.metrics?.load_average;
   const loadLabel =
     load && load.length >= 3
       ? load.map((n) => (typeof n === "number" ? n.toFixed(2) : "—")).join(" ")
@@ -723,6 +750,8 @@ export function WhmShell() {
                                   : "border-transparent text-white/85 hover:bg-white/10 hover:text-white"
                               }`
                             }
+                            onMouseEnter={() => prefetchWhmRoute(qc, item.to)}
+                            onFocus={() => prefetchWhmRoute(qc, item.to)}
                             onClick={() => {
                               setAsideQuery("");
                               setNavOpen(false);
@@ -826,7 +855,8 @@ export function WhmShell() {
               <button
                 type="button"
                 className="hidden h-9 w-9 items-center justify-center rounded-full border border-[#c5d0dc] text-[#5a6f85] hover:bg-[#f0f4f8] dark:border-ink-600 dark:text-ink-300 sm:flex"
-                title={user?.username}
+                title={`${user?.username || "Account"} — password / 2FA`}
+                onClick={() => navigate("/whm/account-security")}
               >
                 <User className="h-3.5 w-3.5" />
               </button>
@@ -843,6 +873,7 @@ export function WhmShell() {
         </header>
 
         <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-[#eef2f6] p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] dark:bg-surface-dark sm:p-4 md:p-6">
+          <ConnectivityBanner />
           <Outlet />
         </main>
       </div>

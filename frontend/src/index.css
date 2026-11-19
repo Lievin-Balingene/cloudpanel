@@ -871,6 +871,16 @@ html.dark body {
     opacity: 1;
   }
 }
+.vz-skel {
+  background: linear-gradient(90deg, #e2eaf1 20%, #f4f7fa 50%, #e2eaf1 80%);
+  background-size: 200% 100%;
+  animation: vz-ai-shimmer 1.05s ease-in-out infinite;
+}
+.dark .vz-skel {
+  background: linear-gradient(90deg, #1a2433 20%, #273449 50%, #1a2433 80%);
+  background-size: 200% 100%;
+}
+
 @keyframes vz-ai-shimmer {
   0% {
     background-position: 100% 0;

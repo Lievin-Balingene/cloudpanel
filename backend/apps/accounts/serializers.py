@@ -57,6 +57,8 @@ class UserSerializer(serializers.ModelSerializer):
             "owner_label",
             "system_username",
             "home_directory",
+            "phone",
+            "notify_channel",
             "primary_domain",
             "package_name",
             "disk_used_mb",
@@ -252,6 +254,8 @@ class UserCreateSerializer(serializers.ModelSerializer):
             "domain",
             "package_id",
             "create_welcome_index",
+            "phone",
+            "notify_channel",
         )
 
     def validate_username(self, value: str) -> str:
@@ -314,6 +318,17 @@ class UserCreateSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         actor = getattr(request, "user", None)
         # Securite : un revendeur force parent=soi et role=client
+        try:
+            from apps.local_context.models import LocalSiteProfile
+
+            if LocalSiteProfile.get_solo().require_phone and not str(attrs.get("phone") or "").strip():
+                raise serializers.ValidationError(
+                    {"phone": "Indiquez le numéro mobile (WhatsApp ou SMS) — souvent plus fiable que l’e-mail."}
+                )
+        except serializers.ValidationError:
+            raise
+        except Exception:  # noqa: BLE001
+            pass
         if actor is not None and actor.is_authenticated and actor.role == User.Role.RESELLER:
             attrs["parent"] = actor
             attrs["role"] = User.Role.CLIENT

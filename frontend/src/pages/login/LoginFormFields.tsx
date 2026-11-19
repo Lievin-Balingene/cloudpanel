@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useId, useRef, useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { ApiClientError } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
@@ -76,9 +77,16 @@ export function LoginFormFields({
 }: LoginFormProps) {
   const form = useLoginForm();
   const isAdmin = variant === "admin";
+  const location = useLocation();
+  const resetOk = Boolean((location.state as { passwordReset?: boolean } | null)?.passwordReset);
 
   return (
     <form className="space-y-3.5" onSubmit={form.onSubmit} noValidate>
+      {resetOk ? (
+        <p className="rounded border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-[13px] text-emerald-800">
+          Mot de passe mis à jour. Connectez-vous avec le nouveau mot de passe.
+        </p>
+      ) : null}
       <div>
         <label className="mb-1 block text-[13px] text-slate-600" htmlFor={`${form.idPrefix}-id`}>
           {idHint}
@@ -123,6 +131,14 @@ export function LoginFormFields({
           >
             {form.showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>
+        </div>
+        <div className="mt-1.5 text-right">
+          <Link
+            to="/forgot-password"
+            className="text-[12px] font-medium text-slate-500 hover:text-cp-orange-dark hover:underline"
+          >
+            Forgot password?
+          </Link>
         </div>
       </div>
 

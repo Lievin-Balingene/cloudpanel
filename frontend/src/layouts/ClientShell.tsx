@@ -34,6 +34,7 @@ import {
   FileLock2,
   Gauge,
   Zap,
+  Wifi,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "@/lib/api";
@@ -42,6 +43,8 @@ import { whmPortalUrl } from "@/lib/portal";
 import { useAuthStore } from "@/stores/auth";
 import { useThemeStore } from "@/stores/theme";
 import { OperationProgressHost } from "@/components/OperationProgressHost";
+import { ConnectivityBanner } from "@/components/ConnectivityBanner";
+import { useDataSaver, useLitePanel } from "@/lib/localContext";
 import { AiDeploymentAssistant } from "@/components/AiDeploymentAssistant";
 import { usePanelSessionEffects, usePanelI18n, usePanelTweaks } from "@/lib/panelTweaks";
 import type { DashboardOverview } from "@/types";
@@ -99,7 +102,8 @@ const sections: NavSection[] = [
     items: [
       { to: "/panel/metrics", label: "Visiteurs & erreurs", icon: BarChart3 },
       { to: "/panel/package", label: "Ressources & quotas", icon: Gauge },
-      { to: "/panel/pulse", label: "AngaPanel Pulse", icon: Zap },
+      { to: "/panel/pulse", label: "Votre offre", icon: Zap },
+      { to: "/panel/local", label: "Connexion et coupures", icon: Wifi },
     ],
   },
   {
@@ -130,6 +134,7 @@ const sections: NavSection[] = [
     items: [
       { to: "/panel/cron", label: "Tâches Cron", icon: Clock },
       { to: "/panel/terminal", label: "Terminal", icon: Terminal },
+      { to: "/panel/api", label: "Jetons API", icon: KeyRound },
     ],
   },
   {
@@ -172,10 +177,11 @@ function UsageBar({
 
 function HostUsagePanel() {
   const user = useAuthStore((s) => s.user);
+  const dataSaver = useDataSaver();
   const { data } = useQuery({
     queryKey: ["dashboard-overview"],
     queryFn: () => apiRequest<DashboardOverview>("/dashboard/overview/"),
-    refetchInterval: 30000,
+    refetchInterval: dataSaver ? 180_000 : 60_000,
   });
   const { data: assignment } = useQuery({
     queryKey: ["package-mine"],
@@ -293,9 +299,20 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 
 function ToolsNav({ onNavigate }: { onNavigate?: () => void }) {
   const location = useLocation();
+  const lite = useLitePanel();
+  const nav = useMemo(
+    () =>
+      sections
+        .map((section) => ({
+          ...section,
+          items: section.items.filter((item) => !(lite && item.to.includes("/docker"))),
+        }))
+        .filter((section) => section.items.length > 0),
+    [lite],
+  );
   const initiallyOpen = useMemo(() => {
     const open = new Set<string>(["files", "domains", "email"]);
-    for (const section of sections) {
+    for (const section of nav) {
       if (
         section.items.some(
           (i) =>
@@ -307,13 +324,13 @@ function ToolsNav({ onNavigate }: { onNavigate?: () => void }) {
       }
     }
     return open;
-  }, [location.pathname]);
+  }, [location.pathname, nav]);
   const [openIds, setOpenIds] = useState<Set<string>>(initiallyOpen);
 
   useEffect(() => {
     setOpenIds((prev) => {
       const next = new Set(prev);
-      for (const section of sections) {
+      for (const section of nav) {
         if (
           section.items.some(
             (i) =>
@@ -326,7 +343,7 @@ function ToolsNav({ onNavigate }: { onNavigate?: () => void }) {
       }
       return next;
     });
-  }, [location.pathname]);
+  }, [location.pathname, nav]);
 
   function toggle(id: string) {
     setOpenIds((prev) => {
@@ -352,7 +369,7 @@ function ToolsNav({ onNavigate }: { onNavigate?: () => void }) {
         <Home className="h-4 w-4 text-cp-orange" />
         Accueil
       </NavLink>
-      {sections.map((section) => {
+      {nav.map((section) => {
         const open = openIds.has(section.id);
         return (
           <div key={section.id} className="border-t border-cp-border/70">
@@ -560,6 +577,7 @@ export function ClientShell() {
       <div className="mx-auto flex max-w-[1400px] gap-3 p-3 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:gap-4 sm:p-4 md:gap-5 md:p-5 lg:gap-6">
         <AsideMenu />
         <main className="min-w-0 flex-1 space-y-4 animate-fade-up">
+          <ConnectivityBanner />
           <Outlet />
         </main>
         <HostUsagePanel />

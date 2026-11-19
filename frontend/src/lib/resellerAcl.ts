@@ -2,6 +2,8 @@
 export const ROUTE_PRIVILEGE_MAP: Record<string, string> = {
   "/whm/accounts/create": "create-acct",
   "/whm/accounts": "list-accts",
+  "/whm/api": "manage-api",
+  "/whm/local": "list-accts",
   "/whm/packages": "list-pkgs",
   "/whm/domains": "manage-domains",
   "/whm/dns": "manage-dns",

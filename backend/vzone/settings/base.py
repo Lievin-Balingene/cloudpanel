@@ -92,6 +92,8 @@ INSTALLED_APPS = [
     "apps.server_setup",
     "apps.transfer",
     "apps.ai_assistant",
+    "apps.local_context",
+    "apps.panel_api",
 ]
 
 MIDDLEWARE = [
@@ -219,6 +221,8 @@ REST_FRAMEWORK = {
         "anon": "60/minute",
         "user": "600/minute",
         "auth": "10/minute",
+        "forgot_password": "5/hour",
+        "forgot_password_confirm": "20/hour",
     },
     "EXCEPTION_HANDLER": "apps.core.exceptions.vzone_exception_handler",
 }
@@ -323,7 +327,7 @@ VZONE_OLS_DEFAULT_ENGINE = env_bool("VZONE_OLS_DEFAULT_ENGINE", True)
 # Modules activés (extensible à l'installation)
 VZONE_ENABLED_MODULES = env_list(
     "VZONE_ENABLED_MODULES",
-    "core,accounts,packages,dns,dashboard,domains,files,ftp,cron,email,databases,python_apps,node_apps,php,git_deploy,docker_mgmt,backups,monitoring,firewall,security,wordpress,kubernetes,server_setup,transfer,ai_assistant",
+    "core,accounts,packages,dns,dashboard,domains,files,ftp,cron,email,databases,python_apps,node_apps,php,git_deploy,docker_mgmt,backups,monitoring,firewall,security,wordpress,kubernetes,server_setup,transfer,ai_assistant,local_context",
 )
 
 # Email / webmail

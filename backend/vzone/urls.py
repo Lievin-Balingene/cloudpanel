@@ -40,6 +40,9 @@ urlpatterns = [
     path("api/v1/server-setup/", include("apps.server_setup.urls")),
     path("api/v1/transfer/", include("apps.transfer.urls")),
     path("api/v1/ai/", include("apps.ai_assistant.urls")),
+    path("api/v1/local-context/", include("apps.local_context.urls")),
+    path("api/v1/api-tokens/", include("apps.panel_api.urls")),
+    path("api/", include("apps.panel_api.public_urls")),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path(
         "api/docs/",

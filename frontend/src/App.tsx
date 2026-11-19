@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { LoginPage } from "./pages/LoginPage";
 import { ChangePasswordPage } from "./pages/ChangePasswordPage";
+import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
+import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { SsoHandoffPage } from "./pages/SsoHandoffPage";
 import { WhmShell } from "./layouts/WhmShell";
 import { ClientShell } from "./layouts/ClientShell";
@@ -12,6 +14,7 @@ import { WhmPackagesPage } from "./pages/whm/WhmPackagesPage";
 import { WhmPackageCreatePage } from "./pages/whm/WhmPackageCreatePage";
 import { WhmPackageEditPage } from "./pages/whm/WhmPackageEditPage";
 import { WhmPulsePage } from "./pages/whm/WhmPulsePage";
+import { WhmLocalContextPage } from "./pages/whm/WhmLocalContextPage";
 import { WhmDnsPage } from "./pages/whm/WhmDnsPage";
 import { WhmResourcesPage } from "./pages/whm/WhmResourcesPage";
 import { WhmAccountsPage } from "./pages/whm/WhmAccountsPage";
@@ -51,6 +54,7 @@ import { ClientHomePage } from "./pages/client/ClientHomePage";
 import { ClientDnsPage } from "./pages/client/ClientDnsPage";
 import { ClientPackagePage } from "./pages/client/ClientPackagePage";
 import { ClientPulsePage } from "./pages/client/ClientPulsePage";
+import { ClientLocalPage } from "./pages/client/ClientLocalPage";
 import { ClientDomainsPage } from "./pages/client/ClientDomainsPage";
 import { ClientFilesPage } from "./pages/client/ClientFilesPage";
 import { ClientFilesUploadPage } from "./pages/client/ClientFilesUploadPage";
@@ -66,6 +70,8 @@ import { ClientGitPage } from "./pages/client/ClientGitPage";
 import { ClientDockerPage } from "./pages/client/ClientDockerPage";
 import { ClientBackupPage } from "./pages/client/ClientBackupPage";
 import { ClientSecurityPage } from "./pages/client/ClientSecurityPage";
+import { ClientApiPage } from "./pages/client/ClientApiPage";
+import { WhmApiPage } from "./pages/whm/WhmApiPage";
 import { ClientWordPressPage } from "./pages/client/ClientWordPressPage";
 import { ClientTerminalPage } from "./pages/client/ClientTerminalPage";
 import { ClientDiskUsagePage } from "./pages/client/ClientDiskUsagePage";
@@ -83,8 +89,13 @@ import {
 
 function AuthBootSplash() {
   return (
-    <div className="flex min-h-[100dvh] items-center justify-center bg-[#e8eef4] text-sm text-slate-500">
-      Chargement de la session…
+    <div className="flex min-h-[100dvh] flex-col items-center justify-center gap-4 bg-[#e8eef4] px-6">
+      <div className="w-full max-w-sm space-y-3">
+        <div className="vz-skel h-10 w-10 rounded-xl" />
+        <div className="vz-skel h-4 w-48 rounded" />
+        <div className="vz-skel h-3 w-full rounded" />
+        <div className="vz-skel h-3 w-5/6 rounded" />
+      </div>
     </div>
   );
 }
@@ -140,6 +151,8 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/change-password" element={<ChangePasswordPage />} />
       {/* WHM Login as → panneau client (sans session préalable) */}
       <Route path="/panel/sso" element={<SsoHandoffPage />} />
@@ -198,6 +211,7 @@ export default function App() {
         <Route path="packages/:id/edit" element={<WhmPackageEditPage />} />
         <Route path="packages" element={<WhmPackagesPage />} />
         <Route path="pulse" element={<WhmPulsePage />} />
+        <Route path="local" element={<WhmLocalContextPage />} />
         <Route path="resellers" element={<WhmResellerPrivilegesPage />} />
         <Route path="server-setup" element={<WhmServerSetupPage />} />
         <Route path="tweak-settings" element={<WhmTweakSettingsPage />} />
@@ -229,6 +243,7 @@ export default function App() {
         <Route path="smtp-restrictions" element={<WhmSmtpRestrictionsPage />} />
         <Route path="account-security" element={<ClientSecurityPage />} />
         <Route path="dns" element={<WhmDnsPage />} />
+        <Route path="api" element={<WhmApiPage />} />
         <Route path="resources" element={<WhmResourcesPage />} />
       </Route>
       <Route
@@ -267,8 +282,10 @@ export default function App() {
         <Route path="ip-blocker" element={<ClientIpBlockerPage />} />
         <Route path="preferences" element={<ClientPreferencesPage />} />
         <Route path="dns" element={<ClientDnsPage />} />
+        <Route path="api" element={<ClientApiPage />} />
         <Route path="package" element={<ClientPackagePage />} />
         <Route path="pulse" element={<ClientPulsePage />} />
+        <Route path="local" element={<ClientLocalPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

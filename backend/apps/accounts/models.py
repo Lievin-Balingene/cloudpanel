@@ -53,6 +53,13 @@ class User(AbstractBaseUser, PermissionsMixin):
         help_text="Nom d'utilisateur système Linux associé (si provisionné).",
     )
     home_directory = models.CharField(max_length=512, blank=True, default="")
+    phone = models.CharField(
+        max_length=32,
+        blank=True,
+        default="",
+        help_text="Numéro mobile (WhatsApp / SMS) — contact principal dans beaucoup de contextes.",
+    )
+    notify_channel = models.CharField(max_length=16, blank=True, default="whatsapp")
     last_login_ip = models.GenericIPAddressField(null=True, blank=True)
     date_joined = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
@@ -178,6 +185,34 @@ class UserSession(models.Model):
 
     def __str__(self) -> str:
         return f"Session({self.user_id}, {self.jti[:8]})"
+
+
+class PasswordResetChallenge(models.Model):
+    """Défi « mot de passe oublié » : token lien + code e-mail (hashes uniquement)."""
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="password_reset_challenges",
+    )
+    token_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    code_hash = models.CharField(max_length=64, db_index=True)
+    portal = models.CharField(max_length=16, blank=True, default="")
+    request_ip = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=512, blank=True, default="")
+    attempts = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(db_index=True)
+    consumed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["user", "consumed_at", "expires_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"PwdReset({self.user_id}, exp={self.expires_at.isoformat()})"
 
 
 class ResellerPrivileges(models.Model):

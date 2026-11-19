@@ -107,6 +107,8 @@ class ModuleRegistry:
             "apps.server_setup.module",
             "apps.transfer.module",
             "apps.ai_assistant.module",
+            "apps.local_context.module",
+            "apps.panel_api.module",
         ]
         for path in module_paths:
             try:

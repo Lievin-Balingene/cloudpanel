@@ -218,8 +218,13 @@ def test_change_password(api: APIClient):
         format="json",
     )
     assert response.status_code == 200
+    body = response.json()["data"]
+    assert "tokens" in body
+    assert "access" in body["tokens"]
+    assert body["user"]["username"] == user.username
     user.refresh_from_db()
     assert user.check_password("NewSecurePass456!")
+    assert user.must_change_password is False
 
 
 @pytest.mark.integration

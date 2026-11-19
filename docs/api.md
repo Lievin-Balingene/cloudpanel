@@ -6,6 +6,12 @@ La spécification OpenAPI est générée automatiquement.
 - ReDoc : `/api/redoc/`
 - Schéma brut : `/api/schema/`
 
+## API jetons (style cPanel)
+
+WHM JSON API (`/api/json-api/…`) et UAPI (`/api/execute/Module/fonction`), authentifiées par jeton. Voir `docs/cpanel-api.md`.
+
+Gestion des jetons (session du panneau) : `/api/v1/api-tokens/`.
+
 ## Endpoints socle (v0.1.0)
 
 | Méthode | Chemin | Auth | Description |

@@ -29,6 +29,67 @@ class AuthRateThrottle(AnonRateThrottle):
     scope = "auth"
 
 
+class ForgotPasswordThrottle(AnonRateThrottle):
+    scope = "forgot_password"
+
+
+class ForgotPasswordConfirmThrottle(AnonRateThrottle):
+    scope = "forgot_password_confirm"
+
+
+class ForgotPasswordRequestView(APIView):
+    """Démarre « mot de passe oublié » — e-mail avec lien + code."""
+
+    permission_classes = [AllowAny]
+    authentication_classes: list = []
+    throttle_classes = [ForgotPasswordThrottle]
+
+    def post(self, request: Request) -> Response:
+        from apps.accounts.forgot_password import request_password_reset
+
+        identifier = (
+            request.data.get("identifier")
+            or request.data.get("email")
+            or request.data.get("username")
+            or ""
+        )
+        portal = request.data.get("portal") or ""
+        data = request_password_reset(
+            identifier=str(identifier),
+            request=request,
+            portal=str(portal),
+        )
+        return Response({"success": True, "data": data})
+
+
+class ForgotPasswordConfirmView(APIView):
+    """Confirme token lien + code e-mail + nouveau mot de passe."""
+
+    permission_classes = [AllowAny]
+    authentication_classes: list = []
+    throttle_classes = [ForgotPasswordConfirmThrottle]
+
+    def post(self, request: Request) -> Response:
+        from apps.accounts.forgot_password import confirm_password_reset
+        from apps.core.exceptions import VZoneAPIException
+
+        new_password = request.data.get("new_password") or ""
+        confirm = request.data.get("confirm_password") or request.data.get("new_password_confirm")
+        if confirm is not None and str(confirm) != str(new_password):
+            raise VZoneAPIException(
+                detail="Les mots de passe ne correspondent pas.",
+                code="password_mismatch",
+                status_code=400,
+            )
+        data = confirm_password_reset(
+            token=str(request.data.get("token") or ""),
+            code=str(request.data.get("code") or ""),
+            new_password=str(new_password),
+            request=request,
+        )
+        return Response({"success": True, "data": data})
+
+
 class ResetPasswordView(APIView):
     """WHM → reset MDP sécurisé (généré serveur, force change, sessions révoquées)."""
 
@@ -202,9 +263,16 @@ class MeView(APIView):
 
 
 class ChangePasswordView(APIView):
+    """Change le MDP du compte connecté (admin WHM / client / revendeur).
+
+    Révoque les anciennes sessions puis réémet des JWT pour rester connecté.
+    """
+
     permission_classes = [IsAuthenticated]
 
     def post(self, request: Request) -> Response:
+        from apps.core.models import AuditLog
+
         serializer = ChangePasswordSerializer(
             data=request.data, context={"request": request}
         )
@@ -212,14 +280,39 @@ class ChangePasswordView(APIView):
         user = request.user
         user.set_password(serializer.validated_data["new_password"])
         user.must_change_password = False
-        user.save(update_fields=["password", "must_change_password"])
+        user.save(update_fields=["password", "must_change_password", "updated_at"])
         try:
             from apps.accounts.password_reset import revoke_all_user_sessions
 
             revoke_all_user_sessions(user)
         except Exception:  # noqa: BLE001
             pass
-        return Response({"success": True, "data": {"detail": "Mot de passe mis à jour."}})
+        tokens = issue_tokens(user, request=request)
+        try:
+            from apps.accounts.services import _client_ip
+
+            AuditLog.objects.create(
+                actor=user,
+                action=AuditLog.Action.UPDATE,
+                resource_type="user",
+                resource_id=str(user.pk),
+                message="Mot de passe changé (libre-service)",
+                ip_address=_client_ip(request),
+                user_agent=(request.META.get("HTTP_USER_AGENT") or "")[:512],
+                request_id=getattr(request, "request_id", ""),
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return Response(
+            {
+                "success": True,
+                "data": {
+                    "detail": "Mot de passe mis à jour.",
+                    "tokens": tokens,
+                    "user": MeSerializer(user).data,
+                },
+            }
+        )
 
 
 class TwoFactorSetupView(APIView):
