@@ -130,16 +130,99 @@ def request_meta(request) -> dict[str, str]:  # type: ignore[no-untyped-def]
     }
 
 
-def _from_email() -> str:
-    contact = get_contact_email()
-    host = panel_hostname()
+def _dkim_ready_domains() -> list[str]:
+    """Domaines présents dans la SigningTable OpenDKIM (livraison Gmail/Outlook)."""
+    domains: list[str] = []
+    try:
+        from pathlib import Path
+
+        for path in (
+            Path("/etc/opendkim/SigningTable"),
+            Path("/var/lib/vzone/mail/maps/opendkim-SigningTable"),
+        ):
+            if not path.is_file():
+                continue
+            for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                # *@example.com  default._domainkey.example.com
+                left = line.split()[0] if line.split() else ""
+                if left.startswith("*@"):
+                    dom = left[2:].strip().lower().rstrip(".")
+                    if dom and dom not in domains:
+                        domains.append(dom)
+            if domains:
+                break
+    except Exception:  # noqa: BLE001
+        logger.debug("dkim signing table read failed", exc_info=True)
+    if not domains:
+        try:
+            from apps.email.models import MailDomain
+
+            for name in MailDomain.objects.filter(is_active=True).values_list("name", flat=True):
+                n = (name or "").strip().lower().rstrip(".")
+                if n and n not in domains:
+                    domains.append(n)
+        except Exception:  # noqa: BLE001
+            pass
+    return domains
+
+
+def _from_email_for_user(user=None) -> str:  # type: ignore[no-untyped-def]
+    """From authentifiable (SPF/DKIM) — priorise le domaine mail du compte."""
     configured = (getattr(settings, "DEFAULT_FROM_EMAIL", "") or "").strip()
     if configured and "@" in configured and "localhost" not in configured.lower():
-        return configured
-    if contact:
-        # Prefer noreply@hostname for automated notices
-        return f"noreply@{host}" if "." in host else contact
-    return configured or f"noreply@{host}"
+        # Si DEFAULT_FROM pointe vers un domaine sans DKIM hostname, on continue
+        # seulement s'il n'est pas clairement invalide.
+        cfg_dom = configured.rsplit("@", 1)[-1].lower()
+        if cfg_dom not in {"localhost", "localhost.localdomain"}:
+            dkim = _dkim_ready_domains()
+            if not dkim or cfg_dom in dkim:
+                return configured
+
+    dkim_domains = _dkim_ready_domains()
+    candidates: list[str] = []
+    if user is not None:
+        try:
+            from apps.email.models import MailDomain
+
+            for md in MailDomain.objects.filter(owner=user, is_active=True).order_by("id"):
+                n = (md.name or "").strip().lower().rstrip(".")
+                if n:
+                    candidates.append(n)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from apps.domains.models import Domain
+
+            d = (
+                Domain.objects.filter(owner=user, domain_type=Domain.DomainType.PRIMARY)
+                .order_by("id")
+                .first()
+                or Domain.objects.filter(owner=user).order_by("id").first()
+            )
+            if d and d.name:
+                candidates.append(d.name.strip().lower().rstrip("."))
+        except Exception:  # noqa: BLE001
+            pass
+
+    for dom in candidates:
+        if dom in dkim_domains or (dkim_domains and dom == dkim_domains[0]):
+            if not dkim_domains or dom in dkim_domains:
+                return f"noreply@{dom}"
+    for dom in dkim_domains:
+        return f"noreply@{dom}"
+
+    host = panel_hostname()
+    if "." in host and "localhost" not in host.lower():
+        return f"noreply@{host}"
+    contact = get_contact_email()
+    return contact or configured or f"noreply@{host or 'localhost'}"
+
+
+def _from_email() -> str:
+    return _from_email_for_user(None)
 
 
 def send_whm_notice(
