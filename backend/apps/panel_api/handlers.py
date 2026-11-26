@@ -709,7 +709,7 @@ def panel_request(*, actor, params) -> dict:  # type: ignore[no-untyped-def]
 
     client = APIClient()
     client.force_authenticate(user=actor)
-    kwargs = {}
+    kwargs = {"HTTP_HOST": "localhost"}
     if method != "GET":
         kwargs["data"] = _json.dumps(body if isinstance(body, (dict, list)) else {})
         kwargs["content_type"] = "application/json"
