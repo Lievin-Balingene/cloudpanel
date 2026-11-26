@@ -23,6 +23,7 @@ import {
 import { apiRequest } from "@/lib/api";
 import type { DashboardOverview } from "@/types";
 import { formatBytes } from "@/lib/format";
+import { useLiveHostMetrics } from "@/lib/liveMetrics";
 import { usePanelI18n, usePanelTweaks } from "@/lib/panelTweaks";
 import { useState } from "react";
 
@@ -55,7 +56,8 @@ const hubs: HubSection[] = [
     links: [
       { to: "/whm/packages/create", label: "Add a Package" },
       { to: "/whm/packages", label: "List Packages" },
-      { to: "/whm/pulse", label: "AngaPanel Pulse" },
+      { to: "/whm/pulse", label: "Limites des comptes" },
+      { to: "/whm/local", label: "Contexte local" },
     ],
   },
   {
@@ -118,6 +120,7 @@ const hubs: HubSection[] = [
       { to: "/whm/smtp-restrictions", label: "SMTP Restrictions" },
       { to: "/whm/firewall", label: "Firewall & Fail2Ban" },
       { to: "/whm/account-security", label: "Two-Factor Auth" },
+      { to: "/whm/api", label: "Générer une clé API" },
       { to: "/whm/domains", label: "SSL / TLS" },
     ],
   },
@@ -207,7 +210,7 @@ function MetricRow({
           <span className="font-medium">{label}</span>
         </div>
         <span className="tabular-nums text-[12px] font-semibold text-slate-600 dark:text-ink-200">
-          {typeof percent === "number" ? `${percent.toFixed(0)}%` : "—"}
+          {typeof percent === "number" ? `${percent.toFixed(1)}%` : "—"}
         </span>
       </div>
       <div className="h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-ink-800">
@@ -225,16 +228,21 @@ export function WhmHomePage() {
   const { data, isLoading } = useQuery({
     queryKey: ["dashboard-overview"],
     queryFn: () => apiRequest<DashboardOverview>("/dashboard/overview/"),
-    refetchInterval: 10000,
+    refetchInterval: 45_000,
   });
+  const { data: live } = useLiveHostMetrics();
   const [copied, setCopied] = useState(false);
   const { tweaks } = usePanelTweaks();
   const t = usePanelI18n();
   const compact = tweaks.compact_home_buttons;
 
   const m = data?.metrics;
+  const cpuPct = live?.cpu.percent ?? m?.cpu.percent;
+  const memPct = live?.memory.percent ?? m?.memory.percent;
+  const memUsed = live?.memory.used ?? m?.memory.used;
+  const memTotal = live?.memory.total ?? m?.memory.total;
   const stats = data?.statistics;
-  const load = m?.load_average;
+  const load = live?.load_average ?? m?.load_average;
   const hostname = stats?.hostname || "—";
   const trend = loadTrend(load);
 
@@ -448,14 +456,14 @@ export function WhmHomePage() {
                   Server Monitoring
                 </p>
                 <div className="space-y-3.5">
-                  <MetricRow icon={Cpu} label="CPU" percent={m?.cpu.percent} />
+                  <MetricRow icon={Cpu} label="CPU" percent={cpuPct} />
                   <MetricRow
                     icon={MemoryStick}
                     label="Memory"
-                    percent={m?.memory.percent}
+                    percent={memPct}
                     hint={
-                      m
-                        ? `${formatBytes(m.memory.used)} / ${formatBytes(m.memory.total)}`
+                      typeof memUsed === "number" && typeof memTotal === "number"
+                        ? `${formatBytes(memUsed)} / ${formatBytes(memTotal)}`
                         : undefined
                     }
                   />

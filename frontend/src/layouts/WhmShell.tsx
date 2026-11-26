@@ -303,6 +303,12 @@ const navSections: NavSection[] = [
         keywords: ["2fa", "password", "mot de passe", "reset", "réinitialiser", "security"],
       },
       { to: "/whm/domains", label: "SSL/TLS & AutoSSL", icon: AppWindow, keywords: ["ssl", "letsencrypt"] },
+      {
+        to: "/whm/api",
+        label: "Générer une clé API",
+        icon: KeyRound,
+        keywords: ["api", "clé", "cle", "key", "jeton", "token", "uapi", "générer", "generer"],
+      },
     ],
   },
   {
@@ -319,7 +325,12 @@ const navSections: NavSection[] = [
     items: [
       { to: "/whm/files", label: "Browse Account Files", icon: FolderOpen },
       { to: "/whm/terminal", label: "Terminal / API Ops", icon: Terminal },
-      { to: "/whm/api", label: "Manage API Tokens", icon: KeyRound, keywords: ["api", "uapi", "jeton", "token"] },
+      {
+        to: "/whm/api",
+        label: "Générer une clé API",
+        icon: KeyRound,
+        keywords: ["api", "clé", "cle", "key", "jeton", "token", "uapi", "générer", "generer"],
+      },
       { to: "/whm/docker", label: "Containers", icon: Box },
     ],
   },

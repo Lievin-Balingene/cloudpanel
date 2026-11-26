@@ -99,7 +99,7 @@ export function ApiTokensManager({
         <div className="whm-page-head-bar">
           <h1 className="text-sm font-semibold uppercase tracking-wide">{title}</h1>
           <p className="text-[11px] text-white/70">
-            Jetons d’API style cPanel — le secret n’est affiché qu’une fois.
+            Donnez un nom, puis cliquez sur « Générer la clé API ». Le secret n’apparaît qu’une seule fois.
           </p>
         </div>
       </div>
@@ -155,7 +155,7 @@ export function ApiTokensManager({
         )}
         <div className="md:col-span-2">
           <button className="vz-btn-primary" type="submit" disabled={create.isPending}>
-            Créer le jeton
+            {create.isPending ? "Génération…" : "Générer la clé API"}
           </button>
         </div>
       </form>

@@ -134,7 +134,7 @@ const sections: NavSection[] = [
     items: [
       { to: "/panel/cron", label: "Tâches Cron", icon: Clock },
       { to: "/panel/terminal", label: "Terminal", icon: Terminal },
-      { to: "/panel/api", label: "Jetons API", icon: KeyRound },
+      { to: "/panel/api", label: "Générer une clé API", icon: KeyRound },
     ],
   },
   {
