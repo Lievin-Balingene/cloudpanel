@@ -64,6 +64,8 @@ Réponse :
 | `listzones` / `dumpzone` | manage-dns | `domain` |
 | `addzonerecord` | manage-dns | `domain`, `type`, `name`, `address` |
 | `servicestatus` | res-monitoring | — |
+| `cpanel` | jeton WHM | `cpanel_jsonapi_user`, `cpanel_jsonapi_module`, `cpanel_jsonapi_func` |
+| `apirequest` | list-accts | `method`, `path` (`/api/v1/…`), `data` |
 
 Les privilèges sont ceux du revendeur (ACL). L’administrateur passe partout.
 
@@ -114,6 +116,19 @@ Le revendeur ne voit que ses propres clients. Un client ne peut pas passer `acco
 | `LangPHP.php_get_installed_versions` | Versions PHP |
 | `Stats.get_stats` | Vue d’ensemble |
 | `Backup.list_backups` | Archives |
+| `Panel.request` | N'importe quelle route `/api/v1/…` du compte (`method`, `path`, `data`) |
+
+`apirequest` (WHM) et `Panel.request` (UAPI) passent par les mêmes vues que l'interface, avec les droits du compte. On peut ainsi automatiser fichiers, SSL, WordPress, paquets, sauvegardes, etc.
+
+```bash
+curl -H "Authorization: whm root:JETON" \
+  -H "Content-Type: application/json" \
+  -d '{"method":"GET","path":"/api/v1/packages/"}' \
+  "https://panneau.example/api/json-api/apirequest"
+
+curl -H "Authorization: whm root:JETON" \
+  "https://panneau.example/api/json-api/cpanel?cpanel_jsonapi_user=client1&cpanel_jsonapi_module=Email&cpanel_jsonapi_func=list_pops"
+```
 
 Les quotas, mots de passe et préfixes de bases sont ceux du panneau (les mêmes règles que l’interface).
 

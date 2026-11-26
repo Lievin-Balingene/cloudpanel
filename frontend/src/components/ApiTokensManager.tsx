@@ -213,7 +213,9 @@ export function ApiTokensManager({
           Compte : <code>GET {origin}/api/execute/DomainInfo/list_domains</code>
         </p>
         <pre className="overflow-auto rounded bg-slate-900 p-3 text-xs text-slate-100">{`curl -H "Authorization: whm UTILISATEUR:JETON" \\
-  ${origin}/api/json-api/version
+  -H "Content-Type: application/json" \\
+  -d '{"method":"GET","path":"/api/v1/packages/"}' \\
+  ${origin}/api/json-api/apirequest
 
 curl -H "Authorization: cpanel UTILISATEUR:JETON" \\
   ${origin}/api/execute/Email/list_pops`}</pre>

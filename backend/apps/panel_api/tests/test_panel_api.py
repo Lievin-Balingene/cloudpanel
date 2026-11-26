@@ -54,6 +54,55 @@ def test_uapi_lists_own_domain(api: APIClient):
 
 
 @pytest.mark.django_db
+def test_apirequest_runs_panel_route_as_token_user(api: APIClient):
+    admin = AdminFactory()
+    secret = _issue(api, admin, audience="whm")
+    response = api.post(
+        "/api/json-api/apirequest",
+        {"method": "GET", "path": "/api/v1/auth/me/"},
+        format="json",
+        HTTP_AUTHORIZATION=f"whm {admin.username}:{secret}",
+    )
+    assert response.status_code == 200, response.content
+    body = response.json()
+    assert body["metadata"]["result"] == 1
+    assert body["data"]["body"]["data"]["username"] == admin.username
+
+
+@pytest.mark.django_db
+def test_apirequest_rejects_login_route(api: APIClient):
+    admin = AdminFactory()
+    secret = _issue(api, admin, audience="both")
+    response = api.post(
+        "/api/json-api/apirequest",
+        {"method": "POST", "path": "/api/v1/auth/login/", "data": {}},
+        format="json",
+        HTTP_AUTHORIZATION=f"Bearer {secret}",
+    )
+    assert response.status_code == 400
+    assert response.json()["metadata"]["result"] == 0
+
+
+@pytest.mark.django_db
+def test_whm_cpanel_runs_uapi_on_account(api: APIClient):
+    admin = AdminFactory()
+    user = UserFactory()
+    Domain.objects.create(name="via-cpanel.test", owner=user, domain_type=Domain.DomainType.PRIMARY)
+    secret = _issue(api, admin, audience="whm")
+    response = api.get(
+        "/api/json-api/cpanel",
+        {
+            "cpanel_jsonapi_user": user.username,
+            "cpanel_jsonapi_module": "DomainInfo",
+            "cpanel_jsonapi_func": "list_domains",
+        },
+        HTTP_AUTHORIZATION=f"whm {admin.username}:{secret}",
+    )
+    assert response.status_code == 200, response.content
+    assert response.json()["data"]["main_domain"] == "via-cpanel.test"
+
+
+@pytest.mark.django_db
 def test_client_token_cannot_call_whm(api: APIClient):
     user = UserFactory()
     secret = _issue(api, user, audience="uapi")

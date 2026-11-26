@@ -643,6 +643,96 @@ def uapi_stats(*, caller, account, params) -> dict:  # type: ignore[no-untyped-d
     return data
 
 
+def whm_cpanel(*, caller, account, params) -> dict:  # type: ignore[no-untyped-def]
+    """WHM API 1 `cpanel` : exécute une fonction UAPI sur un compte (comme WHM)."""
+    from apps.panel_api.dispatch import CATALOG
+
+    module = str(_need(params, "cpanel_jsonapi_module", "module"))
+    func = str(_need(params, "cpanel_jsonapi_func", "func", "function"))
+    name = f"{module}.{func}"
+    spec = CATALOG.get(name)
+    if spec is None or spec.kind != "uapi":
+        raise ApiCallError(f"Fonction UAPI inconnue : {name}", http_status=404)
+    return spec.handler(caller=caller, account=account, params=params)
+
+
+_BLOCKED_API_PREFIXES = (
+    "/api/v1/auth/login",
+    "/api/v1/auth/logout",
+    "/api/v1/auth/refresh",
+    "/api/v1/auth/forgot-password",
+    "/api/v1/auth/sso/",
+)
+
+
+def panel_request(*, actor, params) -> dict:  # type: ignore[no-untyped-def]
+    """Appelle n'importe quelle route /api/v1/ avec l'identité du compte (toutes les actions du panneau)."""
+    import json as _json
+    from urllib.parse import urlencode
+
+    from rest_framework.test import APIClient
+
+    method = str(_p(params, "method", default="GET") or "GET").upper()
+    if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+        raise ApiCallError("Méthode invalide (GET, POST, PUT, PATCH, DELETE).")
+    path = str(_need(params, "path", "uri", "endpoint")).strip()
+    if not path.startswith("/"):
+        path = "/" + path
+    path = path.split("?", 1)[0]
+    if not path.startswith("/api/v1/"):
+        raise ApiCallError("Le chemin doit commencer par /api/v1/.")
+    if any(path.startswith(prefix) for prefix in _BLOCKED_API_PREFIXES):
+        raise ApiCallError("Cette route d'authentification n'est pas appelable par jeton.")
+    body = params.get("data")
+    if body is None:
+        body = params.get("payload")
+    if body is None:
+        body = params.get("body")
+    if isinstance(body, str) and body.strip():
+        try:
+            body = _json.loads(body)
+        except _json.JSONDecodeError as exc:
+            raise ApiCallError("data n'est pas du JSON.") from exc
+    if body is None:
+        body = {}
+    query = params.get("query") or {}
+    if isinstance(query, str) and query.strip():
+        try:
+            query = _json.loads(query)
+        except _json.JSONDecodeError as exc:
+            raise ApiCallError("query n'est pas du JSON.") from exc
+    if isinstance(query, dict) and query:
+        path = f"{path}?{urlencode(query, doseq=True)}"
+
+    client = APIClient()
+    client.force_authenticate(user=actor)
+    kwargs = {}
+    if method != "GET":
+        kwargs["data"] = _json.dumps(body if isinstance(body, (dict, list)) else {})
+        kwargs["content_type"] = "application/json"
+    response = client.generic(method, path, **kwargs)
+    try:
+        parsed = response.json()
+    except Exception:  # noqa: BLE001
+        parsed = {"raw": response.content[:4000].decode("utf-8", "replace")}
+    if response.status_code >= 400:
+        message = parsed
+        if isinstance(parsed, dict):
+            err = parsed.get("error") or parsed.get("detail") or parsed
+            message = err
+        raise ApiCallError(str(message)[:800], http_status=response.status_code)
+    return {"status": response.status_code, "body": parsed}
+
+
+def whm_apirequest(*, caller, account, params) -> dict:  # type: ignore[no-untyped-def]
+    _priv(caller, "list-accts")
+    return panel_request(actor=caller, params=params)
+
+
+def uapi_panel_request(*, caller, account, params) -> dict:  # type: ignore[no-untyped-def]
+    return panel_request(actor=account, params=params)
+
+
 def uapi_backup_list(*, caller, account, params) -> dict:  # type: ignore[no-untyped-def]
     from apps.backups.services import archives_qs
 
@@ -685,6 +775,20 @@ HANDLERS: list[dict] = [
     {"name": "dumpzone", "kind": "whm", "summary": "Contenu d'une zone DNS.", "params": ["domain"], "handler": whm_dumpzone},
     {"name": "addzonerecord", "kind": "whm", "summary": "Ajouter un enregistrement DNS.", "params": ["domain", "type", "name", "address"], "handler": whm_addzonerecord},
     {"name": "servicestatus", "kind": "whm", "summary": "État des services.", "params": [], "handler": whm_servicestatus},
+    {
+        "name": "cpanel",
+        "kind": "whm",
+        "summary": "Exécuter une fonction UAPI sur un compte (cpanel_jsonapi_user, module, func).",
+        "params": ["cpanel_jsonapi_user", "cpanel_jsonapi_module", "cpanel_jsonapi_func"],
+        "handler": whm_cpanel,
+    },
+    {
+        "name": "apirequest",
+        "kind": "whm",
+        "summary": "Appeler n'importe quelle route /api/v1/ du panneau (method, path, data).",
+        "params": ["method", "path", "data"],
+        "handler": whm_apirequest,
+    },
     {"name": "Variables.get_user_information", "kind": "uapi", "summary": "Identité du compte.", "params": ["account"], "handler": uapi_user_info},
     {"name": "DomainInfo.list_domains", "kind": "uapi", "summary": "Domaines du compte.", "params": ["account"], "handler": uapi_list_domains},
     {"name": "DomainInfo.single_domain_data", "kind": "uapi", "summary": "Détail d'un domaine.", "params": ["domain"], "handler": uapi_single_domain},
@@ -710,4 +814,11 @@ HANDLERS: list[dict] = [
     {"name": "LangPHP.php_get_installed_versions", "kind": "uapi", "summary": "Versions PHP connues.", "params": [], "handler": uapi_php_versions},
     {"name": "Stats.get_stats", "kind": "uapi", "summary": "Statistiques du compte.", "params": [], "handler": uapi_stats},
     {"name": "Backup.list_backups", "kind": "uapi", "summary": "Archives de sauvegarde.", "params": [], "handler": uapi_backup_list},
+    {
+        "name": "Panel.request",
+        "kind": "uapi",
+        "summary": "Appeler n'importe quelle route /api/v1/ au nom du compte (method, path, data).",
+        "params": ["method", "path", "data", "account"],
+        "handler": uapi_panel_request,
+    },
 ]
