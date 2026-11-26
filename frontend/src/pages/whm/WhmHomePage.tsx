@@ -144,6 +144,7 @@ const hubs: HubSection[] = [
 ];
 
 const quick = [
+  { to: "/whm/api", label: "Générer une clé API", icon: KeyRound },
   { to: "/whm/accounts", label: "List Accounts", icon: Users },
   { to: "/whm/accounts/create", label: "Create Account", icon: UserPlus },
   { to: "/whm/packages", label: "Packages", icon: Package },

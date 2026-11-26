@@ -88,6 +88,12 @@ const navSections: NavSection[] = [
       },
       { to: "/whm/accounts", end: true, label: "List Accounts", icon: Users, keywords: ["comptes", "users"] },
       {
+        to: "/whm/api",
+        label: "Générer une clé API",
+        icon: KeyRound,
+        keywords: ["api", "clé", "cle", "key", "jeton", "token", "uapi"],
+      },
+      {
         to: "/whm/local",
         label: "Contexte local",
         icon: PlugZap,
