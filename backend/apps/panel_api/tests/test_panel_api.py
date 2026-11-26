@@ -5,7 +5,7 @@ import pytest
 from django.urls import reverse
 from rest_framework.test import APIClient
 
-from apps.accounts.factories import AdminFactory, UserFactory
+from apps.accounts.factories import AdminFactory, ResellerFactory, UserFactory
 from apps.domains.models import Domain
 
 
@@ -144,6 +144,104 @@ def test_revoked_token_rejected(api: APIClient):
         "/api/json-api/version",
         HTTP_AUTHORIZATION=f"whm {admin.username}:{secret}",
     )
+    assert response.status_code == 401
+
+
+@pytest.mark.django_db
+def test_suspend_then_unsuspend(api: APIClient):
+    admin = AdminFactory()
+    user = UserFactory()
+    secret = _issue(api, admin, audience="whm")
+    user_secret = _issue(api, user, audience="uapi")
+    auth = {"HTTP_AUTHORIZATION": f"whm {admin.username}:{secret}"}
+
+    suspended = api.post("/api/json-api/suspendacct", {"user": user.username}, format="json", **auth)
+    assert suspended.status_code == 200, suspended.content
+    assert suspended.json()["metadata"]["result"] == 1
+    assert suspended.json()["data"]["suspended"] == 1
+    user.refresh_from_db()
+    assert user.is_suspended is True
+    assert user.is_active is False
+
+    blocked = api.get(
+        "/api/execute/Variables/get_user_information",
+        HTTP_AUTHORIZATION=f"Bearer {user_secret}",
+    )
+    assert blocked.status_code == 403
+
+    restored = api.post("/api/json-api/unsuspendacct", {"user": user.username}, format="json", **auth)
+    assert restored.status_code == 200, restored.content
+    assert restored.json()["data"]["suspended"] == 0
+    user.refresh_from_db()
+    assert user.is_suspended is False
+    assert user.is_active is True
+
+
+@pytest.mark.django_db
+def test_cannot_suspend_self_or_foreign_account(api: APIClient):
+    admin = AdminFactory()
+    reseller = ResellerFactory()
+    own = UserFactory(parent=reseller)
+    foreign = UserFactory()
+    admin_secret = _issue(api, admin, audience="whm")
+    reseller_secret = _issue(api, reseller, audience="whm")
+
+    self_hit = api.post(
+        "/api/json-api/suspendacct",
+        {"user": admin.username},
+        format="json",
+        HTTP_AUTHORIZATION=f"whm {admin.username}:{admin_secret}",
+    )
+    assert self_hit.status_code == 400
+    assert self_hit.json()["metadata"]["result"] == 0
+
+    denied = api.post(
+        "/api/json-api/suspendacct",
+        {"user": foreign.username},
+        format="json",
+        HTTP_AUTHORIZATION=f"whm {reseller.username}:{reseller_secret}",
+    )
+    assert denied.status_code == 200
+    assert denied.json()["metadata"]["result"] == 0
+    foreign.refresh_from_db()
+    assert foreign.is_suspended is False
+
+    ok = api.post(
+        "/api/json-api/suspendacct",
+        {"user": own.username},
+        format="json",
+        HTTP_AUTHORIZATION=f"whm {reseller.username}:{reseller_secret}",
+    )
+    assert ok.status_code == 200, ok.content
+    assert ok.json()["data"]["suspended"] == 1
+
+
+@pytest.mark.django_db
+def test_apirequest_blocks_token_mint_and_traversal(api: APIClient):
+    admin = AdminFactory()
+    secret = _issue(api, admin, audience="both")
+    auth = {"HTTP_AUTHORIZATION": f"Bearer {secret}"}
+    minted = api.post(
+        "/api/json-api/apirequest",
+        {"method": "POST", "path": "/api/v1/api-tokens/", "data": {"name": "escalade"}},
+        format="json",
+        **auth,
+    )
+    assert minted.status_code == 403
+    escaped = api.post(
+        "/api/json-api/apirequest",
+        {"method": "GET", "path": "/api/v1/../../etc/passwd"},
+        format="json",
+        **auth,
+    )
+    assert escaped.status_code == 403
+
+
+@pytest.mark.django_db
+def test_token_in_query_string_is_rejected(api: APIClient):
+    admin = AdminFactory()
+    secret = _issue(api, admin, audience="whm")
+    response = api.get(f"/api/json-api/version?api_token={secret}&api_user={admin.username}")
     assert response.status_code == 401
 
 

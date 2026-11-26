@@ -589,43 +589,28 @@ class SuspendUserView(APIView):
         except User.DoesNotExist:
             return Response(status=status.HTTP_404_NOT_FOUND)
 
-        if target.pk == request.user.pk:
-            return Response(
-                {
-                    "success": False,
-                    "error": {
-                        "code": "forbidden",
-                        "message": "Impossible de suspendre votre propre compte.",
-                    },
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if target.role == User.Role.ADMINISTRATOR and request.user.role != User.Role.ADMINISTRATOR:
-            return Response(status=status.HTTP_403_FORBIDDEN)
+        from apps.core.exceptions import VZoneAPIException
+
         suspended = request.data.get("suspended", True)
         if isinstance(suspended, str):
             suspended = suspended.lower() in {"1", "true", "yes"}
-        target.is_suspended = bool(suspended)
-        target.is_active = not bool(suspended)
-        target.save(update_fields=["is_suspended", "is_active", "updated_at"])
-        # Tous les domaines du compte → page suspension (ou site normal si unsuspend)
         try:
-            from apps.domains.vhosts import sync_owner_domain_vhosts
+            from apps.accounts.services import apply_account_suspension
 
-            sync_owner_domain_vhosts(target)
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            from apps.server_setup.contact_notify import notify_account_suspend
-
-            notify_account_suspend(
-                target,
+            apply_account_suspension(
                 actor=request.user,
-                request=request,
+                target=target,
                 suspended=bool(suspended),
+                request=request,
             )
-        except Exception:  # noqa: BLE001
-            pass
+        except VZoneAPIException as exc:
+            return Response(
+                {
+                    "success": False,
+                    "error": {"code": exc.default_code, "message": str(exc.detail)},
+                },
+                status=exc.status_code,
+            )
         return Response({"success": True, "data": UserSerializer(target).data})
 
 

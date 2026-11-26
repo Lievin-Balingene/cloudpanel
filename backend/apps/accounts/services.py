@@ -38,6 +38,44 @@ def normalize_system_username(username: str) -> str:
     return (username or "").strip().lower()
 
 
+def apply_account_suspension(*, actor: User, target: User, suspended: bool, request=None) -> None:
+    """Même effet que le bouton Suspendre du panneau : login coupé et vhosts basculés."""
+    if target.pk == actor.pk:
+        raise VZoneAPIException(
+            detail="Impossible de suspendre votre propre compte.",
+            code="forbidden",
+            status_code=400,
+        )
+    if target.is_administrator and not actor.is_administrator:
+        raise VZoneAPIException(
+            detail="Impossible de suspendre un administrateur.",
+            code="forbidden",
+            status_code=403,
+        )
+    target.is_suspended = bool(suspended)
+    target.is_active = not bool(suspended)
+    target.save(update_fields=["is_suspended", "is_active", "updated_at"])
+    if not suspended:
+        try:
+            from apps.security.services import clear_lockouts
+
+            clear_lockouts(email=target.email, ip=None)
+        except Exception:  # noqa: BLE001
+            logger.exception("levée du verrouillage de %s", target.username)
+    try:
+        from apps.domains.vhosts import sync_owner_domain_vhosts
+
+        sync_owner_domain_vhosts(target)
+    except Exception:  # noqa: BLE001
+        logger.exception("sync vhosts après suspension de %s", target.username)
+    try:
+        from apps.server_setup.contact_notify import notify_account_suspend
+
+        notify_account_suspend(target, actor=actor, request=request, suspended=bool(suspended))
+    except Exception:  # noqa: BLE001
+        logger.exception("notification suspension de %s", target.username)
+
+
 def validate_system_username(username: str) -> str:
     name = normalize_system_username(username)
     if not SYSTEM_USERNAME_RE.match(name):

@@ -52,10 +52,7 @@ def parse_credentials(request) -> tuple[str, str]:  # type: ignore[no-untyped-de
         raw = header.split(" ", 1)[1].strip()
         if raw.startswith("vzapi_"):
             return "", raw
-    raw_q = (request.GET.get("api_token") or request.POST.get("api_token") or "").strip()
-    user_q = (request.GET.get("api_user") or request.POST.get("api_user") or "").strip()
-    if raw_q.startswith("vzapi_"):
-        return user_q, raw_q
+    # Pas de jeton dans l'URL : il finirait dans les journaux, l'historique et le Referer.
     raise TokenAuthError(
         "Jeton requis. En-tête Authorization: whm utilisateur:JETON "
         "ou cpanel utilisateur:JETON ou anga utilisateur:JETON."

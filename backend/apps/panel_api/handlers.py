@@ -149,15 +149,18 @@ def whm_createacct(*, caller, account, params) -> dict:  # type: ignore[no-untyp
 
 
 def whm_suspend(*, caller, account, params, suspended: bool) -> dict:  # type: ignore[no-untyped-def]
+    from apps.accounts.services import apply_account_suspension
+    from apps.core.exceptions import VZoneAPIException
+
     _priv(caller, "suspend-acct")
     username = str(_need(params, "user", "username"))
     user = _owned_accounts(caller).filter(username=username).first()
     if user is None:
         raise ApiCallError(f"Compte introuvable : {username}")
-    if user.is_administrator:
-        raise ApiCallError("Impossible de suspendre un administrateur.", http_status=403)
-    user.is_suspended = suspended
-    user.save(update_fields=["is_suspended", "updated_at"])
+    try:
+        apply_account_suspension(actor=caller, target=user, suspended=suspended)
+    except VZoneAPIException as exc:
+        raise ApiCallError(str(exc.detail), http_status=exc.status_code) from exc
     return {"user": user.username, "suspended": 1 if suspended else 0}
 
 
@@ -178,8 +181,17 @@ def whm_passwd(*, caller, account, params) -> dict:  # type: ignore[no-untyped-d
         raise ApiCallError(f"Compte introuvable : {username}")
     if user.is_administrator and not caller.is_administrator:
         raise ApiCallError("Interdit.", http_status=403)
+    if user.pk == caller.pk and not caller.is_administrator:
+        raise ApiCallError("Interdit.", http_status=403)
+    from django.contrib.auth.password_validation import validate_password
+    from django.core.exceptions import ValidationError
+
     if len(password) < 10:
         raise ApiCallError("Mot de passe trop court (min 10).")
+    try:
+        validate_password(password, user)
+    except ValidationError as exc:
+        raise ApiCallError("; ".join(exc.messages)) from exc
     user.set_password(password)
     user.save(update_fields=["password", "updated_at"])
     return {"user": user.username, "changed": 1}
@@ -662,6 +674,8 @@ _BLOCKED_API_PREFIXES = (
     "/api/v1/auth/refresh",
     "/api/v1/auth/forgot-password",
     "/api/v1/auth/sso/",
+    # Un jeton ne doit pas pouvoir en fabriquer un autre (persistance après vol).
+    "/api/v1/api-tokens",
 )
 
 
@@ -679,8 +693,15 @@ def panel_request(*, actor, params) -> dict:  # type: ignore[no-untyped-def]
     if not path.startswith("/"):
         path = "/" + path
     path = path.split("?", 1)[0]
-    if not path.startswith("/api/v1/"):
-        raise ApiCallError("Le chemin doit commencer par /api/v1/.")
+    lowered = path.lower()
+    if (
+        ".." in path
+        or "\\" in path
+        or "%" in path
+        or "//" in path
+        or not lowered.startswith("/api/v1/")
+    ):
+        raise ApiCallError("Chemin refusé.", http_status=403)
     if any(path.startswith(prefix) for prefix in _BLOCKED_API_PREFIXES):
         raise ApiCallError(
             "Cette route d'authentification n'est pas appelable par jeton.",

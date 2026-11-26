@@ -17,6 +17,7 @@ from apps.core.exceptions import QuotaExceeded, VZoneAPIException
 from apps.databases.models import Database, DatabaseEngine, DatabasePrivilege, DatabaseUser
 
 logger = logging.getLogger(__name__)
+_SQL_IDENT = re.compile(r"^[A-Za-z0-9_]{1,64}$")
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,47}$")
 USER_RE = re.compile(r"^[a-z][a-z0-9_]{1,31}$")
@@ -226,6 +227,12 @@ def create_database(
 ) -> Database:
     if engine not in DatabaseEngine.values:
         raise VZoneAPIException(detail="Moteur invalide.", code="invalid_engine", status_code=400)
+    if not _SQL_IDENT.match(charset) or not _SQL_IDENT.match(collation):
+        raise VZoneAPIException(
+            detail="Jeu de caractères ou collation invalide.",
+            code="invalid_charset",
+            status_code=400,
+        )
     _assert_database_quota(owner)
     db_name = _prefix_name(name, owner, kind="db")
     if Database.objects.filter(engine=engine, name=db_name).exists():
