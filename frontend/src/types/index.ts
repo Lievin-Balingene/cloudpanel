@@ -33,6 +33,8 @@ export interface User {
   owner_label?: string;
   system_username?: string;
   home_directory?: string;
+  phone?: string;
+  notify_channel?: string;
   primary_domain?: string;
   package_name?: string;
   disk_used_mb?: number | null;

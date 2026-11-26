@@ -359,11 +359,24 @@ def process(req: Path) -> None:
             run_step("reinstall_agent", ["bash", str(install_agent)], cwd=src_dir)
 
         if rc != 0:
+            tail = ""
+            try:
+                lines = [
+                    ln
+                    for ln in log.read_text(encoding="utf-8", errors="replace").splitlines()
+                    if ln.strip()
+                ]
+                tail = "\n".join(lines[-20:])
+            except OSError:
+                tail = ""
+            err = f"update.sh a échoué (exit {rc})"
+            if tail:
+                err = f"{err}\n{tail}"
             write_json(
                 result,
                 {
                     "ok": False,
-                    "error": f"update.sh a échoué (exit {rc})",
+                    "error": err,
                     "version_before": version_before,
                     "version_after": version_after,
                     "finished_at": _now(),
@@ -374,6 +387,7 @@ def process(req: Path) -> None:
                 {
                     "state": "error",
                     "step": "failed",
+                    "error": err,
                     "version_before": version_before,
                     "version_after": version_after,
                     "finished_at": _now(),
