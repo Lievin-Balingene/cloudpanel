@@ -79,7 +79,7 @@ def test_apirequest_rejects_login_route(api: APIClient):
         format="json",
         HTTP_AUTHORIZATION=f"Bearer {secret}",
     )
-    assert response.status_code == 400
+    assert response.status_code == 403
     assert response.json()["metadata"]["result"] == 0
 
 

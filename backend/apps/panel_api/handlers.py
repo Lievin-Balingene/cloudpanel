@@ -682,7 +682,10 @@ def panel_request(*, actor, params) -> dict:  # type: ignore[no-untyped-def]
     if not path.startswith("/api/v1/"):
         raise ApiCallError("Le chemin doit commencer par /api/v1/.")
     if any(path.startswith(prefix) for prefix in _BLOCKED_API_PREFIXES):
-        raise ApiCallError("Cette route d'authentification n'est pas appelable par jeton.")
+        raise ApiCallError(
+            "Cette route d'authentification n'est pas appelable par jeton.",
+            http_status=403,
+        )
     body = params.get("data")
     if body is None:
         body = params.get("payload")

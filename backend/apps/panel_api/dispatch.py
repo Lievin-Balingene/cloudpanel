@@ -59,8 +59,6 @@ def call_function(*, kind: str, name: str, caller, params: dict, token) -> Any: 
         if k
         not in {
             "cpanel_jsonapi_user",
-            "cpanel_jsonapi_module",
-            "cpanel_jsonapi_func",
             "cpanel_jsonapi_apiversion",
             "api.version",
             "api_token",
