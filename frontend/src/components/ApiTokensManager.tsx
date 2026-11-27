@@ -1,8 +1,10 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api";
 
 type ApiFunc = { name: string; kind: "whm" | "uapi"; summary: string; params: string[] };
+
+type TokenStatus = "active" | "suspended" | "expired" | "revoked";
 
 type ApiTokenRow = {
   id: number;
@@ -16,6 +18,8 @@ type ApiTokenRow = {
   last_used_ip: string | null;
   created_at: string | null;
   revoked: boolean;
+  suspended: boolean;
+  status: TokenStatus;
   active: boolean;
   token?: string;
 };
@@ -25,6 +29,38 @@ const AUDIENCE: Record<string, string> = {
   whm: "WHM",
   both: "WHM + compte",
 };
+
+const STATUS: Record<TokenStatus, { label: string; className: string }> = {
+  active: { label: "Active", className: "bg-emerald-50 text-emerald-800 ring-emerald-200" },
+  suspended: { label: "Suspendue", className: "bg-amber-50 text-amber-900 ring-amber-200" },
+  expired: { label: "Expirée", className: "bg-slate-100 text-slate-600 ring-slate-200" },
+  revoked: { label: "Révoquée", className: "bg-red-50 text-red-800 ring-red-200" },
+};
+
+const PRESETS = [
+  { id: "never", label: "Jamais" },
+  { id: "30", label: "30 jours" },
+  { id: "90", label: "90 jours" },
+  { id: "365", label: "1 an" },
+  { id: "date", label: "Date précise" },
+] as const;
+
+function formatWhen(value: string | null) {
+  if (!value) return "Jamais";
+  return new Date(value).toLocaleString("fr-FR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function todayIso() {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 10);
+}
 
 export function ApiTokensManager({
   title,
@@ -44,28 +80,52 @@ export function ApiTokensManager({
   });
   const [name, setName] = useState("");
   const [audience, setAudience] = useState<"uapi" | "whm" | "both">(allowWhm ? "both" : "uapi");
-  const [days, setDays] = useState("");
+  const [preset, setPreset] = useState<(typeof PRESETS)[number]["id"]>("never");
+  const [date, setDate] = useState("");
   const [ips, setIps] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
   const [allScopes, setAllScopes] = useState(true);
+  const [scopeQuery, setScopeQuery] = useState("");
   const [secret, setSecret] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<number | null>(null);
+  const [editDate, setEditDate] = useState("");
+  const [confirmRevoke, setConfirmRevoke] = useState<number | null>(null);
 
   const create = useMutation({
-    mutationFn: () =>
-      apiRequest<{ data: ApiTokenRow }>("/api-tokens/", {
+    mutationFn: () => {
+      const body: Record<string, unknown> = {
+        name,
+        audience,
+        scopes: allScopes ? ["*"] : picked,
+        ip_allowlist: ips,
+      };
+      if (preset === "date") body.expires_at = date;
+      else if (preset !== "never") body.expires_in_days = Number(preset);
+      return apiRequest<{ data: ApiTokenRow }>("/api-tokens/", {
         method: "POST",
-        body: JSON.stringify({
-          name,
-          audience,
-          scopes: allScopes ? ["*"] : picked,
-          ip_allowlist: ips,
-          expires_in_days: days ? Number(days) : null,
-        }),
-      }),
+        body: JSON.stringify(body),
+      });
+    },
     onSuccess: (res) => {
       setSecret(res.data.token || null);
+      setCopied(false);
       setName("");
+      setError(null);
+      qc.invalidateQueries({ queryKey: ["api-tokens"] });
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  const patch = useMutation({
+    mutationFn: (payload: { id: number; body: Record<string, unknown> }) =>
+      apiRequest(`/api-tokens/${payload.id}/`, {
+        method: "PATCH",
+        body: JSON.stringify(payload.body),
+      }),
+    onSuccess: () => {
+      setEditing(null);
       setError(null);
       qc.invalidateQueries({ queryKey: ["api-tokens"] });
     },
@@ -74,23 +134,47 @@ export function ApiTokensManager({
 
   const revoke = useMutation({
     mutationFn: (id: number) => apiRequest(`/api-tokens/${id}/`, { method: "DELETE" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["api-tokens"] }),
+    onSuccess: () => {
+      setConfirmRevoke(null);
+      qc.invalidateQueries({ queryKey: ["api-tokens"] });
+    },
+    onError: (err: Error) => setError(err.message),
   });
 
-  const funcs = (catalog.data?.data || []).filter((fn) =>
-    audience === "both" ? true : fn.kind === audience,
-  );
+  const funcs = useMemo(() => {
+    const q = scopeQuery.trim().toLowerCase();
+    return (catalog.data?.data || []).filter((fn) => {
+      if (audience !== "both" && fn.kind !== audience) return false;
+      if (!q) return true;
+      return `${fn.name} ${fn.summary}`.toLowerCase().includes(q);
+    });
+  }, [catalog.data, audience, scopeQuery]);
+
+  const rows = tokens.data?.data || [];
   const origin = typeof window !== "undefined" ? window.location.origin : "https://panneau.example";
 
   function onCreate(e: FormEvent) {
     e.preventDefault();
+    if (preset === "date" && !date) {
+      setError("Choisissez une date d’expiration.");
+      return;
+    }
+    if (!allScopes && picked.length === 0) {
+      setError("Choisissez au moins une fonction, ou cochez « Toutes les fonctions ».");
+      return;
+    }
     setSecret(null);
     create.mutate();
   }
 
-  function toggle(fn: string) {
-    setAllScopes(false);
-    setPicked((cur) => (cur.includes(fn) ? cur.filter((x) => x !== fn) : [...cur, fn]));
+  async function copySecret() {
+    if (!secret) return;
+    try {
+      await navigator.clipboard.writeText(secret);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
   }
 
   return (
@@ -98,145 +182,275 @@ export function ApiTokensManager({
       <div className="whm-page-head">
         <div className="whm-page-head-bar">
           <h1 className="text-sm font-semibold uppercase tracking-wide">{title}</h1>
-          <p className="text-[11px] text-white/70">
-            Donnez un nom, puis cliquez sur « Générer la clé API ». Le secret n’apparaît qu’une seule fois.
+          <p className="mt-1 max-w-3xl text-[12px] leading-relaxed text-white/80">
+            Une clé appelle le panneau à votre place. Le secret ne s’affiche qu’une fois. Vous pouvez la suspendre,
+            la réactiver, ou fixer la date où elle cesse de fonctionner. La révocation est définitive.
           </p>
         </div>
       </div>
 
       {secret && (
-        <div className="rounded border border-amber-400/60 bg-amber-50 p-3 text-sm text-amber-950">
-          <p className="font-semibold">Copiez ce jeton maintenant. Il ne sera plus affiché.</p>
-          <code className="mt-2 block break-all rounded bg-white px-2 py-1 text-xs">{secret}</code>
-        </div>
-      )}
-      {error && <p className="text-sm text-red-600">{error}</p>}
-
-      <form onSubmit={onCreate} className="grid gap-3 rounded border border-cp-line bg-white p-4 md:grid-cols-2">
-        <label className="text-xs">
-          Nom
-          <input className="vz-input mt-1" value={name} onChange={(e) => setName(e.target.value)} required maxLength={80} />
-        </label>
-        <label className="text-xs">
-          Portée
-          <select
-            className="vz-input mt-1"
-            value={audience}
-            onChange={(e) => setAudience(e.target.value as "uapi" | "whm" | "both")}
-          >
-            <option value="uapi">Compte (UAPI)</option>
-            {allowWhm && <option value="whm">WHM</option>}
-            {allowWhm && <option value="both">WHM + compte</option>}
-          </select>
-        </label>
-        <label className="text-xs">
-          Expiration (jours, vide = jamais)
-          <input className="vz-input mt-1" value={days} onChange={(e) => setDays(e.target.value)} inputMode="numeric" />
-        </label>
-        <label className="text-xs">
-          IP autorisées (vide = toutes)
-          <input className="vz-input mt-1" value={ips} onChange={(e) => setIps(e.target.value)} placeholder="203.0.113.10, 10.0.0.0/24" />
-        </label>
-        <label className="flex items-center gap-2 text-xs md:col-span-2">
-          <input type="checkbox" checked={allScopes} onChange={(e) => setAllScopes(e.target.checked)} />
-          Toutes les fonctions de cette portée
-        </label>
-        {!allScopes && (
-          <div className="max-h-48 overflow-auto rounded border border-cp-line p-2 text-xs md:col-span-2">
-            {funcs.map((fn) => (
-              <label key={fn.name} className="flex gap-2 py-0.5">
-                <input type="checkbox" checked={picked.includes(fn.name)} onChange={() => toggle(fn.name)} />
-                <span>
-                  <code>{fn.name}</code> — {fn.summary}
-                </span>
-              </label>
-            ))}
-          </div>
-        )}
-        <div className="md:col-span-2">
-          <button className="vz-btn-primary" type="submit" disabled={create.isPending}>
-            {create.isPending ? "Génération…" : "Générer la clé API"}
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+          <p className="font-semibold">Copiez cette clé maintenant. Elle ne sera plus affichée.</p>
+          <code className="mt-2 block break-all rounded-md bg-white px-3 py-2 font-mono text-xs">{secret}</code>
+          <button type="button" className="vz-btn-ghost mt-3" onClick={() => void copySecret()}>
+            {copied ? "Copiée" : "Copier la clé"}
           </button>
         </div>
-      </form>
+      )}
+      {error && <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
 
-      <div className="overflow-auto rounded border border-cp-line bg-white">
-        <table className="w-full text-left text-xs">
-          <thead className="bg-slate-50">
-            <tr>
-              <th className="px-3 py-2">Nom</th>
-              <th className="px-3 py-2">Préfixe</th>
-              <th className="px-3 py-2">Portée</th>
-              <th className="px-3 py-2">Dernier usage</th>
-              <th className="px-3 py-2" />
-            </tr>
-          </thead>
-          <tbody>
-            {(tokens.data?.data || []).map((row) => (
-              <tr key={row.id} className="border-t border-cp-line">
-                <td className="px-3 py-2">
-                  {row.name}
-                  {!row.active && <span className="ml-2 text-red-600">révoqué</span>}
-                </td>
-                <td className="px-3 py-2 font-mono">{row.prefix}…</td>
-                <td className="px-3 py-2">{AUDIENCE[row.audience] || row.audience}</td>
-                <td className="px-3 py-2">
-                  {row.last_used_at ? new Date(row.last_used_at).toLocaleString("fr-FR") : "—"}
-                  {row.last_used_ip ? ` · ${row.last_used_ip}` : ""}
-                </td>
-                <td className="px-3 py-2 text-right">
-                  {row.active && (
-                    <button type="button" className="text-red-700 underline" onClick={() => revoke.mutate(row.id)}>
-                      Révoquer
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-            {!tokens.isLoading && (tokens.data?.data || []).length === 0 && (
-              <tr>
-                <td className="px-3 py-4 text-cp-muted" colSpan={5}>
-                  Aucun jeton.
-                </td>
-              </tr>
+      <div className="grid items-start gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
+        <form onSubmit={onCreate} className="space-y-3 rounded-lg border border-cp-line bg-white p-4 shadow-sm">
+          <h2 className="text-sm font-semibold text-cp-text">Nouvelle clé</h2>
+          <label className="block text-xs font-medium text-cp-text">
+            Nom
+            <input
+              className="vz-input mt-1"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+              maxLength={80}
+              placeholder="Production, script facturation…"
+            />
+          </label>
+          <label className="block text-xs font-medium text-cp-text">
+            Portée
+            <select
+              className="vz-input mt-1"
+              value={audience}
+              onChange={(e) => setAudience(e.target.value as "uapi" | "whm" | "both")}
+            >
+              <option value="uapi">Compte (UAPI)</option>
+              {allowWhm && <option value="whm">WHM</option>}
+              {allowWhm && <option value="both">WHM + compte</option>}
+            </select>
+          </label>
+          <fieldset className="space-y-2">
+            <legend className="text-xs font-medium text-cp-text">Expiration</legend>
+            <div className="flex flex-wrap gap-1.5">
+              {PRESETS.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`rounded-full px-2.5 py-1 text-[11px] ring-1 ${
+                    preset === item.id
+                      ? "bg-[#2a4a6b] text-white ring-[#2a4a6b]"
+                      : "bg-white text-cp-text ring-cp-line hover:bg-slate-50"
+                  }`}
+                  onClick={() => setPreset(item.id)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+            {preset === "date" && (
+              <input
+                className="vz-input"
+                type="date"
+                min={todayIso()}
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                required
+              />
             )}
-          </tbody>
-        </table>
+            <p className="text-[11px] text-cp-muted">
+              Une date précise reste valable jusqu’à la fin de cette journée (UTC).
+            </p>
+          </fieldset>
+          <label className="block text-xs font-medium text-cp-text">
+            IP autorisées
+            <input
+              className="vz-input mt-1"
+              value={ips}
+              onChange={(e) => setIps(e.target.value)}
+              placeholder="Vide = toutes. Ex. 203.0.113.10, 10.0.0.0/24"
+            />
+          </label>
+          <label className="flex items-center gap-2 text-xs text-cp-text">
+            <input type="checkbox" checked={allScopes} onChange={(e) => setAllScopes(e.target.checked)} />
+            Toutes les fonctions de cette portée
+          </label>
+          {!allScopes && (
+            <div className="space-y-2">
+              <input
+                className="vz-input"
+                value={scopeQuery}
+                onChange={(e) => setScopeQuery(e.target.value)}
+                placeholder="Filtrer les fonctions"
+              />
+              <div className="max-h-48 overflow-auto rounded border border-cp-line p-2 text-xs">
+                {funcs.map((fn) => (
+                  <label key={fn.name} className="flex gap-2 py-1">
+                    <input
+                      type="checkbox"
+                      checked={picked.includes(fn.name)}
+                      onChange={() =>
+                        setPicked((cur) => (cur.includes(fn.name) ? cur.filter((x) => x !== fn.name) : [...cur, fn.name]))
+                      }
+                    />
+                    <span>
+                      <code>{fn.name}</code>
+                      <span className="text-cp-muted"> — {fn.summary}</span>
+                    </span>
+                  </label>
+                ))}
+                {funcs.length === 0 && <p className="text-cp-muted">Aucune fonction.</p>}
+              </div>
+            </div>
+          )}
+          <button className="vz-btn-primary w-full" type="submit" disabled={create.isPending}>
+            {create.isPending ? "Génération…" : "Générer la clé API"}
+          </button>
+        </form>
+
+        <div className="space-y-3">
+          <div className="flex items-baseline justify-between">
+            <h2 className="text-sm font-semibold text-cp-text">Clés</h2>
+            <p className="text-[11px] text-cp-muted">{rows.length} / 25</p>
+          </div>
+          {tokens.isLoading && <p className="text-sm text-cp-muted">Chargement…</p>}
+          {!tokens.isLoading && rows.length === 0 && (
+            <div className="rounded-lg border border-dashed border-cp-line bg-white px-4 py-8 text-center text-sm text-cp-muted">
+              Aucune clé pour l’instant. Le formulaire à gauche en crée une.
+            </div>
+          )}
+          {rows.map((row) => {
+            const badge = STATUS[row.status] || STATUS.revoked;
+            const locked = row.status === "revoked";
+            return (
+              <article key={row.id} className="rounded-lg border border-cp-line bg-white p-4 shadow-sm">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-semibold text-cp-text">{row.name}</h3>
+                    <p className="mt-0.5 font-mono text-[11px] text-cp-muted">{row.prefix}…</p>
+                  </div>
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ${badge.className}`}>
+                    {badge.label}
+                  </span>
+                </div>
+                <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                  <div>
+                    <dt className="text-cp-muted">Portée</dt>
+                    <dd>{AUDIENCE[row.audience] || row.audience}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-cp-muted">Expire</dt>
+                    <dd>{formatWhen(row.expires_at)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-cp-muted">Dernier usage</dt>
+                    <dd>
+                      {row.last_used_at ? formatWhen(row.last_used_at) : "Jamais"}
+                      {row.last_used_ip ? ` · ${row.last_used_ip}` : ""}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-cp-muted">Fonctions</dt>
+                    <dd>{row.scopes.includes("*") ? "Toutes" : row.scopes.join(", ") || "—"}</dd>
+                  </div>
+                </dl>
+                {!locked && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    {row.status === "suspended" && (
+                      <button
+                        type="button"
+                        className="vz-btn-sm vz-btn-primary"
+                        disabled={patch.isPending}
+                        onClick={() => patch.mutate({ id: row.id, body: { suspended: false } })}
+                      >
+                        Réactiver
+                      </button>
+                    )}
+                    {row.status === "active" && (
+                      <button
+                        type="button"
+                        className="vz-btn-sm vz-btn-ghost"
+                        disabled={patch.isPending}
+                        onClick={() => patch.mutate({ id: row.id, body: { suspended: true } })}
+                      >
+                        Suspendre
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="vz-btn-sm vz-btn-ghost"
+                      onClick={() => {
+                        setEditing(editing === row.id ? null : row.id);
+                        setEditDate(row.expires_at ? row.expires_at.slice(0, 10) : "");
+                      }}
+                    >
+                      Expiration
+                    </button>
+                    {confirmRevoke === row.id ? (
+                      <>
+                        <button
+                          type="button"
+                          className="vz-btn-sm bg-red-700 text-white"
+                          disabled={revoke.isPending}
+                          onClick={() => revoke.mutate(row.id)}
+                        >
+                          Confirmer la révocation
+                        </button>
+                        <button type="button" className="vz-btn-sm vz-btn-ghost" onClick={() => setConfirmRevoke(null)}>
+                          Annuler
+                        </button>
+                      </>
+                    ) : (
+                      <button type="button" className="vz-btn-sm border border-red-200 text-red-700" onClick={() => setConfirmRevoke(row.id)}>
+                        Révoquer
+                      </button>
+                    )}
+                  </div>
+                )}
+                {editing === row.id && !locked && (
+                  <div className="mt-3 flex flex-wrap items-end gap-2 rounded-md bg-slate-50 p-3">
+                    <label className="text-[11px] text-cp-muted">
+                      Valable jusqu’au
+                      <input
+                        className="vz-input mt-1"
+                        type="date"
+                        min={todayIso()}
+                        value={editDate}
+                        onChange={(e) => setEditDate(e.target.value)}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="vz-btn-sm vz-btn-primary"
+                      disabled={!editDate || patch.isPending}
+                      onClick={() => patch.mutate({ id: row.id, body: { expires_at: editDate } })}
+                    >
+                      Enregistrer
+                    </button>
+                    <button
+                      type="button"
+                      className="vz-btn-sm vz-btn-ghost"
+                      disabled={patch.isPending}
+                      onClick={() => patch.mutate({ id: row.id, body: { expires_at: null } })}
+                    >
+                      Sans expiration
+                    </button>
+                  </div>
+                )}
+              </article>
+            );
+          })}
+        </div>
       </div>
 
-      <section className="space-y-2 rounded border border-cp-line bg-white p-4 text-sm">
-        <h2 className="text-sm font-semibold">Appel</h2>
-        <p>
-          WHM : <code>GET {origin}/api/json-api/listaccts</code>
-        </p>
-        <p>
-          Compte : <code>GET {origin}/api/execute/DomainInfo/list_domains</code>
-        </p>
-        <pre className="overflow-auto rounded bg-slate-900 p-3 text-xs text-slate-100">{`curl -H "Authorization: whm UTILISATEUR:JETON" \\
-  -H "Content-Type: application/json" \\
-  -d '{"method":"GET","path":"/api/v1/packages/"}' \\
-  ${origin}/api/json-api/apirequest
+      <details className="rounded-lg border border-cp-line bg-white p-4 text-sm">
+        <summary className="cursor-pointer text-sm font-semibold">Comment appeler l’API</summary>
+        <pre className="mt-3 overflow-auto rounded bg-slate-900 p-3 text-xs text-slate-100">{`curl -H "Authorization: whm UTILISATEUR:CLE" \\
+  ${origin}/api/json-api/listaccts
 
-curl -H "Authorization: cpanel UTILISATEUR:JETON" \\
+curl -H "Authorization: cpanel UTILISATEUR:CLE" \\
   ${origin}/api/execute/Email/list_pops`}</pre>
-        <p className="text-xs text-cp-muted">
-          Documentation complète : <code>docs/cpanel-api.md</code>. Le paramètre <code>account</code> permet à un
-          admin ou revendeur d’agir sur un compte enfant en UAPI.
+        <p className="mt-2 text-xs text-cp-muted">
+          {funcs.length > 0 ? `${catalog.data?.data.length || 0} fonctions.` : "Le catalogue se charge avec la page."} Une
+          clé suspendue ou expirée répond 401.
         </p>
-        <details>
-          <summary className="cursor-pointer text-xs font-semibold">Fonctions disponibles</summary>
-          <ul className="mt-2 max-h-64 space-y-1 overflow-auto text-xs">
-            {(catalog.data?.data || []).map((fn) => (
-              <li key={fn.name}>
-                <code>{fn.kind === "whm" ? `/api/json-api/${fn.name}` : `/api/execute/${fn.name.replace(".", "/")}`}</code>
-                {" — "}
-                {fn.summary}
-                {fn.params.length > 0 && <span className="text-cp-muted"> ({fn.params.join(", ")})</span>}
-              </li>
-            ))}
-          </ul>
-        </details>
-      </section>
+      </details>
     </div>
   );
 }

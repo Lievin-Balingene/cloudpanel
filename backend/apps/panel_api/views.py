@@ -146,8 +146,46 @@ def _token_public(token: ApiToken) -> dict:
         "last_used_ip": token.last_used_ip,
         "created_at": token.created_at.isoformat() if token.created_at else None,
         "revoked": token.revoked_at is not None,
+        "suspended": token.suspended_at is not None,
+        "status": token.status,
         "active": token.is_active,
     }
+
+
+def _parse_expires(raw, *, allow_clear: bool = False):  # type: ignore[no-untyped-def]
+    """Jours, date AAAA-MM-JJ (fin de journée UTC) ou datetime ISO. None = jamais."""
+    from datetime import datetime, timedelta
+    from datetime import timezone as dt_timezone
+
+    from django.utils import timezone
+    from django.utils.dateparse import parse_date, parse_datetime
+
+    if raw in (None, "", 0, "0"):
+        return None if allow_clear or raw in (None, "", 0, "0") else None
+    if isinstance(raw, bool):
+        raise ValueError("date")
+    if isinstance(raw, (int, float)) or (isinstance(raw, str) and raw.strip().isdigit()):
+        days = int(raw)
+        if not 1 <= days <= 3650:
+            raise ValueError("range")
+        return timezone.now() + timedelta(days=days)
+    text = str(raw).strip()
+    if len(text) == 10 and text[4] == "-" and text[7] == "-":
+        day = parse_date(text)
+        if day is None:
+            raise ValueError("date")
+        moment = datetime(day.year, day.month, day.day, 23, 59, 59, tzinfo=dt_timezone.utc)
+    else:
+        moment = parse_datetime(text)
+        if moment is None:
+            raise ValueError("date")
+        if timezone.is_naive(moment):
+            moment = timezone.make_aware(moment, dt_timezone.utc)
+    if moment <= timezone.now():
+        raise ValueError("past")
+    if moment > timezone.now() + timedelta(days=3650):
+        raise ValueError("range")
+    return moment
 
 
 class ApiTokenListCreateView(APIView):
@@ -196,17 +234,18 @@ class ApiTokenListCreateView(APIView):
                 {"success": False, "error": {"code": "scopes", "message": f"Fonctions inconnues : {', '.join(bad)}"}},
                 status=400,
             )
-        days = request.data.get("expires_in_days")
+        raw_expiry = request.data.get("expires_at", request.data.get("expires_in_days"))
         try:
-            expires = int(days) if days not in (None, "", 0) else None
-        except (TypeError, ValueError):
+            expires_at = _parse_expires(raw_expiry)
+        except ValueError:
             return Response(
-                {"success": False, "error": {"code": "expires", "message": "Durée invalide."}},
-                status=400,
-            )
-        if expires is not None and not 1 <= expires <= 3650:
-            return Response(
-                {"success": False, "error": {"code": "expires", "message": "Durée entre 1 et 3650 jours."}},
+                {
+                    "success": False,
+                    "error": {
+                        "code": "expires",
+                        "message": "Expiration invalide : une date future, ou 1 à 3650 jours.",
+                    },
+                },
                 status=400,
             )
         try:
@@ -216,7 +255,7 @@ class ApiTokenListCreateView(APIView):
                 audience=audience,
                 scopes=[str(s) for s in scopes],
                 ip_allowlist=str(request.data.get("ip_allowlist") or ""),
-                expires_in_days=expires,
+                expires_at=expires_at,
             )
         except IntegrityError:
             return Response(
@@ -231,10 +270,48 @@ class ApiTokenListCreateView(APIView):
 class ApiTokenDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
+    def _owned(self, request, pk: int):  # type: ignore[no-untyped-def]
+        return ApiToken.objects.filter(user=request.user, pk=pk).first()
+
+    def patch(self, request, pk: int):  # type: ignore[no-untyped-def]
+        from django.utils import timezone
+
+        token = self._owned(request, pk)
+        if token is None:
+            return Response({"success": False, "error": {"code": "not_found", "message": "Jeton introuvable."}}, status=404)
+        if token.revoked_at is not None:
+            return Response(
+                {"success": False, "error": {"code": "revoked", "message": "Un jeton révoqué ne se modifie plus."}},
+                status=400,
+            )
+        fields = ["suspended_at", "expires_at"]
+        if "suspended" in request.data:
+            flag = request.data.get("suspended")
+            if isinstance(flag, str):
+                flag = flag.lower() in {"1", "true", "yes"}
+            token.suspended_at = timezone.now() if flag else None
+        if "expires_at" in request.data or "expires_in_days" in request.data:
+            raw = request.data.get("expires_at", request.data.get("expires_in_days"))
+            try:
+                token.expires_at = _parse_expires(raw, allow_clear=True)
+            except ValueError:
+                return Response(
+                    {
+                        "success": False,
+                        "error": {
+                            "code": "expires",
+                            "message": "Expiration invalide : une date future, ou 1 à 3650 jours. Vide = jamais.",
+                        },
+                    },
+                    status=400,
+                )
+        token.save(update_fields=fields)
+        return Response({"success": True, "data": _token_public(token)})
+
     def delete(self, request, pk: int):  # type: ignore[no-untyped-def]
         from django.utils import timezone
 
-        token = ApiToken.objects.filter(user=request.user, pk=pk).first()
+        token = self._owned(request, pk)
         if token is None:
             return Response({"success": False, "error": {"code": "not_found", "message": "Jeton introuvable."}}, status=404)
         if token.revoked_at is None:

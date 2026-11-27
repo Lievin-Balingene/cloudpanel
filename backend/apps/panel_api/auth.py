@@ -69,7 +69,7 @@ def authenticate_token(request) -> ApiToken:  # type: ignore[no-untyped-def]
         .first()
     )
     if token is None or not token.is_active:
-        raise TokenAuthError("Jeton invalide, révoqué ou expiré.")
+        raise TokenAuthError("Jeton invalide, suspendu, révoqué ou expiré.")
     if username and token.user.username != username:
         raise TokenAuthError("Le nom d'utilisateur ne correspond pas au jeton.")
     user = token.user

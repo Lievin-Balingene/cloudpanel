@@ -43,6 +43,7 @@ class ApiToken(models.Model):
         help_text="IP ou CIDR séparés par des virgules. Vide = toutes les IP.",
     )
     expires_at = models.DateTimeField(null=True, blank=True)
+    suspended_at = models.DateTimeField(null=True, blank=True)
     last_used_at = models.DateTimeField(null=True, blank=True)
     last_used_ip = models.GenericIPAddressField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -59,11 +60,18 @@ class ApiToken(models.Model):
 
     @property
     def is_active(self) -> bool:
+        return self.status == "active"
+
+    @property
+    def status(self) -> str:
+        now = timezone.now()
         if self.revoked_at is not None:
-            return False
-        if self.expires_at is not None and self.expires_at <= timezone.now():
-            return False
-        return True
+            return "revoked"
+        if self.expires_at is not None and self.expires_at <= now:
+            return "expired"
+        if self.suspended_at is not None:
+            return "suspended"
+        return "active"
 
     def allows(self, kind: str, func_name: str) -> bool:
         if kind == "whm" and self.audience == self.Audience.UAPI:
@@ -90,10 +98,11 @@ class ApiToken(models.Model):
         scopes: list[str],
         ip_allowlist: str = "",
         expires_in_days: int | None = None,
+        expires_at=None,
     ) -> tuple[ApiToken, str]:
         raw = generate_api_token()
-        expires = None
-        if expires_in_days:
+        expires = expires_at
+        if expires is None and expires_in_days:
             expires = timezone.now() + timedelta(days=int(expires_in_days))
         token = cls.objects.create(
             user=user,

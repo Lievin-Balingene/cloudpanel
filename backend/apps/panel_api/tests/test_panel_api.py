@@ -246,6 +246,40 @@ def test_token_in_query_string_is_rejected(api: APIClient):
 
 
 @pytest.mark.django_db
+def test_suspend_reactivate_and_set_expiry(api: APIClient):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    admin = AdminFactory()
+    api.force_authenticate(user=admin)
+    created = api.post(reverse("api-token-list"), {"name": "ops", "audience": "whm"}, format="json")
+    assert created.status_code == 201
+    token_id = created.json()["data"]["id"]
+    secret = created.json()["data"]["token"]
+    api.force_authenticate(user=None)
+
+    api.force_authenticate(user=admin)
+    suspended = api.patch(reverse("api-token-detail", args=[token_id]), {"suspended": True}, format="json")
+    assert suspended.status_code == 200
+    assert suspended.json()["data"]["status"] == "suspended"
+    api.force_authenticate(user=None)
+    denied = api.get("/api/json-api/version", HTTP_AUTHORIZATION=f"Bearer {secret}")
+    assert denied.status_code == 401
+
+    api.force_authenticate(user=admin)
+    back = api.patch(reverse("api-token-detail", args=[token_id]), {"suspended": False}, format="json")
+    assert back.json()["data"]["status"] == "active"
+    when = (timezone.now() + timedelta(days=10)).date().isoformat()
+    dated = api.patch(reverse("api-token-detail", args=[token_id]), {"expires_at": when}, format="json")
+    assert dated.status_code == 200
+    assert dated.json()["data"]["expires_at"].startswith(when)
+    cleared = api.patch(reverse("api-token-detail", args=[token_id]), {"expires_at": None}, format="json")
+    assert cleared.json()["data"]["expires_at"] is None
+    assert cleared.json()["data"]["status"] == "active"
+
+
+@pytest.mark.django_db
 def test_client_cannot_mint_whm_token(api: APIClient):
     user = UserFactory()
     api.force_authenticate(user=user)
